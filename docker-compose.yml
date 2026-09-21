@@ -12,13 +12,6 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}                      # 来自 .env
       SPRING_DATA_REDIS_HOST: redis                                    # compose 内 redis 服务
       ZHIPU_API_KEY: ${ZHIPU_API_KEY}                                  # 智谱 API Key（M5 AI 助手）
-      MAIL_HOST: ${MAIL_HOST}                                          # SMTP 服务器（M4 通知邮件）
-      MAIL_PORT: ${MAIL_PORT}
-      MAIL_USERNAME: ${MAIL_USERNAME}
-      MAIL_PASSWORD: ${MAIL_PASSWORD}                                  # SMTP 授权码
-      MAIL_FROM: ${MAIL_FROM}                                          # 发件人地址
-      QUANT_NOTIFY_TO: ${MAIL_TO:-}                                    # 通知收件人（留空则取用户资料邮箱）
-      QUANT_NOTIFY_FROM: ${MAIL_FROM:-}                                # 通知发件人（留空则用 SMTP 账号）
     depends_on:
       mysql:
         condition: service_healthy    # 等 MySQL 健康检查通过再启动（保证首启建表）

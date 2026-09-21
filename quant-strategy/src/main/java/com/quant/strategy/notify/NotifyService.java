@@ -40,7 +40,16 @@ public interface NotifyService {
     void sendSyncAlert(List<DashboardOverviewVO.SyncStatusItem> lagging);
 
     /**
-     * 邮件配置只读视图（平台配置卡片展示，账号脱敏）。
+     * 邮件配置视图（平台配置卡片展示，账号脱敏；V4.9 起配置入库）。
      */
     MailConfigVO mailConfig();
+
+    /**
+     * 保存邮件配置（V4.9：SMTP 参数与开关入库，保存即生效，无需重启）。
+     *
+     * <p>password 语义与 AI 模型配置的 Token 一致：留空或回传打码值表示不修改已存授权码。
+     *
+     * @param request 保存请求
+     */
+    void saveMailConfig(MailConfigRequest request);
 }

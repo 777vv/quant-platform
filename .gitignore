@@ -25,3 +25,5 @@ Thumbs.db
 
 *.log
 tmp*.txt
+# 验证用临时目录（内含登录令牌与真实凭据的请求体，绝不入库）
+tmp-verify/

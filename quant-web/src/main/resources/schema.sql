@@ -414,3 +414,24 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ai_model_config' AND COLUMN_NAME = 'warn_percent');
 SET @sql := IF(@c = 0, 'SELECT 1', 'ALTER TABLE ai_model_config DROP COLUMN warn_percent');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- 21. 邮件通知配置（V4.9：从 yml 迁到库，平台配置页维护，保存即生效）
+-- 授权码明文存本机库（与 ai_model_config.api_key 同一约定），接口回显打码、留空不覆盖。
+CREATE TABLE IF NOT EXISTS sys_mail_config (
+  id            BIGINT PRIMARY KEY COMMENT '固定主键（单行配置，值恒为 1）',
+  enabled       TINYINT      DEFAULT 0 COMMENT '邮件通知总开关：1 启用（每日摘要/告警），0 只允许手动测试',
+  host          VARCHAR(128) DEFAULT NULL COMMENT 'SMTP 服务器（如 smtp.qq.com；空=未启用邮件）',
+  port          INT          DEFAULT 465 COMMENT 'SMTP 端口（SSL 465 / STARTTLS 587）',
+  username      VARCHAR(128) DEFAULT NULL COMMENT 'SMTP 登录账号（通常即发件邮箱）',
+  password      VARCHAR(128) DEFAULT NULL COMMENT 'SMTP 授权码（明文存本机库；接口打码）',
+  from_addr     VARCHAR(128) DEFAULT NULL COMMENT '发件人地址（空=用 SMTP 账号）',
+  to_addr       VARCHAR(128) DEFAULT NULL COMMENT '收件人地址（空=取用户资料的通知邮箱）',
+  updated_at    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近修改时间'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '邮件通知配置表';
+
+-- 迁移：初始化单行（仅当表为空时插入——首次升级后到【平台配置 → 邮件通知】填一次 SMTP 即可；
+-- 值不在本脚本里写死，避免仓库出现明文授权码）
+INSERT IGNORE INTO sys_mail_config (id, enabled, host, port, username, password, from_addr, to_addr)
+SELECT 1, 0, NULL, 465, NULL, NULL, NULL, NULL
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_mail_config WHERE id = 1);
+

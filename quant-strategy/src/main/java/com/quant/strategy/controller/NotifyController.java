@@ -5,15 +5,19 @@ import java.util.List;
 import com.quant.common.result.R;
 import com.quant.fund.dto.DashboardOverviewVO;
 import com.quant.fund.service.SyncSummaryService;
+import com.quant.strategy.notify.MailConfigRequest;
 import com.quant.strategy.notify.MailConfigVO;
 import com.quant.strategy.notify.NotifyService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 邮件通知接口（FR4，M4-04）：平台配置邮件卡片（配置只读 + 测试发送）
+ * 邮件通知接口（FR4，M4-04；V4.9 配置入库）：平台配置邮件卡（查看/保存 SMTP 配置 + 测试发送）
  */
 @RestController
 @RequestMapping("/api/notify/mail")
@@ -28,10 +32,21 @@ public class NotifyController {
         this.syncSummaryService = syncSummaryService;
     }
 
-    /** 邮件配置只读视图（账号脱敏） */
+    /** 邮件配置视图（账号脱敏；V4.9 起可编辑，保存走 PUT） */
     @GetMapping("/config")
     public R<MailConfigVO> config() {
         return R.ok(notifyService.mailConfig());
+    }
+
+    /**
+     * 保存邮件配置（V4.9：SMTP 参数与开关入库，保存即生效无需重启）。
+     *
+     * @param request 配置请求；password 留空或回传打码值表示不修改已存授权码
+     */
+    @PutMapping("/config")
+    public R<Void> save(@Valid @RequestBody MailConfigRequest request) {
+        notifyService.saveMailConfig(request);
+        return R.ok();
     }
 
     /** 发送测试邮件（失败以业务异常返回具体原因） */

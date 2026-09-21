@@ -189,7 +189,7 @@
       </el-form>
     </el-card>
 
-    <!-- 第三行：邮件通知通栏（描述两列，操作与说明各归其位） -->
+    <!-- 第三行：邮件通知通栏（V4.9 配置入库：可编辑表单 + 保存即生效） -->
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
@@ -199,28 +199,61 @@
           </el-tag>
         </div>
       </template>
-      <el-descriptions :column="4" border size="small">
-        <el-descriptions-item label="SMTP 服务器">
-          {{ mail?.configured ? mail.host : '未配置' }}
-          <span v-if="mail?.configured" class="muted">:{{ mail.port }}</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="发件账号">{{ mail?.username || '未配置' }}</el-descriptions-item>
-        <el-descriptions-item label="发件人">{{ mail?.from || '未配置' }}</el-descriptions-item>
-        <el-descriptions-item label="收件人">{{ mail?.to || '未配置（保存资料中的通知邮箱即可）' }}</el-descriptions-item>
-      </el-descriptions>
-      <div class="mail-actions">
-        <el-button type="primary" plain :loading="testing" :disabled="!mail?.configured" @click="sendTestMail">
-          发送测试邮件
-        </el-button>
-        <span v-if="!mail?.configured" class="muted">请先在配置文件设置 spring.mail.* 参数并重启</span>
-      </div>
-      <el-alert
-        class="mail-tip"
-        type="info"
-        :closable="false"
-        show-icon
-        title="SMTP 服务器、授权码、通知开关均在后端配置文件维护（技术文档 6.9），此处仅展示与测试。收件人优先取 quant.notify.to，为空时使用上方资料中的通知邮箱。"
-      />
+      <el-form :model="mailForm" label-width="90px">
+        <el-row :gutter="16">
+          <el-col :span="8" :xs="24">
+            <el-form-item label="SMTP 服务器">
+              <el-input v-model="mailForm.host" placeholder="如 smtp.qq.com，留空 = 不启用邮件" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="端口">
+              <el-input-number v-model="mailForm.port" :min="1" :max="65535" :controls="false" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="通知开关">
+              <el-switch v-model="mailForm.enabled" active-text="开启" inactive-text="关闭" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="发件账号">
+              <el-input v-model="mailForm.username" placeholder="SMTP 登录邮箱，如 xxx@qq.com" />
+            </el-form-item>          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="授权码">
+              <el-input
+                v-model="mailForm.password"
+                type="password"
+                show-password
+                autocomplete="off"
+                :placeholder="mailPasswordPlaceholder"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="发件人">
+              <el-input v-model="mailForm.fromAddr" placeholder="留空 = 用发件账号，如 wang<xxx@qq.com>" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="收件人">
+              <el-input v-model="mailForm.toAddr" placeholder="留空 = 用上方资料中的通知邮箱" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <div class="form-note">
+          配置保存在本平台数据库，<b>保存即生效，无需重启</b>；发件账号与授权码显示为打码值（如
+          83***@qq.com）时表示沿用已存配置，<b>不改动即保持原值</b>，只在首次填写或更换时重填。 「通知
+          开关」控制每日信号摘要与同步告警是否自动发送（关闭后仍可手动发测试邮件）。
+        </div>
+        <el-form-item class="form-actions">
+          <el-button type="primary" :loading="savingMail" @click="saveMail">保存邮件配置</el-button>
+          <el-button type="primary" plain :loading="testing" :disabled="!mailForm.host || !mailForm.username" @click="sendTestMail">
+            发送测试邮件
+          </el-button>
+        </el-form-item>
+      </el-form>
     </el-card>
   </div>
 </template>
@@ -230,7 +263,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { getProfile, updatePassword, updateProfile } from '@/api/auth'
-import { mailConfig, testMail, type MailConfigVO } from '@/api/notify'
+import { mailConfig, saveMailConfig, testMail, type MailConfigVO } from '@/api/notify'
 import {
   aiModelConfig,
   aiModelList,
@@ -247,6 +280,17 @@ const router = useRouter()
 
 const profile = ref<UserVO | null>(null)
 const mail = ref<MailConfigVO | null>(null)
+const savingMail = ref(false)
+/** 邮件表单（V4.9 入库可编辑；password 留空 = 保持原授权码） */
+const mailForm = reactive({
+  enabled: false,
+  host: '',
+  port: 465,
+  username: '',
+  password: '',
+  fromAddr: '',
+  toAddr: ''
+})
 
 /** AI 模型配置：厂商清单（含各厂商状态）、可选模型、当前表单对应的厂商配置 */
 const providers = ref<AiProviderVO[]>([])
@@ -393,6 +437,36 @@ async function loadProfile() {
 
 async function loadMail() {
   mail.value = await mailConfig()
+  mailForm.enabled = mail.value.enabled
+  mailForm.host = mail.value.host ?? ''
+  mailForm.port = mail.value.port ?? 465
+  mailForm.username = mail.value.username ?? ''
+  mailForm.password = ''
+  mailForm.fromAddr = mail.value.from ?? ''
+  mailForm.toAddr = mail.value.to ?? ''
+}
+
+/** 授权码占位：已配置时提示留空不改 */
+const mailPasswordPlaceholder = computed(() => (mail.value?.username ? '已配置，留空保持原授权码' : 'SMTP 授权码（QQ/163 为授权码而非登录密码）'))
+
+/** 保存邮件配置（保存即生效，无需重启） */
+async function saveMail() {
+  savingMail.value = true
+  try {
+    await saveMailConfig({
+      enabled: mailForm.enabled,
+      host: mailForm.host,
+      port: mailForm.port,
+      username: mailForm.username,
+      password: mailForm.password || undefined,
+      fromAddr: mailForm.fromAddr || undefined,
+      toAddr: mailForm.toAddr || undefined
+    })
+    ElMessage.success('邮件配置已保存并生效')
+    await loadMail()
+  } finally {
+    savingMail.value = false
+  }
 }
 
 /** 保存昵称/通知邮箱 */

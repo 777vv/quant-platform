@@ -13,13 +13,14 @@ import com.quant.common.spi.MailRecipientProvider;
 import com.quant.fund.dto.DashboardOverviewVO;
 import com.quant.strategy.core.StrategyRegistry;
 import com.quant.strategy.entity.SignalRecord;
+import com.quant.strategy.entity.SysMailConfig;
 import com.quant.strategy.mapper.SignalRecordMapper;
+import com.quant.strategy.mapper.SysMailConfigMapper;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -29,9 +30,9 @@ import org.thymeleaf.context.Context;
 import org.thymeleaf.spring6.SpringTemplateEngine;
 
 /**
- * 邮件通知实现（M4-04）：
- * SMTP 参数来自 spring.mail.* 配置（技术文档 6.9），收件人优先 quant.notify.to，
- * 其次用户资料邮箱（经 common 的 MailRecipientProvider SPI 反转依赖取得）。
+ * 邮件通知实现（M4-04；V4.9 起配置入库）：
+ * SMTP 参数与开关来自 sys_mail_config 单行（平台配置页维护，保存即生效），
+ * 收件人优先库内 to_addr，其次用户资料邮箱（经 common 的 MailRecipientProvider SPI 反转依赖取得）。
  * 模板用 Thymeleaf 渲染 HTML；发送成功后回写 notified_flag 防止重复通知。
  */
 @Service
@@ -66,39 +67,29 @@ public class NotifyServiceImpl implements NotifyService {
 
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
-    private final ObjectProvider<JavaMailSender> mailSenderProvider;
+    /** 邮件配置（库内单行）与运行时发送器 */
+    private final MailConfigService mailConfigService;
 
     /** 收件人提供方（quant-system 实现；模块未装配时优雅降级） */
     private final ObjectProvider<MailRecipientProvider> recipientProvider;
 
     private final SpringTemplateEngine templateEngine;
 
-    private final NotifyProperties properties;
-
     private final SignalRecordMapper signalRecordMapper;
 
     private final StrategyRegistry registry;
 
-    /** SMTP 服务器地址（空=未配置） */
-    @Value("${spring.mail.host:}")
-    private String mailHost;
+    private final SysMailConfigMapper mapper;
 
-    /** SMTP 端口 */
-    @Value("${spring.mail.port:465}")
-    private Integer mailPort;
-
-    /** SMTP 登录账号（同时是默认发件人） */
-    @Value("${spring.mail.username:}")
-    private String mailUsername;
-
-    public NotifyServiceImpl(ObjectProvider<JavaMailSender> mailSenderProvider,
+    public NotifyServiceImpl(MailConfigService mailConfigService,
+                             SysMailConfigMapper mapper,
                              ObjectProvider<MailRecipientProvider> recipientProvider,
-                             SpringTemplateEngine templateEngine, NotifyProperties properties,
+                             SpringTemplateEngine templateEngine,
                              SignalRecordMapper signalRecordMapper, StrategyRegistry registry) {
-        this.mailSenderProvider = mailSenderProvider;
+        this.mailConfigService = mailConfigService;
+        this.mapper = mapper;
         this.recipientProvider = recipientProvider;
         this.templateEngine = templateEngine;
-        this.properties = properties;
         this.signalRecordMapper = signalRecordMapper;
         this.registry = registry;
     }
@@ -108,13 +99,16 @@ public class NotifyServiceImpl implements NotifyService {
         Map<String, Object> model = new HashMap<>();
         model.put("time", TIME_FMT.format(java.time.LocalDateTime.now()));
         model.put("to", recipient());
-        sendHtml("【量化投资平台】测试邮件", TEMPLATE_TEST, model);
+        String subject = "【个人量化投资助手】测试邮件";
+        sendHtml(subject, TEMPLATE_TEST, model);
+        // 测试发送是同步接口，成功必须落日志：便于用户在日志里自查是发出去了还是被上游拒了
+        LOGGER.info("测试邮件发送成功: to={}", recipientOrNull());
     }
 
     @Override
     @Async("taskExecutor")
     public void sendSignalDigest(List<SignalRecord> signals) {
-        if (!properties.isEnabled()) {
+        if (!mailEnabled()) {
             return;
         }
         List<SignalRecord> actionable = signals.stream()
@@ -125,8 +119,8 @@ public class NotifyServiceImpl implements NotifyService {
 
     @Override
     public int sendPendingDigest() {
-        if (!properties.isEnabled()) {
-            throw new BizException("邮件通知已关闭（quant.notify.enabled=false），如需发送请先在配置中开启");
+        if (!mailEnabled()) {
+            throw new BizException("邮件通知已关闭：请在【平台配置 → 邮件通知】开启后再试");
         }
         List<SignalRecord> pending = signalRecordMapper.selectList(new LambdaQueryWrapper<SignalRecord>()
                 .in(SignalRecord::getDirection, List.of(DIRECTION_BUY, DIRECTION_SELL))
@@ -153,7 +147,7 @@ public class NotifyServiceImpl implements NotifyService {
         Map<String, Object> model = new HashMap<>();
         model.put("date", date);
         model.put("signals", toRows(actionable));
-        boolean sent = sendWithRetry("【量化投资平台】" + date + " 交易信号", TEMPLATE_DIGEST, model);
+        boolean sent = sendWithRetry("【个人量化投资助手】" + date + " 交易信号", TEMPLATE_DIGEST, model);
         if (sent) {
             markNotified(actionable);
         }
@@ -163,7 +157,7 @@ public class NotifyServiceImpl implements NotifyService {
     @Override
     @Async("taskExecutor")
     public void sendSyncAlert(List<DashboardOverviewVO.SyncStatusItem> lagging) {
-        if (!properties.isEnabled() || lagging == null || lagging.isEmpty()) {
+        if (!mailEnabled() || lagging == null || lagging.isEmpty()) {
             return;
         }
         List<Map<String, String>> rows = new ArrayList<>(lagging.size());
@@ -178,15 +172,52 @@ public class NotifyServiceImpl implements NotifyService {
         Map<String, Object> model = new HashMap<>();
         model.put("time", TIME_FMT.format(java.time.LocalDateTime.now()));
         model.put("lagging", rows);
-        sendWithRetry("【量化投资平台】数据同步异常告警（" + lagging.size() + " 只）", TEMPLATE_SYNC_ALERT, model);
+        sendWithRetry("【个人量化投资助手】数据同步异常告警（" + lagging.size() + " 只）", TEMPLATE_SYNC_ALERT, model);
     }
 
     @Override
     public MailConfigVO mailConfig() {
-        JavaMailSender sender = mailSenderProvider.getIfAvailable();
-        boolean configured = sender != null && mailHost != null && !mailHost.isBlank();
-        return new MailConfigVO(properties.isEnabled(), emptyIfNull(mailHost), mailPort,
-                mask(emptyIfNull(mailUsername)), resolveFrom(), recipientOrNull(), configured);
+        SysMailConfig config = mailConfigService.config();
+        boolean enabled = Integer.valueOf(1).equals(config.getEnabled());
+        boolean configured = mailConfigService.isConfigured();
+        return new MailConfigVO(enabled, emptyIfNull(config.getHost()), config.getPort(),
+                mask(emptyIfNull(config.getUsername())), resolveFrom(), recipientOrNull(), configured);
+    }
+
+    @Override
+    public void saveMailConfig(MailConfigRequest request) {
+        if (request == null) {
+            throw new BizException("配置内容不能为空");
+        }
+        if (request.port() != null && (request.port() <= 0 || request.port() > 65535)) {
+            throw new BizException("SMTP 端口需在 1~65535 之间");
+        }
+        SysMailConfig current = mailConfigService.config();
+        // 留空或回传打码值（含 *）= 不修改已存值：账号与授权码同一约定。
+        // 账号必须一并如此处理——配置卡片回显的是 83***@qq.com 这类打码值，
+        // 用户不动它直接保存时不能把这个展示值写回库（否则 SMTP 认证必然失败）。
+        String username = keepIfMasked(request.username(), current.getUsername());
+        String password = keepIfMasked(request.password(), current.getPassword());
+        if (notBlank(request.host()) && (!notBlank(username) || !notBlank(password))) {
+            throw new BizException("填写了 SMTP 服务器时，登录账号与授权码不能为空");
+        }
+        SysMailConfig row = new SysMailConfig();
+        row.setId(1L);
+        row.setEnabled(request.enabled() == null ? enabledFlag(current) : (request.enabled() ? 1 : 0));
+        row.setHost(trimToNull(request.host()));
+        row.setPort(request.port() == null ? current.getPort() : request.port());
+        row.setUsername(trimToNull(username));
+        row.setPassword(trimToNull(password));
+        row.setFromAddr(trimToNull(request.fromAddr()));
+        row.setToAddr(trimToNull(request.toAddr()));
+        if (!rowExists()) {
+            mapperInsert(row);
+        } else {
+            row.setUpdatedAt(java.time.LocalDateTime.now());
+            row.setId(current.getId() == null ? 1L : current.getId());
+            mapperUpdate(row);
+        }
+        mailConfigService.invalidate();
     }
 
     /**
@@ -235,9 +266,9 @@ public class NotifyServiceImpl implements NotifyService {
 
     /** 发送 HTML 邮件（统一装配收件人/发件人与异常转译） */
     private void sendHtml(String subject, String template, Map<String, Object> model) {
-        JavaMailSender sender = mailSenderProvider.getIfAvailable();
-        if (sender == null || mailHost == null || mailHost.isBlank()) {
-            throw new BizException("邮件服务未配置：请在配置文件设置 spring.mail.* 参数");
+        JavaMailSender sender = mailConfigService.sender();
+        if (sender == null) {
+            throw new BizException("邮件服务未配置：请在【平台配置 → 邮件通知】填写 SMTP 服务器与账号后保存");
         }
         String to = recipient();
         String from = resolveFrom();
@@ -294,30 +325,81 @@ public class NotifyServiceImpl implements NotifyService {
         }
     }
 
-    /** 收件人：配置优先，其次用户资料邮箱；均缺失抛错（发送路径用） */
+    /** 收件人：库内配置优先，其次用户资料邮箱；均缺失抛错（发送路径用） */
     private String recipient() {
         String to = recipientOrNull();
         if (to == null) {
-            throw new BizException("收件人未配置：请设置 quant.notify.to 或在平台配置维护通知邮箱");
+            throw new BizException("收件人未配置：请在【平台配置 → 邮件通知】填写收件人，或在基本信息维护通知邮箱");
         }
         return to;
     }
 
     /** 宽松版收件人解析（配置卡片展示用，缺失返回 null 不抛错） */
     private String recipientOrNull() {
-        if (properties.getTo() != null && !properties.getTo().isBlank()) {
-            return properties.getTo().trim();
+        SysMailConfig config = mailConfigService.config();
+        if (config.getToAddr() != null && !config.getToAddr().isBlank()) {
+            return config.getToAddr().trim();
         }
         MailRecipientProvider provider = recipientProvider.getIfAvailable();
         return provider == null ? null : provider.notifyRecipient();
     }
 
-    /** 发件人：quant.notify.from 优先，否则 SMTP 登录账号 */
+    /** 发件人：库内 from_addr 优先，否则 SMTP 登录账号 */
     private String resolveFrom() {
-        if (properties.getFrom() != null && !properties.getFrom().isBlank()) {
-            return properties.getFrom().trim();
+        SysMailConfig config = mailConfigService.config();
+        if (config.getFromAddr() != null && !config.getFromAddr().isBlank()) {
+            return config.getFromAddr().trim();
         }
-        return emptyIfNull(mailUsername);
+        return emptyIfNull(config.getUsername());
+    }
+
+    /** 持久化辅助：库内无行时插入 */
+    private void mapperInsert(SysMailConfig row) {
+        mapper.insert(row);
+    }
+
+    /** 持久化辅助：已有行时更新 */
+    private void mapperUpdate(SysMailConfig row) {
+        mapper.updateById(row);
+    }
+
+    /** 库内是否已有配置行（首行插入、其后更新） */
+    private boolean rowExists() {
+        return mapper.selectById(1L) != null;
+    }
+
+    /** 邮件通知是否开启（开关字段允许为 NULL，NULL 视为关闭，避免拆箱空指针） */
+    private boolean mailEnabled() {
+        return Integer.valueOf(1).equals(mailConfigService.config().getEnabled());
+    }
+
+    /** 开关字段归一为 0/1（NULL 归 0，保证入库不留空值） */
+    private int enabledFlag(SysMailConfig config) {
+        return Integer.valueOf(1).equals(config.getEnabled()) ? 1 : 0;
+    }
+
+    /** trim 到空即 null（避免把空白存进库） */
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * 打码值（含 *）或留空表示「沿用已存值」：配置卡片回显账号/授权码都是打码的，
+     * 用户不改动就保存时必须保留原值，否则会把展示值写回库。
+     */
+    private String keepIfMasked(String incoming, String current) {
+        if (incoming == null || incoming.isBlank() || incoming.contains("*")) {
+            return current;
+        }
+        return incoming;
+    }
+
+    private boolean notBlank(String value) {
+        return value != null && !value.isBlank();
     }
 
     /** 账号脱敏：保留前两字符与邮箱域名，其余以 *** 展示 */

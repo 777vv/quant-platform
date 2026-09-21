@@ -29,28 +29,12 @@ spring:
         options:
           # 模型名：以智谱控制台在售型号为准（glm-4-flash 为免费档，可换 glm-4-plus 等）
           model: glm-4-flash
-  # ============ 邮件通知 SMTP（FR4，M4-04；技术文档 6.9：配置文件维护、不建表） ============
-  mail:
-    # SMTP 服务器地址（如 smtp.qq.com / smtp.163.com）；留空表示不启用邮件
-    # V4.8：授权码等敏感值改为环境变量注入（${VAR:默认}，默认空），明文只留在本地 .env（不入库）
-    host: ${MAIL_HOST:}
-    # SMTP 端口：SSL 常用 465，STARTTLS 用 587
-    port: ${MAIL_PORT:465}
-    # SMTP 登录账号（通常即发件邮箱；QQ/163 使用授权码登录时此处仍填邮箱）
-    username: ${MAIL_USERNAME:}
-    # SMTP 密码或授权码（QQ/163 需在邮箱设置中生成授权码，而非登录密码）
-    password: ${MAIL_PASSWORD:}
-    properties:
-      mail:
-        smtp:
-          # 开启 SMTP 认证
-          auth: true
-          ssl:
-            # 465 端口 SSL 加密；587 端口置 false 并启用下方 starttls
-            enable: true
-          starttls:
-            # STARTTLS 加密（587 端口启用）
-            enable: false
+  # ============ 邮件通知 SMTP（V4.9 起入库） ============
+  # SMTP 参数与开关在【平台配置 → 邮件通知】维护（sys_mail_config 表，保存即生效），不再用 spring.mail.*：
+  # 关闭 mail 自动装配（starter 在 classpath 但无 spring.mail.host 时本就不会装配，这里显式声明避免误装配）
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
 
 server:
   # 服务端口（容器内固定 8080，compose 映射宿主机 8080）
@@ -135,13 +119,6 @@ quant:
     otc-allowed-lag-days: 7
     # 强制全部标记滞后（默认 false）：仅供"同步异常告警邮件"演练验证，正常运行时勿开
     force-lagging: false
-  notify:
-    # 邮件通知总开关（M4-04）：false 时每日信号摘要静默跳过；测试邮件仍可手动发送
-    enabled: true
-    # 收件人邮箱：留空时取用户资料中的通知邮箱（平台配置维护）
-    to: ${MAIL_TO:}
-    # 发件人地址：留空时使用 SMTP 登录账号（spring.mail.username）
-    from: ${MAIL_FROM:}
   ai:
     # AI 助手中开关（M5）：false 时对话接口直接返回"已关闭"，不调用大模型
     enabled: true

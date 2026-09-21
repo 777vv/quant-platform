@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.quant</groupId>
+        <artifactId>quant-platform</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>quant-strategy</artifactId>
+    <name>quant-strategy</name>
+    <description>策略引擎/回测引擎/信号（M3 实现）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-fund</artifactId>
+        </dependency>
+        <!-- 邮件通知（M4-04）：SMTP 发送 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+        <!-- 邮件通知（M4-04）：HTML 模板渲染 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-thymeleaf</artifactId>
+        </dependency>
+    </dependencies>
+</project>

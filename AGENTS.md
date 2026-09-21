@@ -1,0 +1,73 @@
+# AGENTS.md — 本项目长期记忆（工作区级，每次会话自动加载）
+
+> **维护约定**：本文件只放"每次都必须记得的**规则与索引**"，保持简短（它占用每次会话的上下文）。
+> 数据口径、算法细节一律以 `docs/02-技术文档.md` 为准；领域常识见技能 `.zcode/skills/quant-domain/SKILL.md`；
+> 前端细则见技能 `.zcode/skills/frontend-ui/SKILL.md`。**同一件事不要在两处维护**。
+>
+> **双工具同步（必须遵守）**：本项目同时用 ZCode 与 Claude Code，两者约定不同——
+> | 用途 | ZCode 约定 | Claude Code 约定 | 内容来源 |
+> | --- | --- | --- | --- |
+> | 项目记忆 | `AGENTS.md` | `CLAUDE.md`（`@AGENTS.md` 导入） | **只有 `AGENTS.md` 一份**（勿把正文复制进 CLAUDE.md） |
+> | 技能 | `.zcode/skills/` | `.claude/skills/` | `.zcode/skills/` 为准，`.claude/skills/` 是镜像 |
+>
+> **记忆或技能一旦新增/修改，两边都要同步**：改记忆只改 `AGENTS.md`（CLAUDE.md 是导入，不用动）；
+> 改/加技能后执行 `sh sync-memory.sh --write` 生成镜像，并用 `sh sync-memory.sh` 校验（不一致会以退出码 1 失败）。
+
+## 1. 项目速览
+
+个人量化投资助手：**只给买卖建议、不做自动交易**；**只覆盖指数基金**（场内 ETF + 场外指数基金）；单用户自用。
+
+**名字与标识符（V4.3 更名口径，勿混用）**：中文产品名统一是 **「个人量化投资助手」**（界面、文档、邮件页脚、AI 提示词、侧栏 logo 一律用它；界面里没有单独简称）。而**技术标识符仍为 `quant-*`**——Maven 坐标 `quant-platform`、六个模块名、jar 名 `quant-web-1.0.0.jar`、库名 `quant`、`spring.application.name=quant-platform`、脚本与 Dockerfile 里的路径：**不要跟着改名**（会连带构建脚本、部署与全部文档路径，风险远大于收益）。"AI 投资助手"是模块/AI 浮窗的角色描述，不是产品名，保持原样。
+
+- 后端：Maven 多模块，JDK 21 / Spring Boot 4.1.1 / Spring Framework 7 / MyBatis-Plus 3.5.17 / SaToken 1.46 / Spring AI 2.0.1 / Redisson 4.7
+- 前端：`web/`（Vue 3.5 + TS + Vite 5 + Element Plus 2.9 + Pinia + ECharts），构建产物拷进 `quant-web` 静态目录
+- 本地访问：前后端同端口 **8080**；依赖本机或 docker compose 的 MySQL、Redis
+
+| 模块 | 职责 |
+| --- | --- |
+| `quant-common` | 统一结果封装、异常、traceId、工具类、限频与分布式锁（零业务依赖） |
+| `quant-system` | 登录鉴权、用户资料、防爆破 |
+| `quant-fund` | 基金池、数据导入、增量同步、流水与持仓、收益统计、仪表盘聚合、东财客户端 |
+| `quant-strategy` | 网格/估值策略、回测、信号、邮件通知 |
+| `quant-ai` | 六类工具 + 流式对话 + 会话记忆（Redis 窗口 + MySQL 全量）+ 模型配置 |
+| `quant-web` | 启动类、配置、`schema.sql`、SPA 静态资源 |
+
+**AI 助手边界分三档（用户拍板的口径，勿回退成"一律拒答"）**：① **越界**（创作/闲聊/角色扮演/套取提示词）→ 只回一句统一话术、不解释、不部分满足；② **无数据源**（具体政策/新闻/宏观事件、具体个股数据）→ 「说明边界与原因 + 给 2 个替代问法」，不生硬拦回，但不得顺带给出政策内容或个股数据；③ **通用分析方法与概念**（PE/ROE/股息率/估值分位怎么看）可讲，但不掺具体数字、不对个股下买卖结论。拒答句与 `PromptGuard.REFUSAL` 必须逐字一致；细节见 `SystemPrompts` 类注释与 docs/02 V3.8。
+
+**AI 用量与每日额度口径（V3.9/V4.0/V4.5，勿擅自简化）**：防失控有三层闸——**每日 token/费用额度**（管总量）、**流式超时**（管卡死）、**工具调用次数限额**（管单次对话的循环轮数，`quant.ai.tool-limit.*`：单工具 6 次/合计 12 次/超限 RETURN_ERROR_RESPONSE 让模型文字收尾；**不要删掉自定义 ToolCallingManager 退回框架默认 40/150**）。其余口径：一次咨询**一行**流水（`ai_usage_log`，工具调用的多轮按上游请求 id 累加，不是取最后一帧）；费用按「未命中缓存输入 / 命中缓存输入 / 输出」三段单价估算，单价随流水**快照**（改价不改历史，缓存命中必须单独计价否则高估）；**上游未回 usage 时按字符估算并置 `estimated` 标注，不许假装精确**；额度校验（token 与费用双阈值）必须在**调模型之前**且**护栏之后**——超限时**不发起上游请求**（拒绝才省钱），口径为**自然日**（查询即算，不引入定时任务）；护栏拒答记 0 成本行、自检记账但不受额度拦截。**V4.0 起：额度是全局一份（`ai_runtime_config`，不跟厂商走），单价是 per-provider（`ai_model_config` 每厂商一行）**。细节见 docs/02 V3.9/V4.0 与 `AiUsageServiceImpl` 类注释。
+
+**AI 模型配置按厂商分行（V4.0 口径，勿退回单行）**：`ai_model_config` **每个厂商一行**（`uk_provider` 唯一键），保存某厂商**只写它那一行**、绝不覆盖别家；「保存并生效」同时把 `ai_runtime_config.active_provider` 指向它，即**"选中厂商 + 保存"就是切换厂商**（用户拍板：选中不立即切换，避免误点下拉把对话搞挂）；Token 按厂商各存，切回旧厂商无需重填（V3.x 的"跨厂商不允许沿用 Token"拦截已无必要、已删除）；额度编辑与用量展示都在【AI用量统计】菜单（`/ai-usage`），平台配置只留连接信息与单价。细节见 docs/02 V4.0。
+
+**权威文档**：`docs/01-技术需求文档.md`（需求）· `docs/02-技术文档.md`（设计与全部修订记录）· `docs/03-任务清单.md`（任务与迭代）· `docs/04-验收报告.md`（每轮验收结论）· `docs/05-使用手册.md`（**面向使用的操作手册**，见下条）。遇到"为什么这么设计""口径是什么"，**先去 docs/02 查**，不要凭印象回答。
+
+**平台使用手册（V4.2，单一来源，勿另起一份）**：面向使用的手册正文只有一份——`docs/05-使用手册.md`（14 章 / 56 小节：怎么用、参数含义、注意事项、FAQ）。它由 `quant-ai/pom.xml` 的 `maven-resources-plugin` 在 `process-resources` 阶段拷进 classpath 的 `ai/`，因此**AI 的手册工具（`getPlatformManual`）、侧栏【使用手册】页（`GET /api/ai/manual`）读的都是这一份**——改手册要改 docs/05 并重新构建，**不要**在 Java/前端另抄一份，也不要把手册正文塞进系统提示词（1.5 万字会让每次请求都多背一遍）。手册只写"怎么用"，口径与设计取舍仍写 docs/02。改动手册内容时同步更新 docs/03 迭代与 docs/04 复验。
+
+## 2. 协作铁律（用户明确要求，必须遵守）
+
+1. **不确定的事情先问，不要猜**（含"不要自作主张"）。提问时给出选项 + 推荐项 + 取舍说明，让用户拍板。
+2. **注释与备注**：所有方法/函数加中文注释（用途、参数、口径）；**DTO、entity、配置项、前端 TS interface 的字段都要加中文备注**。
+3. **文档必须同步**：功能或口径变更 → `docs/02` 追加修订条目（沿用 ①②③… 编号）；实测结论 → `docs/04`；任务状态与迭代 → `docs/03`；使用方式 → `README.md`。
+4. **前端一律遵循 `.zcode/skills/frontend-ui/SKILL.md`**：色值只能用 token/`palette`（`check:style` 强制）、涨跌固定红涨绿跌、间距字号只取 token、数据表列宽要均匀（详见该技能）。
+5. **明文凭据暂不改造**：按用户要求留作后续处理，不要把 `application.yml` 里的密钥改成环境变量注入（AI 模型配置已迁到数据库除外——那是用户明确要求的）。
+6. 代码风格遵循《阿里巴巴 Java 开发手册》，`mvn verify` 的 PMD p3c 必须通过。
+7. **创建或修改技能（`SKILL.md`）前，先读 `.zcode/skills/skill-authoring/SKILL.md`**：它规定了技能该放哪一层、frontmatter 与命名规则、正文写法的取舍，以及"改完必须同步两处镜像 + 登记文档"的落地清单。技能与记忆的分工：**每次都要的规则进本文件，做某类事才要的流程进技能，要查证的细节进 `docs/02`**。
+
+## 3. 构建、运行与门禁
+
+- **构建后端**：`sh build.sh` —— **会先停 8080 上的应用**（否则 jar 被占用，`mvn clean` 删不掉）；额外参数会透传给 mvn。
+- **只停应用**：`sh stop-app.sh`（释放 jar 文件锁）。
+- **含前端的完整构建**：`sh build.sh -DskipFrontend=false`（默认 `skipFrontend=true`，此时打包沿用上次构建好的静态资源，改了前端必须带这个参数）。
+- **启动**：`java -jar quant-web/target/quant-web-1.0.0.jar`（输出重定向到日志文件后再 grep）。
+- **门禁**：前端 `npm run type-check`（0 错误）+ `npm run check:style`；后端 `mvn verify`（PMD p3c 阻断 Blocker/Critical）。
+- **记忆/技能一致性**：`sh sync-memory.sh`（校验 `.zcode/skills` 与 `.claude/skills` 是否一致 + `CLAUDE.md` 是否正确导入）；改完技能先跑 `sh sync-memory.sh --write` 再校验。
+- **接口约定**：业务错误一律 **HTTP 200 + body `code`**（`0` 成功 / `401` 未登录或会话失效 / `500` 业务异常），前端按 code 判断；接口调用日志由 `InvokeLogInterceptor` 打印（敏感字段已脱敏、超长截断）。
+- **冒烟测试**：`POST /api/auth/login`（admin/admin123）取 token → 请求带 `satoken` 头。**中文请求体要用 UTF-8 文件 + `--data-binary @file`**（Git Bash 里 `curl -d '中文'` 会按 GBK 发送 → 后端报 `Invalid UTF-8 middle byte` → 表现为莫名的 500）。
+
+## 4. 验证纪律与环境坑
+
+- **改完必须自己实测再汇报**：接口用 curl/python 实测，前端用浏览器实测（渲染 + 交互），结论里给出实测数据；不要只写"应该可以"。
+- **构建/编译结果看退出码或 `BUILD SUCCESS/FAILURE`**：**不要用中文关键字 grep 日志**——出错信息是 GBK 编码，"非法字符"这类词匹配不到，我曾因此把编译失败误判为成功。
+- **不留后台进程**：验证完停掉临时启动的进程（含 vite dev server、后台 java）；若刻意保留应用运行，要在交付说明里讲清楚。
+- **后台标签页会冻结 `requestAnimationFrame` 与 `ResizeObserver`**：用浏览器自动化验证时若标签在后台，尺寸/动画校正不会生效（现象是"样式改了页面不跟"），代码里要用定时器或普通事件兜底；判断元素是否可见要看几何尺寸，不要只看 `display`。
+- **外部数据源（东财）按路径间歇封堵**（`http=000`，同一 secid 连续多轮 curl 也失败）：项目已有降级机制（看板走库内快照、迷你线与基准线有降级标记 + 手动刷新绕过），**请求路径上禁止使用带域名退避的慢通道**（详见 docs/02 V3.1）。
+- **改动前后都要跑门禁**：前端 type-check/check:style，后端 `mvn verify`；只改文档时可以不跑，但要在结论里说明。

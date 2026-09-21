@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.quant</groupId>
+        <artifactId>quant-platform</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>quant-web</artifactId>
+    <name>quant-web</name>
+    <description>启动与打包模块：主类/配置/日志/建表/SPA托管/前端构建集成</description>
+
+    <properties>
+        <!-- 默认跳过前端构建（后端本地开发用）；全量构建：mvn package -DskipFrontend=false -->
+        <skipFrontend>true</skipFrontend>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-system</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-fund</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-strategy</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-ai</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <configuration>
+                    <workingDirectory>${project.basedir}/../web</workingDirectory>
+                    <installDirectory>${project.basedir}/../web</installDirectory>
+                    <skip>${skipFrontend}</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>install-node-and-npm</goal>
+                        </goals>
+                        <configuration>
+                            <nodeVersion>v22.11.0</nodeVersion>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-install</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <configuration>
+                            <arguments>install</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <configuration>
+                            <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

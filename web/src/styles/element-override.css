@@ -1,0 +1,259 @@
+/**
+ * Element Plus 主题覆盖（V2.0）
+ * 把 EP 的内部变量指向我们的 token，使内置组件的圆角/配色/字号与设计系统一致。
+ * 组件级微调（表格、卡片、对话框等）也集中在此，避免散落到页面里。
+ */
+
+:root {
+  /* 主色及其派生（EP 需要 light-3/5/7/8/9 用于 hover/disabled/plain） */
+  --el-color-primary: var(--q-color-primary);
+  --el-color-primary-light-3: var(--q-color-primary-hover);
+  --el-color-primary-light-5: #60a5fa;
+  --el-color-primary-light-7: #93c5fd;
+  --el-color-primary-light-8: var(--q-color-primary-border);
+  --el-color-primary-light-9: var(--q-color-primary-soft);
+  --el-color-primary-dark-2: var(--q-color-primary-active);
+
+  /* 文字与边框统一到 token */
+  --el-text-color-primary: var(--q-text-primary);
+  --el-text-color-regular: var(--q-text-regular);
+  --el-text-color-secondary: var(--q-text-secondary);
+  --el-text-color-placeholder: var(--q-text-muted);
+  --el-border-color: var(--q-border);
+  --el-border-color-light: var(--q-border-light);
+  --el-border-color-lighter: var(--q-border-light);
+  --el-fill-color-light: var(--q-bg-subtle);
+  --el-fill-color-blank: var(--q-bg-card);
+
+  /* 组件高度：EP 默认 small=24px 偏矮（配 14px 文字显得局促），统一抬高
+     —— default 34、small 30、large 40，覆盖 input/select/date-picker/input-number 等全部表单控件 */
+  --el-component-size: 34px;
+  --el-component-size-small: 30px;
+  --el-component-size-large: 40px;
+
+  /* 形状与字号 */
+  --el-border-radius-base: var(--q-radius-sm);
+  --el-border-radius-small: 4px;
+  --el-font-size-base: var(--q-font-base);
+  --el-font-size-small: var(--q-font-sm);
+  --el-font-size-extra-small: var(--q-font-xs);
+
+  /* 表格：驾驶舱风——浅灰表头、无竖线、行悬停淡蓝 */
+  --el-table-header-bg-color: var(--q-bg-subtle);
+  --el-table-header-text-color: var(--q-text-secondary);
+  --el-table-border-color: var(--q-border-light);
+  --el-table-row-hover-bg-color: var(--q-bg-hover);
+}
+
+/* ---------- 卡片：细边框 + 轻阴影 + 统一圆角 ---------- */
+.el-card {
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-md);
+  box-shadow: var(--q-shadow-card);
+  background: var(--q-bg-card);
+}
+
+.el-card__header {
+  padding: var(--q-space-3) var(--q-space-4);
+  font-size: var(--q-font-base);
+  font-weight: 600;
+  color: var(--q-text-primary);
+  border-bottom: 1px solid var(--q-border-light);
+}
+
+/* ---------- 表格：紧凑、表头小一号、去掉外框竖线感 ---------- */
+.el-table {
+  font-size: var(--q-font-sm);
+  --el-table-border: 1px solid var(--q-border-light);
+}
+
+.el-table th.el-table__cell {
+  font-size: var(--q-font-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.el-table .el-table__cell {
+  padding: var(--q-space-2) 0;
+}
+
+.el-table--border .el-table__inner-wrapper::after,
+.el-table__inner-wrapper::before {
+  background-color: var(--q-border-light);
+}
+
+/* ---------- 对话框：更大圆角与内边距 ---------- */
+.el-dialog {
+  border-radius: var(--q-radius-lg);
+  padding: var(--q-space-5);
+}
+
+.el-dialog__title {
+  font-size: var(--q-font-lg);
+  font-weight: 600;
+}
+
+/* ---------- 按钮：统一圆角与字重 ---------- */
+.el-button {
+  border-radius: var(--q-radius-sm);
+  font-weight: 500;
+}
+
+.el-button--small {
+  font-weight: 500;
+}
+
+/* ---------- 标签：小圆角胶囊风 ---------- */
+.el-tag {
+  border-radius: var(--q-radius-sm);
+  font-weight: 500;
+}
+
+/* ---------- 表单控件尺寸统一（V2.1 修复"下拉框偏矮"） ----------
+   背景：EP 对 el-select / el-radio-button / el-checkbox 的 small 尺寸是**写死 24px/22px + 12px 字号**
+   （不走 --el-component-size-small），比 14px 正文显得局促。此处按设计系统统一抬高：
+   small 控件 30px、字号 13px；default 控件 34px、字号 14px；下拉选项 32px 行高。 */
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: var(--q-radius-sm);
+}
+
+/* 下拉框：small 30px / default 34px，与输入框高度对齐 */
+.el-select__wrapper {
+  min-height: var(--el-component-size);
+  padding: 0 var(--q-space-3);
+  font-size: var(--q-font-base);
+}
+
+.el-select--small .el-select__wrapper {
+  min-height: var(--el-component-size-small);
+  padding: 0 var(--q-space-2);
+  font-size: var(--q-font-sm);
+  gap: var(--q-space-1);
+}
+
+.el-select--small .el-select__input,
+.el-select--small .el-select__selected-item {
+  font-size: var(--q-font-sm);
+  line-height: 22px;
+}
+
+/* 输入框：small 字号与高度同步抬高 */
+.el-input--small {
+  --el-input-height: var(--el-component-size-small);
+  font-size: var(--q-font-sm);
+}
+
+/* 单选按钮组：small 由 22px 抬到 30px */
+.el-radio-button--small .el-radio-button__inner {
+  padding: 9px 13px;
+  font-size: var(--q-font-sm);
+  line-height: 1;
+}
+
+.el-radio-button__inner {
+  padding: 9px 15px;
+}
+
+/* 复选框：small 字号抬到 13px，勾选框同步放大 */
+.el-checkbox--small .el-checkbox__label {
+  font-size: var(--q-font-sm);
+}
+
+.el-checkbox--small .el-checkbox__inner {
+  width: 14px;
+  height: 14px;
+}
+
+/* 下拉选项行高与字号 */
+.el-select-dropdown__item {
+  height: 34px;
+  line-height: 34px;
+  font-size: var(--q-font-sm);
+}
+
+/* 日期选择器输入框沿用输入框高度 */
+.el-date-editor.el-input__wrapper {
+  min-height: var(--el-component-size-small);
+}
+
+/* ---------- 表单 ---------- */
+.el-form-item__label {
+  font-size: var(--q-font-sm);
+  color: var(--q-text-secondary);
+}
+
+/* ---------- 空态：字号收敛，避免大面积灰块 ---------- */
+.el-empty__description p {
+  font-size: var(--q-font-sm);
+  color: var(--q-text-muted);
+}
+
+/* ---------- 分页与提示 ---------- */
+.el-pagination {
+  font-size: var(--q-font-sm);
+}
+
+.el-alert {
+  border-radius: var(--q-radius-sm);
+}
+
+/* ---------- 主卡（hero）上的次要链接按钮 ----------
+   KPI 主卡为浅红微底，EP 的 primary 链接色落在浅红上对比不足，
+   故提供 .q-on-hero 修饰类：文字取主卡前景色 + 降低透明度，悬停提亮。 */
+.el-button.is-link.q-on-hero {
+  color: var(--q-text-on-hero);
+  opacity: 0.82;
+}
+
+.el-button.is-link.q-on-hero:hover {
+  color: var(--q-text-on-hero);
+  opacity: 1;
+}
+
+/* 深色底上的表格/描述文字（主卡内的小标签） */
+.q-on-hero-text {
+  color: var(--q-text-on-hero-sub);
+}
+
+/* ---------- 深色玻璃底上的表单变体（登录页）【V2.3】 ----------
+   用法：给容器加 .q-on-dark，内部输入框/标签/卡片自动切换为深色底可读配色。
+   集中在此而非页面里逐个 :deep()，避免同类变体各写一套。 */
+.q-on-dark .el-card {
+  background: var(--q-login-card-bg);
+  border: 1px solid var(--q-login-card-border);
+  box-shadow: var(--q-login-card-shadow);
+  backdrop-filter: blur(8px);
+}
+
+.q-on-dark .el-card__header {
+  border-bottom: 1px solid var(--q-login-card-border);
+}
+
+.q-on-dark .el-form-item__label {
+  color: var(--q-login-text-sub);
+}
+
+.q-on-dark .el-input__wrapper {
+  background-color: var(--q-login-field-bg);
+  box-shadow: none;
+  border: 1px solid var(--q-login-field-border);
+}
+
+.q-on-dark .el-input__wrapper.is-focus {
+  border-color: var(--q-color-primary-hover);
+}
+
+.q-on-dark .el-input__inner {
+  color: var(--q-login-text);
+}
+
+.q-on-dark .el-input__inner::placeholder {
+  color: var(--q-login-text-muted);
+}
+
+.q-on-dark .el-input__prefix,
+.q-on-dark .el-input__suffix {
+  color: var(--q-login-text-muted);
+}

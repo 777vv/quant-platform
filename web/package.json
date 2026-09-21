@@ -1,0 +1,39 @@
+{
+  "name": "quant-web-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/copy-dist.js",
+    "build:only": "vite build",
+    "type-check": "vue-tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write src/",
+    "check:style": "node scripts/check-style.mjs"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "axios": "^1.7.9",
+    "dompurify": "^3.4.15",
+    "echarts": "^5.6.0",
+    "element-plus": "^2.9.1",
+    "marked": "^18.0.13",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-vue": "^9.32.0",
+    "prettier": "^3.4.2",
+    "typescript": "~5.6.3",
+    "typescript-eslint": "^8.18.0",
+    "vite": "^5.4.11",
+    "vue-tsc": "^2.2.0"
+  }
+}

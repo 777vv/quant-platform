@@ -1,0 +1,26 @@
+# build
+target/
+*.class
+*.jar
+
+# frontend
+web/node/
+web/node_modules/
+web/dist/
+web/package-lock.json
+quant-web/src/main/resources/static/
+
+# ide
+.idea/
+*.iml
+.vscode/
+
+# runtime
+logs/
+.env
+
+# os
+.DS_Store
+Thumbs.db
+
+*.log

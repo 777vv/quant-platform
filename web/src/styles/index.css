@@ -1,0 +1,74 @@
+/**
+ * 全局基础样式与工具类（V2.0 数据驾驶舱）
+ * 顺序：token → Element Plus 覆盖 → 基础样式 → 工具类
+ * 规范见 .zcode/skills/frontend-ui/SKILL.md
+ */
+@import './tokens.css';
+@import './element-override.css';
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    'Helvetica Neue',
+    Helvetica,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    Arial,
+    sans-serif;
+  font-size: var(--q-font-base);
+  color: var(--q-text-primary);
+  background: var(--q-bg-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 涨跌语义类（红涨绿跌，全站唯一来源） ---------- */
+.text-up {
+  color: var(--q-color-up);
+}
+
+.text-down {
+  color: var(--q-color-down);
+}
+
+.text-flat {
+  color: var(--q-color-flat);
+}
+
+/* ---------- 页面骨架 ---------- */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+}
+
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-3);
+}
+
+/* ---------- 辅助文字 ---------- */
+.muted {
+  font-size: var(--q-font-xs);
+  color: var(--q-text-muted);
+}
+
+.sub-text {
+  font-size: var(--q-font-xs);
+  color: var(--q-text-secondary);
+}
+
+/* ---------- 数值展示：等宽数字，避免跳动 ---------- */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}

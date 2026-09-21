@@ -1,0 +1,165 @@
+# ============ 应用基础配置 ============
+spring:
+  application:
+    # 应用名（日志/监控标识）
+    name: quant-platform
+  profiles:
+    # 默认激活 dev；生产由环境变量 SPRING_PROFILES_ACTIVE=prod 覆盖
+    active: dev
+  sql:
+    init:
+      # 每次启动执行 schema.sql（全部 IF NOT EXISTS，幂等建表）
+      mode: always
+      # 脚本编码
+      encoding: utf-8
+  # ============ AI 助手（V3.0：模型配置改到数据库，界面在【平台配置 → AI 模型配置】） ============
+  # 关闭 Spring AI 的 chat 自动装配：模型/端点/Token 改为运行时从数据库读取（可随时切换，无需重启），
+  # 客户端由 AiChatClientFactory 用 OpenAiChatOptions(baseUrl/apiKey/model) 现场构建
+  ai:
+    model:
+      chat: none
+    openai:
+      # 【已不再把密钥写进配置文件】：这三项只用于"库内还没有配置时"的一次性导入，
+      # 导入后模型配置的唯一来源是数据库（界面：平台配置 → AI 模型配置）。
+      # 需要再走一次导入时，用环境变量 ZHIPU_API_KEY 启动即可；留空则什么都不做。
+      api-key: ${ZHIPU_API_KEY:}
+      # 智谱 OpenAI 兼容端点（注意需带 /v4 后缀）
+      base-url: https://open.bigmodel.cn/api/paas/v4
+      chat:
+        options:
+          # 模型名：以智谱控制台在售型号为准（glm-4-flash 为免费档，可换 glm-4-plus 等）
+          model: glm-4-flash
+  # ============ 邮件通知 SMTP（FR4，M4-04；技术文档 6.9：配置文件维护、不建表） ============
+  mail:
+    # SMTP 服务器地址（如 smtp.qq.com / smtp.163.com）；留空表示不启用邮件
+    # V4.8：授权码等敏感值改为环境变量注入（${VAR:默认}，默认空），明文只留在本地 .env（不入库）
+    host: ${MAIL_HOST:}
+    # SMTP 端口：SSL 常用 465，STARTTLS 用 587
+    port: ${MAIL_PORT:465}
+    # SMTP 登录账号（通常即发件邮箱；QQ/163 使用授权码登录时此处仍填邮箱）
+    username: ${MAIL_USERNAME:}
+    # SMTP 密码或授权码（QQ/163 需在邮箱设置中生成授权码，而非登录密码）
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          # 开启 SMTP 认证
+          auth: true
+          ssl:
+            # 465 端口 SSL 加密；587 端口置 false 并启用下方 starttls
+            enable: true
+          starttls:
+            # STARTTLS 加密（587 端口启用）
+            enable: false
+
+server:
+  # 服务端口（容器内固定 8080，compose 映射宿主机 8080）
+  port: 8080
+
+# ============ MyBatis-Plus ============
+mybatis-plus:
+  configuration:
+    # 数据库下划线列名 <-> Java 驼峰字段自动映射
+    map-underscore-to-camel-case: true
+  global-config:
+    # 关闭启动 banner
+    banner: false
+
+# ============ Sa-Token 鉴权 ============
+sa-token:
+  # token 请求头/cookie 名（前端 axios 以此名携带）
+  token-name: satoken
+  # 会话有效期：7 天（FR4 业务规则 3）
+  timeout: 604800
+  # 不启用"无操作冻结"（active-timeout 关闭）
+  active-timeout: -1
+  # token 风格：UUID
+  token-style: uuid
+  # 允许同一账号多端同时在线
+  is-concurrent: true
+  # 关闭 SaToken 自身日志
+  is-log: false
+
+# ============ 平台自定义配置 ============
+quant:
+  init:
+    # 首次启动自动创建的管理员账号（登录后请立即修改密码）
+    admin-username: admin
+    admin-password: admin123
+  eastmoney:
+    # 数据源总开关（外部接口异常时可置 false 熔断，FR 非功能需求）
+    enabled: true
+    # 相邻两次请求最小间隔毫秒（限频，技术文档 5.4）
+    interval-ms: 300
+    # 连接超时毫秒
+    connect-timeout-ms: 5000
+    # 读取超时毫秒
+    read-timeout-ms: 10000
+    # 失败重试次数（指数退避 1s/2s/4s）
+    retry-times: 3
+  fee:
+    # ETF 佣金率（万 2.5，回测撮合用，技术文档 6.5/11 节）
+    etf-commission: 0.00025
+    # ETF 单笔最低佣金（元）
+    etf-min-commission: 5
+    # 场外基金申购费率（一折口径）
+    otc-purchase: 0.0015
+    # 场外基金赎回费率
+    otc-redeem: 0.005
+    # 夏普比率计算的无风险利率（年化）
+    risk-free-rate: 0.02
+  dashboard:
+    # 仪表盘全球指数清单（secid 为东财代码；⚠️ 恒生科技为 124 前缀，实测确认）
+    indices:
+      - {secid: '1.000001', name: 上证指数, region: CN}
+      - {secid: '0.399001', name: 深证成指, region: CN}
+      - {secid: '0.399006', name: 创业板指, region: CN}
+      - {secid: '1.000688', name: 科创50, region: CN}
+      - {secid: '1.000300', name: 沪深300, region: CN}
+      - {secid: '100.HSI', name: 恒生指数, region: HK}
+      - {secid: '124.HSTECH', name: 恒生科技, region: HK}
+      - {secid: '100.DJIA', name: 道琼斯, region: US}
+      - {secid: '100.NDX', name: 纳斯达克, region: US}
+      - {secid: '100.SPX', name: 标普500, region: US}
+      - {secid: '100.N225', name: 日经225, region: ASIA}
+      - {secid: '100.KS11', name: 韩国KOSPI, region: ASIA}
+      - {secid: '100.STI', name: 新加坡海峡, region: ASIA}
+      - {secid: '100.TWII', name: 台湾加权, region: ASIA}
+      - {secid: '100.GDAXI', name: 德国DAX30, region: EU}
+      - {secid: '100.FTSE', name: 英国富时100, region: EU}
+      - {secid: '100.FCHI', name: 法国CAC40, region: EU}
+  sync-summary:
+    # ETF 数据允许滞后天数（M6-01 外部化）：超过即判为"滞后"并在仪表盘标红、触发告警邮件
+    etf-allowed-lag-days: 4
+    # 场外净值允许滞后天数（含 T+1 公布与节假日宽限）
+    otc-allowed-lag-days: 7
+    # 强制全部标记滞后（默认 false）：仅供"同步异常告警邮件"演练验证，正常运行时勿开
+    force-lagging: false
+  notify:
+    # 邮件通知总开关（M4-04）：false 时每日信号摘要静默跳过；测试邮件仍可手动发送
+    enabled: true
+    # 收件人邮箱：留空时取用户资料中的通知邮箱（平台配置维护）
+    to: ${MAIL_TO:}
+    # 发件人地址：留空时使用 SMTP 登录账号（spring.mail.username）
+    from: ${MAIL_FROM:}
+  ai:
+    # AI 助手中开关（M5）：false 时对话接口直接返回"已关闭"，不调用大模型
+    enabled: true
+    # 采样温度（平台级参数，模型切换不影响）：事实查询为主，过高易发散编造，取 0.3【V1.8 实测】
+    temperature: 0.3
+    # 会话记忆窗口：送入模型的最大消息条数（超出截断最早消息，MySQL 仍保留全量历史）
+    memory-window: 20
+    # 记忆窗口在 Redis 的缓存时长（小时）：过期后由 MySQL 最近窗口自动重建
+    memory-ttl-hours: 168
+    # 单次提问最大字符数（超长直接拒绝，避免异常消耗 token）
+    max-question-length: 2000
+    # 单次对话最长等待秒数（流式超时保护，防止上游挂死占用连接）
+    timeout-seconds: 60
+    # 工具调用限额（V4.5，替代 Spring AI 默认的单工具 40 次 / 合计 150 次）：
+    # 防"模型反复要求调工具"的轮数闸；与每日 token/费用额度（管总量）、流式超时（管卡死）互补。
+    # <=0 表示该维度不限制；on-limit-exceeded 取 RETURN_ERROR_RESPONSE（超限后让模型改用文字收尾）或 THROW（直接断流）
+    tool-limit:
+      max-calls-per-tool: 6       # 单个工具在一次对话里最多调用次数
+      max-total-tool-calls: 12    # 一次对话里全部工具合计调用上限
+      on-limit-exceeded: RETURN_ERROR_RESPONSE
+

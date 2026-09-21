@@ -1,0 +1,13 @@
+# 生产环境：容器内运行，全部敏感参数经环境变量注入（见 docker-compose.yml / .env）
+spring:
+  datasource:
+    # 默认指向 compose 内 mysql 服务，可经 SPRING_DATASOURCE_URL 覆盖
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://mysql:3306/quant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${SPRING_DATASOURCE_USERNAME:quant}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      # 默认指向 compose 内 redis 服务
+      host: ${SPRING_DATA_REDIS_HOST:redis}
+      port: ${SPRING_DATA_REDIS_PORT:6379}

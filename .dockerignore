@@ -1,0 +1,27 @@
+# Docker 构建上下文忽略清单（M6-02）
+# 目的：缩小构建上下文、加快构建，并避免把本地敏感文件（.env）与产物打进镜像层。
+.env
+.env.*
+!.env.example
+
+# 构建产物（容器内会重新构建）
+target/
+*/target/
+web/dist/
+web/node_modules/
+web/node/
+quant-web/src/main/resources/static/
+
+# 运行时与开发期文件
+logs/
+*.log
+.idea/
+.vscode/
+.git/
+.gitignore
+
+# 文档与辅助脚本（运行镜像不需要）
+docs/
+deploy/
+README.md
+*.md

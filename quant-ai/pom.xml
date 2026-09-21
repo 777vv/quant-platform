@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.quant</groupId>
+        <artifactId>quant-platform</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>quant-ai</artifactId>
+    <name>quant-ai</name>
+    <description>AI 股票助手：Spring AI + 智谱 GLM + Tools（M5 实现）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-fund</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.quant</groupId>
+            <artifactId>quant-strategy</artifactId>
+        </dependency>
+        <!-- M5 启用：Spring AI 2.0.1 GA 已移除 zhipuai 原生 starter（M1-01 实测确认），
+             改用 spring-ai-starter-model-openai + 智谱 OpenAI 兼容端点接入 GLM。
+             该 starter 依赖 spring-boot-starter-webclient（仅引入 WebClient，不切换响应式 Web 栈） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- 使用手册（V4.2）：单一来源是仓库根 docs/05-使用手册.md（面向使用），
+                 构建时拷进 classpath 的 ai/ 目录 —— AI 的手册工具与【使用手册】页读的是同一份，
+                 这样"手册"既在 docs 里可编辑，又一定随 jar 发布（Docker 同理）。
+                 只改手册内容时无需改代码，但需要重新构建（手册要进 jar）。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-platform-manual</id>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/ai</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <!-- 用 ASCII 通配符而不是中文文件名：pom.xml 里避免非 ASCII 路径 -->
+                                    <directory>${project.basedir}/../docs</directory>
+                                    <includes>
+                                        <include>05-*.md</include>
+                                    </includes>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8"/>
+  <title>数据同步异常告警</title>
+</head>
+<body style="margin:0;padding:24px;background:#f5f7fa;font-family:'Microsoft YaHei',Arial,sans-serif;color:#303133;">
+  <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #ebeef5;">
+    <div style="padding:20px 24px;background:#8b1f1f;color:#ffffff;">
+      <div style="font-size:18px;font-weight:bold;">量化投资平台 · 数据同步异常告警</div>
+      <div style="font-size:13px;margin-top:6px;color:#f2c6c6;" th:text="${time}">2026-09-15 22:05:00</div>
+    </div>
+    <div style="padding:20px 24px;">
+      <p style="font-size:14px;line-height:1.8;margin:0 0 16px;">
+        以下基金的数据新鲜度低于预期，可能影响信号计算与收益统计，请在平台“基金池”页对相应基金执行手动增量同步：
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+        <tr style="background:#f5f7fa;">
+          <th style="padding:8px 10px;text-align:left;border:1px solid #ebeef5;">基金</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #ebeef5;">类型</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #ebeef5;">本地最新数据日</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #ebeef5;">应达数据日</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="row : ${lagging}">
+          <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${row.fund}">510300 沪深300ETF</td>
+          <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${row.type}">场内ETF</td>
+          <td style="padding:8px 10px;border:1px solid #ebeef5;color:#f56c6c;" th:text="${row.last}">2026-09-03</td>
+          <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${row.expected}">2026-09-14</td>
+        </tr>
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:#909399;line-height:1.8;margin:16px 0 0;">
+        判定口径：ETF 数据超出 4 个自然日、场外净值超出 7 个自然日未追平即视为滞后（已含节假日宽限）。
+        若为长假期或数据源临时故障，可忽略本邮件。
+      </p>
+    </div>
+  </div>
+</body>
+</html>

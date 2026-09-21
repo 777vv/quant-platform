@@ -1,0 +1,133 @@
+import { del, get, post, put } from './request'
+import type { PageResult } from '@/types/api'
+
+export interface StrategyConfig {
+  id: number
+  fundCode: string
+  strategyType: string
+  strategyName: string
+  params: string
+  enabled: number
+}
+
+export interface StrategyTypeVO {
+  type: string
+  name: string
+}
+
+export interface BacktestRecord {
+  id: number
+  fundCode: string
+  strategyType: string
+  params: string
+  startDate: string
+  endDate: string
+  initialCapital: number
+  finalAssets: number | null
+  totalReturnPct: number | null
+  annualizedPct: number | null
+  maxDrawdownPct: number | null
+  ddPeakDate: string | null
+  ddTroughDate: string | null
+  ddRecoverDate: string | null
+  sharpe: number | null
+  winRate: number | null
+  tradeCount: number
+  status: number
+  errorMsg: string | null
+  equityCurve: string | null
+  drawdownCurve: string | null
+  benchmarkCurve: string | null
+}
+
+export interface BacktestTrade {
+  id: number
+  backtestId: number
+  tradeDate: string
+  direction: string
+  price: number
+  share: number
+  amount: number
+  fee: number
+  cashAfter: number
+  positionAfter: number
+  reason: string
+}
+
+export interface BacktestRequest {
+  fundCode: string
+  strategyType: string
+  params: Record<string, unknown>
+  startDate: string
+  endDate: string
+  initialCapital: number
+}
+
+export function strategyTypes() {
+  return get<StrategyTypeVO[]>('/strategies/types')
+}
+
+export function fundStrategies(code: string) {
+  return get<StrategyConfig[]>(`/funds/${code}/strategies`)
+}
+
+export function addStrategy(code: string, data: { strategyType: string; params: Record<string, unknown> }) {
+  return post<void>(`/funds/${code}/strategies`, data)
+}
+
+export function updateStrategy(id: number, data: { params?: Record<string, unknown>; enabled?: number }) {
+  return put<void>(`/strategies/${id}`, data)
+}
+
+export function deleteStrategy(id: number) {
+  return del<void>(`/strategies/${id}`)
+}
+
+export function createBacktest(data: BacktestRequest) {
+  return post<{ id: number }>('/backtest', data)
+}
+
+export function pageBacktest(fundCode: string | null, page = 1, size = 20) {
+  return get<PageResult<BacktestRecord>>('/backtest', { fundCode, page, size })
+}
+
+export function backtestDetail(id: number) {
+  return get<BacktestRecord>(`/backtest/${id}`)
+}
+
+export function backtestTrades(id: number, page = 1, size = 100) {
+  return get<PageResult<BacktestTrade>>(`/backtest/${id}/trades`, { page, size })
+}
+
+/** 策略信号记录（每日 21:00 任务生成） */
+export interface SignalRecord {
+  id: number
+  fundCode: string
+  strategyType: string
+  signalDate: string
+  direction: string
+  priceAt: number | null
+  suggestDesc: string
+  readFlag: number
+  notifiedFlag: number
+}
+
+/** 近 N 天信号列表（新→旧） */
+export function recentSignals(days = 7) {
+  return get<SignalRecord[]>('/strategies/signals', { days })
+}
+
+/** 手动触发一轮信号计算（返回生成条数；与定时任务共用锁） */
+export function runSignals() {
+  return post<number>('/strategies/signals/run')
+}
+
+/** 标记信号为已读（仪表盘未读红点消除） */
+export function markSignalsRead(ids: number[]) {
+  return post<void>('/strategies/signals/read', { ids })
+}
+
+/** 全部策略配置（自选列表批量展示"已配置策略"列） */
+export function allStrategyConfigs() {
+  return get<StrategyConfig[]>('/strategies/configs')
+}

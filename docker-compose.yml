@@ -1,0 +1,78 @@
+# 一键部署：应用(单容器,内嵌前端) + MySQL + Redis（cp .env.example .env 后 docker compose up -d --build）
+services:
+  # 应用容器：SpringBoot 单体（前端静态资源已打包进 jar）
+  app:
+    build: .
+    ports:
+      - "8080:8080"            # 宿主机端口:容器端口
+    environment:
+      SPRING_PROFILES_ACTIVE: prod                                     # 激活生产配置
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/quant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: quant                                # 业务库账号
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}                      # 来自 .env
+      SPRING_DATA_REDIS_HOST: redis                                    # compose 内 redis 服务
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY}                                  # 智谱 API Key（M5 AI 助手）
+      MAIL_HOST: ${MAIL_HOST}                                          # SMTP 服务器（M4 通知邮件）
+      MAIL_PORT: ${MAIL_PORT}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}                                  # SMTP 授权码
+      MAIL_FROM: ${MAIL_FROM}                                          # 发件人地址
+      QUANT_NOTIFY_TO: ${MAIL_TO:-}                                    # 通知收件人（留空则取用户资料邮箱）
+      QUANT_NOTIFY_FROM: ${MAIL_FROM:-}                                # 通知发件人（留空则用 SMTP 账号）
+    depends_on:
+      mysql:
+        condition: service_healthy    # 等 MySQL 健康检查通过再启动（保证首启建表）
+      redis:
+        condition: service_started
+    volumes:
+      - app-logs:/app/logs            # 日志持久化（app/error/eastmoney 三文件）
+    restart: unless-stopped
+
+  # MySQL 8.4：业务库（首启自动执行 schema.sql 建表）
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: quant               # 自动创建业务库
+      MYSQL_USER: quant
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql         # 数据持久化（重建容器不丢数据）
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      retries: 10
+    restart: unless-stopped
+
+  # MySQL 每日自动备份：mysqldump → backup-data 卷（保留期默认 14 天）
+  # 恢复方式见 README（gunzip + mysql < 备份文件）
+  mysql-backup:
+    image: mysql:8.4
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_PWD: ${DB_ROOT_PASSWORD}                                   # 备份账号口令（避免出现在进程参数里）
+      DB_HOST: mysql                                                   # 备份源（compose 服务名）
+      DB_NAME: quant
+      DB_USER: root
+      RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}                     # 备份保留天数
+      INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}              # 备份间隔：默认每日一次
+    volumes:
+      - backup-data:/backup                                            # 备份文件持久化
+      - ./deploy/mysql-backup.sh:/usr/local/bin/mysql-backup.sh:ro     # 备份脚本（只读挂载）
+    entrypoint: ["sh", "/usr/local/bin/mysql-backup.sh"]
+    restart: unless-stopped
+
+  # Redis 7：行情缓存 / 分布式锁 / AI会话 / 任务进度
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  mysql-data: {}      # 业务库数据
+  redis-data: {}      # 缓存/锁/会话
+  app-logs: {}        # 应用日志
+  backup-data: {}     # MySQL 每日备份

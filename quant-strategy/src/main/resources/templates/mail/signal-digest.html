@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8"/>
+  <title>交易信号摘要</title>
+</head>
+<body style="margin:0;padding:24px;background:#f5f7fa;font-family:'Microsoft YaHei',Arial,sans-serif;color:#303133;">
+  <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #ebeef5;">
+    <div style="padding:20px 24px;background:#1f2d3d;color:#ffffff;">
+      <div style="font-size:18px;font-weight:bold;">量化投资平台 · 交易信号</div>
+      <div style="font-size:13px;margin-top:6px;color:#c0c4cc;" th:text="${date} + ' 收盘后生成'">2026-09-15 收盘后生成</div>
+    </div>
+    <div style="padding:20px 24px;">
+      <p style="font-size:14px;line-height:1.8;margin:0 0 16px;">以下策略信号已触发，请登录平台查看详情并自行决策：</p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+        <tr style="background:#f5f7fa;">
+          <th style="padding:8px 10px;text-align:left;border:1px solid #ebeef5;">基金</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #ebeef5;">策略</th>
+          <th style="padding:8px 10px;text-align:center;border:1px solid #ebeef5;">方向</th>
+          <th style="padding:8px 10px;text-align:right;border:1px solid #ebeef5;">价格</th>
+          <th style="padding:8px 10px;text-align:left;border:1px solid #ebeef5;">建议</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="s : ${signals}">
+          <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${s.fund}">510300</td>
+          <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${s.strategy}">网格交易</td>
+          <td style="padding:8px 10px;text-align:center;border:1px solid #ebeef5;">
+            <span th:if="${s.direction == 'BUY'}" style="color:#f56c6c;font-weight:bold;">买入</span>
+            <span th:if="${s.direction == 'SELL'}" style="color:#67c23a;font-weight:bold;">卖出</span>
+          </td>
+          <td style="padding:8px 10px;text-align:right;border:1px solid #ebeef5;" th:text="${s.price}">4.0123</td>
+          <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${s.desc}">现价较锚点下穿一格</td>
+        </tr>
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:#909399;line-height:1.8;margin:16px 0 0;">
+        本邮件由个人量化投资助手自动发送，内容为策略计算结果，仅代表历史数据推演，不构成投资建议。
+        若不想继续接收，可在配置中将 quant.notify.enabled 置为 false。
+      </p>
+    </div>
+  </div>
+</body>
+</html>

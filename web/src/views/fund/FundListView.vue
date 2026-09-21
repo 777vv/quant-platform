@@ -54,9 +54,9 @@
           stripe
         >
           <!-- reserve-selection：翻页/换筛选后保留已勾选（最多 3 只用于走势对比） -->
-          <el-table-column type="selection" width="42" reserve-selection :selectable="selectableFund" />
-          <el-table-column prop="fundCode" label="代码" width="88" />
-          <el-table-column prop="fundName" label="名称" min-width="180" show-overflow-tooltip>
+          <el-table-column type="selection" width="40" reserve-selection :selectable="selectableFund" />
+          <el-table-column prop="fundCode" label="代码" min-width="76" />
+          <el-table-column prop="fundName" label="名称" min-width="170" show-overflow-tooltip>
             <template #default="{ row }">
               <!-- 名称即详情入口（点击进基金详情），无需再放独立的"详情"按钮 -->
               <span
@@ -71,7 +71,7 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="跟踪指数" width="150">
+          <el-table-column label="跟踪指数" min-width="118">
             <template #default="{ row }">
               <div v-if="row.indexName" class="index-cell">
                 <span class="index-cell-name">{{ row.indexName }}</span>
@@ -80,7 +80,7 @@
               <span v-else class="muted">--</span>
             </template>
           </el-table-column>
-          <el-table-column label="标签" width="120">
+          <el-table-column label="标签" min-width="100">
             <template #default="{ row }">
               <template v-if="fundTagMap[row.fundCode]?.length">
                 <el-tag
@@ -95,15 +95,15 @@
               <span v-else class="muted">--</span>
             </template>
           </el-table-column>
-          <el-table-column label="最新价/净值" width="110" align="right">
+          <el-table-column label="最新价/净值" min-width="96" align="right">
             <template #default="{ row }">{{ fmt(row.lastPrice, 4) }}</template>
           </el-table-column>
-          <el-table-column label="涨跌幅%" width="100" align="right">
+          <el-table-column label="涨跌幅%" min-width="86" align="right">
             <template #default="{ row }">
               <span :class="changeClass(row.changePct)">{{ fmt(row.changePct, 2) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="规模(亿)" width="95" align="right">
+          <el-table-column label="规模(亿)" min-width="88" align="right">
             <template #default="{ row }">
               <el-tooltip v-if="row.fundScale != null" :content="`净资产规模，截止 ${row.fundScaleDate ?? '未知'}`" placement="top">
                 <span class="num">{{ row.fundScale.toFixed(2) }}</span>
@@ -111,7 +111,7 @@
               <span v-else class="num">--</span>
             </template>
           </el-table-column>
-          <el-table-column label="溢价率" width="95" align="right">
+          <el-table-column label="溢价率" min-width="88" align="right">
             <template #default="{ row }">
               <el-tooltip
                 v-if="row.premiumRate != null"
@@ -123,7 +123,7 @@
               <span v-else class="num">--</span>
             </template>
           </el-table-column>
-          <el-table-column label="运作费率" width="100" align="right">
+          <el-table-column label="运作费率" min-width="88" align="right">
             <template #default="{ row }">
               <el-tooltip v-if="row.opFeeRate != null" :content="feeBreakdown(row)" placement="top">
                 <span class="num">{{ row.opFeeRate.toFixed(2) }}%</span>
@@ -131,7 +131,7 @@
               <span v-else class="num">--</span>
             </template>
           </el-table-column>
-          <el-table-column label="股息率(TTM)" width="110" align="right">
+          <el-table-column label="股息率(TTM)" min-width="104" align="right">
             <template #default="{ row }">
               <el-tooltip
                 v-if="row.dividendYieldTtm != null"
@@ -143,10 +143,10 @@
               <span v-else class="num muted">--</span>
             </template>
           </el-table-column>
-          <el-table-column label="估值百分位%" width="110" align="right">
+          <el-table-column label="估值百分位%" min-width="104" align="right">
             <template #default="{ row }">{{ row.valuationPercentile == null ? '--' : row.valuationPercentile }}</template>
           </el-table-column>
-          <el-table-column label="已配策略" width="125">
+          <el-table-column label="已配策略" min-width="108">
             <template #default="{ row }">
               <template v-if="strategyTags(row.fundCode).length">
                 <el-tag
@@ -162,10 +162,11 @@
               <span v-else class="muted">未配置</span>
             </template>
           </el-table-column>
-          <el-table-column prop="lastSyncDate" label="最后同步" width="100">
+          <el-table-column prop="lastSyncDate" label="最后同步" min-width="96">
             <template #default="{ row }">{{ row.lastSyncDate || '--' }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="200" fixed="right">
+          <!-- 操作列 fixed：必须用确定宽度（min-width 与固定列定位不兼容），故这里保留 width -->
+          <el-table-column label="操作" width="168" fixed="right">
             <template #default="{ row }">
               <el-button size="small" :loading="syncingCode === row.fundCode" @click="handleSync(row)">同步</el-button>
               <el-button size="small" @click="openTagEdit(row.fundCode)">标签</el-button>

@@ -377,9 +377,16 @@ public class SyncServiceImpl implements SyncService {
 
     /** ETF 手动增量：自 last_sync_date 次日起 upsert（含当日盘中未定型数据） */
     private int syncEtfIncremental(FundBasic fund) {
-        LocalDate beg = fund.getLastSyncDate() == null
+        LocalDate today = LocalDate.now();
+        LocalDate cursor = fund.getLastSyncDate() == null
                 ? ImportServiceImpl.historyBegin(fund.getInceptionDate())
                 : fund.getLastSyncDate().plusDays(1);
+        // 当天的 K 线是"未定稿"的：开盘后数据源就给当天一行，但盘中会一直变，直到 15:00 收盘才是终值。
+        // 首轮同步写入当天那行后游标会推到今天，若照上面直接 +1 天，beg 就落到明天 →
+        // 拉取区间为空 → 当天价格永远停在第一次写入的那一刻（实测 515080 停在 09:30 的开盘价），
+        // 手动点"同步"也只会得到"无新数据"。故把下界夹在今天：当天的行每轮都重写一遍。
+        // 注：beg 被下面的 lambda 捕获，必须是有效最终变量，故用一次性求值而不是分支里重新赋值。
+        LocalDate beg = cursor.isAfter(today) ? today : cursor;
         int market = "SH".equals(fund.getMarket()) ? 1 : 0;
         List<EastmoneyClient.KlineItem> klines = client.fetchEtfKline(market, fund.getFundCode(), beg, LocalDate.now());
         int added = 0;
@@ -570,9 +577,13 @@ public class SyncServiceImpl implements SyncService {
 
     /** 场外净值增量：以区间前最后一行为基准链接复权净值；结束后刷新档案类基础数据 */
     private int syncOtcIncremental(FundBasic fund) {
-        LocalDate beg = fund.getLastSyncDate() == null
+        LocalDate today = LocalDate.now();
+        LocalDate cursor = fund.getLastSyncDate() == null
                 ? ImportServiceImpl.historyBegin(fund.getInceptionDate())
                 : fund.getLastSyncDate().plusDays(1);
+        // 与 ETF 同理把下界夹在今天：净值一旦写入当天，游标即到当天，此后不带夹取就永远拉不到当天，
+        // 若数据源当天晚些时候才发布/修正当日净值，补拉（次日 07:00）就会漏掉它。（beg 被 lambda 捕获，须有效最终）
+        LocalDate beg = cursor.isAfter(today) ? today : cursor;
         List<EastmoneyClient.NavItem> items = new ArrayList<>();
         int pageIndex = 1;
         while (pageIndex <= 20) {

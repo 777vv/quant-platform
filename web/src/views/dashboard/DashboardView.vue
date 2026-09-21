@@ -291,24 +291,31 @@
           <template #header><span>自选 7 日涨跌榜</span></template>
           <el-empty v-if="overview && overview.movers.length === 0" description="暂无数据" :image-size="60" />
           <template v-else>
-            <div class="mover-group-title">领涨</div>
-            <ul class="signal-list">
-              <li v-for="item in topMovers" :key="item.fundCode" class="signal-item">
-                <span class="signal-fund">{{ item.fundName }}</span>
-                <span class="index-pct" :class="changeColorClass(item.changePct7d)">
-                  {{ formatPercent(item.changePct7d) }}
-                </span>
-              </li>
-            </ul>
-            <div class="mover-group-title">领跌</div>
-            <ul class="signal-list">
-              <li v-for="item in bottomMovers" :key="item.fundCode" class="signal-item">
-                <span class="signal-fund">{{ item.fundName }}</span>
-                <span class="index-pct" :class="changeColorClass(item.changePct7d)">
-                  {{ formatPercent(item.changePct7d) }}
-                </span>
-              </li>
-            </ul>
+            <!-- 领涨与领跌并排：两榜合起来最多 10 条，竖排会让本卡比同排卡片高出一倍 -->
+            <div class="mover-columns">
+              <div class="mover-column">
+                <div class="mover-group-title">领涨</div>
+                <ul class="signal-list">
+                  <li v-for="item in topMovers" :key="item.fundCode" class="signal-item">
+                    <span class="signal-fund">{{ item.fundName }}</span>
+                    <span class="index-pct" :class="changeColorClass(item.changePct7d)">
+                      {{ formatPercent(item.changePct7d) }}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+              <div class="mover-column">
+                <div class="mover-group-title">领跌</div>
+                <ul class="signal-list">
+                  <li v-for="item in bottomMovers" :key="item.fundCode" class="signal-item">
+                    <span class="signal-fund">{{ item.fundName }}</span>
+                    <span class="index-pct" :class="changeColorClass(item.changePct7d)">
+                      {{ formatPercent(item.changePct7d) }}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            </div>
           </template>
         </el-card>
       </el-col>
@@ -459,8 +466,22 @@ const todaySignals = computed(() => {
   return signals.value.filter((signal) => signal.signalDate === latest)
 })
 
-const topMovers = computed(() => (overview.value?.movers ?? []).slice(0, 5))
-const bottomMovers = computed(() => (overview.value?.movers ?? []).slice(-5).reverse())
+/** 每榜最多展示条数 */
+const MOVER_SIZE = 5
+
+const topMovers = computed(() => (overview.value?.movers ?? []).slice(0, MOVER_SIZE))
+
+/**
+ * 领跌榜：取排序末尾的若干条，并**剔除已出现在领涨榜的基金**。
+ * 自选不足 10 只时两榜必然重叠（如 8 只时原来有 2 只会同时出现在领涨与领跌里），
+ * 同一只基金在两榜各说一次属于误导。
+ */
+const bottomMovers = computed(() => {
+  const all = overview.value?.movers ?? []
+  const taken = new Set(topMovers.value.map((item) => item.fundCode))
+  const rest = all.filter((item) => !taken.has(item.fundCode))
+  return rest.slice(-MOVER_SIZE).reverse()
+})
 
 /** 近 7 日逐日收益（元）：由 1M 曲线的相邻两日累计收益差派生 */
 const weekBars = computed(() => {
@@ -1232,5 +1253,36 @@ onUnmounted(() => {
   color: var(--q-text-muted);
   margin: var(--q-space-2) 0 var(--q-space-1);
   letter-spacing: 0.04em;
+}
+
+/* 领涨/领跌并排两列：卡片高度只按较长的一榜算，不再两榜相加 */
+.mover-columns {
+  display: flex;
+  gap: var(--q-space-3);
+}
+
+.mover-column {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 列宽只有半卡，长基金名必须可省略，否则会把涨跌幅顶出可视区（百分比永远可见） */
+.mover-columns .signal-fund {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mover-columns .index-pct {
+  flex: none;
+}
+
+/* 窄屏（手机/平板）两列会挤到看不清基金名，退回上下排布 */
+@media (max-width: 768px) {
+  .mover-columns {
+    display: block;
+  }
 }
 </style>

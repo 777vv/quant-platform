@@ -197,36 +197,40 @@
           border
           stripe
         >
-          <el-table-column prop="fundCode" label="代码" width="90" />
-          <el-table-column prop="fundName" label="名称" min-width="150" show-overflow-tooltip />
-          <el-table-column label="持有份额" width="110" align="right">
+          <!-- 列宽口径与「自选基金」表一致：数据列全部 min-width 让剩余宽度均分。
+               之前名称列是唯一的弹性列，独吞全部剩余宽度（1657px 表格里占到 650px+），
+           其余数字列被挤成固定窄列，视觉上头重脚轻 -->
+          <el-table-column prop="fundCode" label="代码" min-width="76" />
+          <el-table-column prop="fundName" label="名称" min-width="140" show-overflow-tooltip />
+          <el-table-column label="持有份额" min-width="96" align="right">
             <template #default="{ row }">{{ fmt(row.totalShare, 2) }}</template>
           </el-table-column>
-          <el-table-column label="成本价" width="90" align="right">
+          <el-table-column label="成本价" min-width="84" align="right">
             <template #default="{ row }">{{ fmt(row.avgCostPrice, 4) }}</template>
           </el-table-column>
-          <el-table-column label="现价/净值" width="100" align="right">
+          <el-table-column label="现价/净值" min-width="92" align="right">
             <template #default="{ row }">{{ fmt(row.lastPrice, 4) }}</template>
           </el-table-column>
-          <el-table-column label="市值" width="110" align="right">
+          <el-table-column label="市值" min-width="96" align="right">
             <template #default="{ row }">{{ fmt(row.marketValue, 2) }}</template>
           </el-table-column>
-          <el-table-column label="当日盈亏" width="100" align="right">
+          <el-table-column label="当日盈亏" min-width="92" align="right">
             <template #default="{ row }">
               <span :class="changeClass(row.dayPnl)">{{ fmt(row.dayPnl, 2) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="浮动盈亏" width="140" align="right">
+          <el-table-column label="浮动盈亏" min-width="120" align="right">
             <template #default="{ row }">
               <span :class="changeClass(row.floatingPnl)">
                 {{ fmt(row.floatingPnl, 2) }}（{{ row.floatingPnlPct == null ? '--' : row.floatingPnlPct }}%）
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="已实现盈亏" width="110" align="right">
+          <el-table-column label="已实现盈亏" min-width="96" align="right">
             <template #default="{ row }">{{ fmt(row.realizedPnl, 2) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="150" fixed="right">
+          <!-- 操作列 fixed：必须用确定宽度（与 min-width 不兼容） -->
+          <el-table-column label="操作" width="140" fixed="right">
             <template #default="{ row }">
               <el-button size="small" type="primary" plain @click="openEntry(row.fundCode, 1)">录流水</el-button>
               <el-button size="small" @click="$router.push(`/funds/${row.fundCode}`)">详情</el-button>

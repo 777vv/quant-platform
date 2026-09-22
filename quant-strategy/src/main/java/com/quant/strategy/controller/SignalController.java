@@ -1,10 +1,14 @@
 package com.quant.strategy.controller;
 
+import java.time.LocalDate;
 import java.util.List;
 
+import com.quant.common.result.PageResult;
 import com.quant.common.result.R;
+import com.quant.strategy.dto.SignalItemVO;
 import com.quant.strategy.entity.SignalRecord;
 import com.quant.strategy.service.SignalService;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,6 +36,21 @@ public class SignalController {
     @GetMapping("/signals")
     public R<List<SignalRecord>> signals(@RequestParam(defaultValue = "7") int days) {
         return R.ok(signalService.recent(Math.min(days, MAX_DAYS)));
+    }
+
+    /**
+     * 信号分页查询（【信号查询】页用；筛选条件都可空 = 不限，新→旧）。
+     */
+    @GetMapping("/signals/page")
+    public R<PageResult<SignalItemVO>> page(
+            @RequestParam(required = false) String fundCode,
+            @RequestParam(required = false) String direction,
+            @RequestParam(required = false) String strategyType,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(defaultValue = "1") long page,
+            @RequestParam(defaultValue = "20") long size) {
+        return R.ok(signalService.page(fundCode, direction, strategyType, startDate, endDate, page, size));
     }
 
     /** 手动触发一轮信号计算（调试/补算用；与定时任务共用 Redisson 锁） */

@@ -20,6 +20,10 @@ router
           <el-icon><Tickets /></el-icon>
           <span>交易流水</span>
         </el-menu-item>
+        <el-menu-item index="/signals">
+          <el-icon><Bell /></el-icon>
+          <span>信号查询</span>
+        </el-menu-item>
         <el-menu-item index="/compare">
           <el-icon><DataAnalysis /></el-icon>
           <span>基金对比</span>

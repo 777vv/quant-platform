@@ -4,13 +4,20 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.quant.common.exception.BizException;
+import com.quant.common.result.PageResult;
 import com.quant.common.util.JsonUtils;
+import com.quant.fund.entity.FundBasic;
 import com.quant.fund.entity.SyncLog;
 import com.quant.fund.enums.SyncTypeEnum;
+import com.quant.fund.mapper.FundBasicMapper;
 import com.quant.fund.mapper.SyncLogMapper;
 import com.quant.strategy.core.MarketDataLoader;
 import com.quant.strategy.core.MarketDataSeries;
@@ -18,6 +25,7 @@ import com.quant.strategy.core.Signal;
 import com.quant.strategy.core.Strategy;
 import com.quant.strategy.core.StrategyContext;
 import com.quant.strategy.core.StrategyRegistry;
+import com.quant.strategy.dto.SignalItemVO;
 import com.quant.strategy.entity.SignalRecord;
 import com.quant.strategy.entity.StrategyConfig;
 import com.quant.strategy.grid.GridStrategy;
@@ -52,6 +60,9 @@ public class SignalServiceImpl implements SignalService {
     /** 估值策略单年回看天数（自然日，含节假日冗余） */
     private static final int VAL_WINDOW_DAYS_PER_YEAR = 370;
 
+    /** 分页查询单页条数上限（防一次性拉全表） */
+    private static final long PAGE_SIZE_LIMIT = 200;
+
     /** 建议描述最长保留长度（列宽 255） */
     private static final int DESC_MAX_LEN = 255;
 
@@ -65,14 +76,18 @@ public class SignalServiceImpl implements SignalService {
 
     private final StrategyRegistry registry;
 
+    /** 基金档案（分页查询时批量解析基金名称用） */
+    private final FundBasicMapper fundBasicMapper;
+
     public SignalServiceImpl(StrategyConfigMapper configMapper, SignalRecordMapper signalRecordMapper,
                              SyncLogMapper syncLogMapper, MarketDataLoader marketDataLoader,
-                             StrategyRegistry registry) {
+                             StrategyRegistry registry, FundBasicMapper fundBasicMapper) {
         this.configMapper = configMapper;
         this.signalRecordMapper = signalRecordMapper;
         this.syncLogMapper = syncLogMapper;
         this.marketDataLoader = marketDataLoader;
         this.registry = registry;
+        this.fundBasicMapper = fundBasicMapper;
     }
 
     @Override
@@ -99,6 +114,58 @@ public class SignalServiceImpl implements SignalService {
         return signalRecordMapper.selectList(new LambdaQueryWrapper<SignalRecord>()
                 .ge(SignalRecord::getSignalDate, LocalDate.now().minusDays(days))
                 .orderByDesc(SignalRecord::getSignalDate).orderByAsc(SignalRecord::getFundCode));
+    }
+
+    @Override
+    public PageResult<SignalItemVO> page(String fundCode, String direction, String strategyType,
+            LocalDate startDate, LocalDate endDate, long page, long size) {
+        // 每页条数上限收紧（防一次性拉全表），页码从 1 起
+        Page<SignalRecord> result = signalRecordMapper.selectPage(
+                Page.of(Math.max(page, 1), Math.min(Math.max(size, 1), PAGE_SIZE_LIMIT)),
+                new LambdaQueryWrapper<SignalRecord>()
+                        .eq(hasText(fundCode), SignalRecord::getFundCode, trimToNull(fundCode))
+                        .eq(hasText(direction), SignalRecord::getDirection, trimToNull(direction))
+                        .eq(hasText(strategyType), SignalRecord::getStrategyType, trimToNull(strategyType))
+                        .ge(startDate != null, SignalRecord::getSignalDate, startDate)
+                        .le(endDate != null, SignalRecord::getSignalDate, endDate)
+                        .orderByDesc(SignalRecord::getSignalDate).orderByAsc(SignalRecord::getFundCode));
+        List<SignalRecord> records = result.getRecords();
+        // 本页出现的基金代码一次查回名称（避免逐行查库）；查不到的行前端回退显示代码
+        Map<String, String> names = new HashMap<>();
+        if (!records.isEmpty()) {
+            List<String> codes = records.stream().map(SignalRecord::getFundCode).distinct().toList();
+            fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                    .in(FundBasic::getFundCode, codes))
+                    .forEach(fund -> names.put(fund.getFundCode(), fund.getFundName()));
+        }
+        List<SignalItemVO> items = records.stream()
+                .map(record -> SignalItemVO.of(record, names.getOrDefault(record.getFundCode(), ""),
+                        strategyName(record.getStrategyType())))
+                .toList();
+        return PageResult.of(result.getTotal(), items);
+    }
+
+    /** 策略展示名（未知类型回退为类型码，与邮件摘要同一口径） */
+    private String strategyName(String strategyType) {
+        try {
+            return registry.getRequired(strategyType).name();
+        } catch (BizException e) {
+            return strategyType;
+        }
+    }
+
+    /** 非空判断（null 或全空白视为空条件） */
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    /** trim 到空即 null（避免把空白拼进查询条件） */
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     @Override

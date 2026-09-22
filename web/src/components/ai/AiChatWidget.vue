@@ -139,7 +139,15 @@
       </div>
 
       <!-- 右下角缩放手柄 -->
-      <div class="ai-resize" @mousedown.stop="startResize" />
+      <!-- 四角缩放手柄：拖任一角改变大小，对角保持锚定（se 右下 / nw 左上 / ne 右上 / sw 左下） -->
+      <span
+        v-for="dir in RESIZE_DIRS"
+        :key="dir"
+        class="ai-resize"
+        :class="`ai-resize--${dir}`"
+        :title="RESIZE_TITLE[dir]"
+        @mousedown.stop.prevent="startResize($event, dir)"
+      />
     </div>
   </Teleport>
 </template>
@@ -517,15 +525,60 @@ function collapsePanel() {
   open.value = false
 }
 
-/** 缩放面板尺寸 */
-function startResize(event: MouseEvent) {
+/** 缩放手柄的四个方向（模板 v-for 用） */
+const RESIZE_DIRS = ['se', 'nw', 'ne', 'sw'] as const
+
+/** 各方向的悬浮提示 */
+const RESIZE_TITLE: Record<(typeof RESIZE_DIRS)[number], string> = {
+  se: '拖动缩放（右下角）',
+  nw: '拖动缩放（左上角）',
+  ne: '拖动缩放（右上角）',
+  sw: '拖动缩放（左下角）'
+}
+
+/** 缩放方向类型 */
+type ResizeDir = (typeof RESIZE_DIRS)[number]
+
+/** 面板最小尺寸（与原右下角单手柄时一致） */
+const MIN_RESIZE_W = 360
+const MIN_RESIZE_H = 320
+
+/** 面板距视口边缘的最小留白 */
+const VIEWPORT_GAP = 8
+
+/**
+ * 四角缩放：被拖的角跟随鼠标，对角保持锚定。
+ * 拖西/北两角时同步移动面板原点（左/上缘跟着鼠标走、右/下缘不动），
+ * 宽高天然不小于最小值，无需再对尺寸做二次钳制。
+ */
+function startResize(event: MouseEvent, dir: ResizeDir) {
   const startX = event.clientX
   const startY = event.clientY
-  const originW = layout.w
-  const originH = layout.h
+  const origin = { x: layout.x, y: layout.y, w: layout.w, h: layout.h }
   const onMove = (moveEvent: MouseEvent) => {
-    layout.w = Math.min(Math.max(360, originW + moveEvent.clientX - startX), window.innerWidth - layout.x - 8)
-    layout.h = Math.min(Math.max(320, originH + moveEvent.clientY - startY), window.innerHeight - layout.y - 8)
+    const dx = moveEvent.clientX - startX
+    const dy = moveEvent.clientY - startY
+    let { x, y, w, h } = origin
+    if (dir.includes('e')) {
+      // 右缘跟鼠标：不越过屏幕右界，也不小于最小宽
+      w = Math.min(Math.max(MIN_RESIZE_W, origin.w + dx), window.innerWidth - origin.x - VIEWPORT_GAP)
+    }
+    if (dir.includes('s')) {
+      h = Math.min(Math.max(MIN_RESIZE_H, origin.h + dy), window.innerHeight - origin.y - VIEWPORT_GAP)
+    }
+    if (dir.includes('w')) {
+      // 左缘跟鼠标：不越过屏幕左界，且保证右缘不动时宽度不小于最小值
+      x = Math.min(Math.max(0, origin.x + dx), origin.x + origin.w - MIN_RESIZE_W)
+      w = origin.x + origin.w - x
+    }
+    if (dir.includes('n')) {
+      y = Math.min(Math.max(0, origin.y + dy), origin.y + origin.h - MIN_RESIZE_H)
+      h = origin.y + origin.h - y
+    }
+    layout.x = x
+    layout.y = y
+    layout.w = w
+    layout.h = h
   }
   const onUp = () => {
     window.removeEventListener('mousemove', onMove)
@@ -886,13 +939,40 @@ onMounted(() => {
   line-height: 1.5;
 }
 
+/* 四角缩放手柄：基类只定尺寸，位置与对角线光标由方向修饰类给出 */
 .ai-resize {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  z-index: 10;
   width: 14px;
   height: 14px;
+}
+
+/* 每角画一个小三角提示可拖（斜向渐变指向面板外侧） */
+.ai-resize--se {
+  right: 0;
+  bottom: 0;
   cursor: nwse-resize;
   background: linear-gradient(135deg, transparent 50%, var(--q-text-muted) 50%);
+}
+
+.ai-resize--nw {
+  left: 0;
+  top: 0;
+  cursor: nwse-resize;
+  background: linear-gradient(315deg, transparent 50%, var(--q-text-muted) 50%);
+}
+
+.ai-resize--ne {
+  right: 0;
+  top: 0;
+  cursor: nesw-resize;
+  background: linear-gradient(45deg, transparent 50%, var(--q-text-muted) 50%);
+}
+
+.ai-resize--sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
+  background: linear-gradient(225deg, transparent 50%, var(--q-text-muted) 50%);
 }
 </style>

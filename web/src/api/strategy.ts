@@ -127,6 +127,37 @@ export function markSignalsRead(ids: number[]) {
   return post<void>('/strategies/signals/read', { ids })
 }
 
+/** 信号行视图（【信号查询】页用；后端已补齐展示字段） */
+export interface SignalItem extends SignalRecord {
+  /** 基金名称（库里查不到时为空串，界面回退显示代码） */
+  fundName: string
+  /** 策略展示名（网格交易 / 估值百分位；未知类型回退类型码） */
+  strategyName: string
+}
+
+/** 信号分页查询参数（筛选条件都可空 = 不限） */
+export interface SignalPageQuery {
+  /** 基金代码（精确匹配） */
+  fundCode?: string
+  /** 方向（BUY/SELL/HOLD） */
+  direction?: string
+  /** 策略类型（GRID/VAL_PERCENTILE） */
+  strategyType?: string
+  /** 信号日期下界（含，yyyy-MM-dd） */
+  startDate?: string
+  /** 信号日期上界（含，yyyy-MM-dd） */
+  endDate?: string
+  /** 页码（1 起） */
+  page: number
+  /** 每页条数 */
+  size: number
+}
+
+/** 信号分页查询（新→旧） */
+export function signalsPage(params: SignalPageQuery) {
+  return get<PageResult<SignalItem>>('/strategies/signals/page', params)
+}
+
 /** 全部策略配置（自选列表批量展示"已配置策略"列） */
 export function allStrategyConfigs() {
   return get<StrategyConfig[]>('/strategies/configs')

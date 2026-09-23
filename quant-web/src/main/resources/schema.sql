@@ -463,6 +463,22 @@ INSERT IGNORE INTO sys_mail_config (id, enabled, host, port, username, password,
 SELECT 1, 0, NULL, 465, NULL, NULL, NULL, NULL
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_mail_config WHERE id = 1);
 
+-- V5.20 微信通知配置（V5.20：企业微信自建应用 + 微信插件 → 消息直达个人微信；单行配置）
+-- Secret 明文存本机库（与邮件授权码同一约定），接口打码、留空不覆盖。
+CREATE TABLE IF NOT EXISTS sys_wecom_config (
+  id         BIGINT PRIMARY KEY COMMENT '固定主键（单行配置，值恒为 1）',
+  enabled    TINYINT      DEFAULT 0 COMMENT '微信通知总开关：1 启用（交易信号推送），0 关闭',
+  corpid     VARCHAR(64)  DEFAULT NULL COMMENT '企业 ID（企业微信 myqyapi 后台-我的企业）',
+  agent_id   VARCHAR(32)  DEFAULT NULL COMMENT '自建应用的 AgentId',
+  secret     VARCHAR(128) DEFAULT NULL COMMENT '自建应用的 Secret（明文存本机库；接口打码）',
+  touser     VARCHAR(256) DEFAULT '@all' COMMENT '接收人（企业微信 userid，多个用 | 分隔；@all=全员）',
+  updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近修改时间'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '微信通知配置表';
+
+INSERT IGNORE INTO sys_wecom_config (id, enabled, corpid, agent_id, secret, touser)
+SELECT 1, 0, NULL, NULL, NULL, '@all'
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_wecom_config WHERE id = 1);
+
 -- V5.3 基金规模历史（每日档案刷新成功后落一行，幂等同日覆盖；供行情图「基金规模」副图使用。
 -- 注意：数据源只披露当前规模，历史无法回补，曲线自本表上线日起逐日积累）
 CREATE TABLE IF NOT EXISTS fund_scale_history (
@@ -474,3 +490,29 @@ CREATE TABLE IF NOT EXISTS fund_scale_history (
   created_at  DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   UNIQUE KEY uk_fund_date (fund_code, stat_date)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '基金规模历史表';
+
+-- V5.24 市场休市日名单（交易日判定）：把"今天是不是交易日"从"周一到周五"修正为
+-- "工作日且不在休市名单"——定时任务（信号推送/盘中同步）据此在节假日不动作。
+-- source=manual：交易所公告的法定节假日休市安排（**每年公布次年安排后需补录次年休市日**，见下）；
+-- source=observed：平台盘面自判确认的休市日（连续两轮成功请求但无当天 bar）自动补录，可人工删除。
+-- 周末不落库：判定时直接按星期几排除，避免名单里堆满无意义的周六日。
+CREATE TABLE IF NOT EXISTS market_holiday (
+  id           BIGINT PRIMARY KEY AUTO_INCREMENT,
+  holiday_date DATE        NOT NULL COMMENT '休市日期（自然日）',
+  holiday_name VARCHAR(64) DEFAULT NULL COMMENT '休市说明（如 中秋节、国庆节；自判写入判定依据）',
+  source       VARCHAR(16) NOT NULL DEFAULT 'manual' COMMENT '来源：manual=人工/内置名单，observed=平台盘面自判',
+  created_at   DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  UNIQUE KEY uk_holiday_date (holiday_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '市场休市日名单（交易日判定用）';
+
+-- 2026 年剩余休市日（依据证监会 2026 年节假日休市安排 / 三大交易所公告）：
+-- 中秋节 9/25（周五）休市，9/28（周一）开市；国庆节 10/1（周四）~10/7（周三）休市，10/8（周四）开市。
+-- 名单只登记"工作日里的休市日"，周末（9/26、9/27、10/3、10/4）不登记。
+-- ⚠️ 次年（2027）安排在国务院/交易所公布后（通常 11-12 月）按同样格式追加：一行 INSERT IGNORE 即可。
+INSERT IGNORE INTO market_holiday (holiday_date, holiday_name, source) VALUES
+  ('2026-09-25', '中秋节', 'manual'),
+  ('2026-10-01', '国庆节', 'manual'),
+  ('2026-10-02', '国庆节', 'manual'),
+  ('2026-10-05', '国庆节', 'manual'),
+  ('2026-10-06', '国庆节', 'manual'),
+  ('2026-10-07', '国庆节', 'manual');

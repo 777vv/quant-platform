@@ -44,6 +44,7 @@ import com.quant.fund.service.DividendService;
 import com.quant.fund.service.FundScaleHistoryService;
 import com.quant.fund.service.SyncService;
 import com.quant.fund.service.TaskProgressStore;
+import com.quant.fund.service.TradingCalendarService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -114,6 +115,9 @@ public class SyncServiceImpl implements SyncService {
     /** 基金规模历史（档案刷新成功后逐日落一行） */
     private final FundScaleHistoryService scaleHistoryService;
 
+    /** 交易日判定（V5.24）：休市名单 + 周末，节假日不再空跑外部请求 */
+    private final TradingCalendarService tradingCalendarService;
+
     private final TaskProgressStore progressStore;
 
     private final TransactionTemplate transactionTemplate;
@@ -130,7 +134,8 @@ public class SyncServiceImpl implements SyncService {
                            TaskProgressStore progressStore, TransactionTemplate transactionTemplate,
                            DashboardProperties dashboardProperties, LockUtils lockUtils,
                            StringRedisTemplate redisTemplate, FundPositionMapper positionMapper,
-                           DividendService dividendService, FundScaleHistoryService scaleHistoryService) {
+                           DividendService dividendService, FundScaleHistoryService scaleHistoryService,
+                           TradingCalendarService tradingCalendarService) {
         this.client = client;
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
@@ -146,6 +151,7 @@ public class SyncServiceImpl implements SyncService {
         this.positionMapper = positionMapper;
         this.dividendService = dividendService;
         this.scaleHistoryService = scaleHistoryService;
+        this.tradingCalendarService = tradingCalendarService;
     }
 
     @Override
@@ -697,8 +703,7 @@ public class SyncServiceImpl implements SyncService {
         if (!morning && !afternoon) {
             return;
         }
-        if (isConfirmedHoliday()) {
-            LOGGER.debug("今日判定为节假日（数据源自判），盘中同步跳过");
+        if (isMarketClosedToday()) {
             return;
         }
         lockUtils.runWithLock("job:sync:watch", 60, () -> {
@@ -728,6 +733,23 @@ public class SyncServiceImpl implements SyncService {
         });
     }
 
+    /**
+     * 今日是否休市（V5.24）：两层判定，任一命中即休市——
+     * ① 休市名单（周末 + 法定节假日安排，确定性，见 {@link TradingCalendarService}）；
+     * ② 盘面自判（数据源自身回答"今天开不开市"，用于名单未覆盖的临时休市）。
+     */
+    private boolean isMarketClosedToday() {
+        if (!tradingCalendarService.isTradingDay(LocalDate.now())) {
+            LOGGER.debug("今日非交易日（周末/休市名单），任务跳过");
+            return true;
+        }
+        if (isConfirmedHoliday()) {
+            LOGGER.debug("今日判定为节假日（数据源自判），任务跳过");
+            return true;
+        }
+        return false;
+    }
+
     /** 今天已被确认为节假日（数据源自判） */
     private boolean isConfirmedHoliday() {
         String value = redisTemplate.opsForValue().get(HOLIDAY_KEY_PREFIX + LocalDate.now());
@@ -753,6 +775,8 @@ public class SyncServiceImpl implements SyncService {
                     LocalDate.now().plusDays(1).atStartOfDay());
             redisTemplate.opsForValue().set(key, "confirmed", tillMidnight);
             LOGGER.info("连续两轮未见当天行情，判定今日为节假日（数据源自判），盘中同步今日不再发起");
+            // 落进休市名单：既是留痕（source=observed，可人工核对/删除），也让后续判定不再依赖 Redis 是否过期
+            tradingCalendarService.recordObservedHoliday(LocalDate.now(), "盘面自判：连续两轮成功请求均无当天行情");
         } else if (value == null) {
             redisTemplate.opsForValue().set(key, "pending", java.time.Duration.ofSeconds(HOLIDAY_PENDING_SECONDS));
         }
@@ -765,8 +789,7 @@ public class SyncServiceImpl implements SyncService {
      */
     @Override
     public void refreshAllProfiles() {
-        if (isConfirmedHoliday()) {
-            LOGGER.debug("今日判定为节假日（数据源自判），15:05 档案刷新跳过");
+        if (isMarketClosedToday()) {
             return;
         }
         lockUtils.runWithLock("job:profile:refresh", 60, () -> {

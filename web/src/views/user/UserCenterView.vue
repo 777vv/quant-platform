@@ -255,6 +255,66 @@
         </el-form-item>
       </el-form>
     </el-card>
+
+    <!-- 第四行：微信通知通栏（V5.20：企业微信自建应用 + 微信插件 → 消息直达个人微信） -->
+    <el-card shadow="never">
+      <template #header>
+        <div class="card-header">
+          <span>微信通知</span>
+          <el-tag :type="wecom?.enabled ? 'success' : 'info'" size="small">
+            {{ wecom?.enabled ? '已开启' : '未开启' }}
+          </el-tag>
+        </div>
+      </template>
+      <el-form :model="wecomForm" label-width="90px">
+        <el-row :gutter="16">
+          <el-col :span="8" :xs="24">
+            <el-form-item label="企业 ID">
+              <el-input v-model="wecomForm.corpid" placeholder="企业微信后台-我的企业-企业 ID（打码值=已保存，不改动即保持原值）" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="AgentId">
+              <el-input v-model="wecomForm.agentId" placeholder="自建应用的 AgentId（纯数字）" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="通知开关">
+              <el-switch v-model="wecomForm.enabled" active-text="开启" inactive-text="关闭" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="Secret">
+              <el-input
+                v-model="wecomForm.secret"
+                type="password"
+                show-password
+                autocomplete="off"
+                :placeholder="wecomSecretPlaceholder"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8" :xs="24">
+            <el-form-item label="接收人">
+              <el-input v-model="wecomForm.touser" placeholder="@all = 全员；或企业微信 userid" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <div class="form-note">
+          通过<b>企业微信自建应用 + 微信插件</b>把交易信号推送到你的个人微信：注册企业微信 → 创建自建应用
+          （拿到企业 ID / AgentId / Secret）→ 在企业微信「我的企业 → 微信插件」扫码关注，再点【发送测试消息】验证。
+          企业 ID 与 Secret 显示为打码值（如 ww6f***）时表示<b>已保存，不改动即保持原值</b>；要更换请整段重新填写。
+          报错会直接指出该改哪个字段（如 40001=Secret 不正确、40013=企业 ID 不正确）。
+          <b>可先点【发送测试消息】验证凭据</b>，确认收到后再打开通知开关（通道开启后每日 9:00 自动推送交易信号）。
+        </div>
+        <el-form-item class="form-actions">
+          <el-button type="primary" :loading="savingWecom" @click="saveWecom">保存微信配置</el-button>
+          <el-button plain :loading="testingWecom" :disabled="!wecomForm.corpid || !wecomForm.agentId" @click="sendWecomTest">
+            发送测试消息
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
   </div>
 </template>
 
@@ -263,7 +323,16 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { getProfile, updatePassword, updateProfile } from '@/api/auth'
-import { mailConfig, saveMailConfig, testMail, type MailConfigVO } from '@/api/notify'
+import {
+  mailConfig,
+  saveMailConfig,
+  testMail,
+  wecomConfig,
+  saveWecomConfig,
+  testWecom,
+  type MailConfigVO,
+  type WecomConfigVO
+} from '@/api/notify'
 import {
   aiModelConfig,
   aiModelList,
@@ -446,6 +515,70 @@ async function loadMail() {
   mailForm.toAddr = mail.value.to ?? ''
 }
 
+// ===== 微信通知（V5.20：企业微信自建应用 + 微信插件 → 消息直达个人微信；与邮件并行互不影响） =====
+const wecom = ref<WecomConfigVO | null>(null)
+const savingWecom = ref(false)
+const testingWecom = ref(false)
+const wecomForm = reactive({
+  enabled: false,
+  corpid: '',
+  agentId: '',
+  secret: '',
+  touser: '@all'
+})
+
+/** Secret 占位：已配置时提示留空不改（首次则提示粘贴自建应用 Secret） */
+const wecomSecretPlaceholder = computed(() => (wecom.value?.configured ? '已配置，留空保持原 Secret' : '自建应用详情页的 Secret'))
+
+async function loadWecom() {
+  wecom.value = await wecomConfig()
+  wecomForm.enabled = wecom.value.enabled
+  wecomForm.corpid = wecom.value.corpid ?? ''
+  wecomForm.agentId = wecom.value.agentId ?? ''
+  wecomForm.secret = ''
+  wecomForm.touser = wecom.value.touser ?? '@all'
+}
+
+/** 保存微信配置（secret 留空 = 保持原值；保存即生效，无需重启） */
+async function saveWecom() {
+  savingWecom.value = true
+  try {
+    const saved = await saveWecomConfig({
+      enabled: wecomForm.enabled,
+      corpid: wecomForm.corpid.trim() || undefined,
+      agentId: wecomForm.agentId.trim() || undefined,
+      // ⚠️ secret 必须一起提交：曾漏传导致"填了 Secret 却提示配置不完整"（V5.23 修复）
+      secret: wecomForm.secret.trim() || undefined,
+      touser: wecomForm.touser.trim() || undefined
+    })
+    // 用后端返回的视图判断是否真的齐全：漏传/留空字段在这里立刻暴露，不再一律提示"保存成功"
+    if (saved?.configured) {
+      ElMessage.success('微信通知配置已保存并生效')
+    } else {
+      const missing = [
+        saved?.corpid ? '' : '企业 ID',
+        saved?.agentId ? '' : 'AgentId',
+        saved?.touser ? '' : '接收人'
+      ].filter(Boolean)
+      ElMessage.warning(`配置已保存，但还缺：Secret${missing.length ? '、' + missing.join('、') : ''}（Secret 出于安全不回显，请重新填写后再保存）`)
+    }
+    await loadWecom()
+  } finally {
+    savingWecom.value = false
+  }
+}
+
+/** 发送微信测试消息（失败原因会以业务异常提示，便于排查） */
+async function sendWecomTest() {
+  testingWecom.value = true
+  try {
+    await testWecom()
+    ElMessage.success('微信测试消息已发送，请在微信「企业微信通知」或企业微信 App 查看')
+  } finally {
+    testingWecom.value = false
+  }
+}
+
 /** 授权码占位：已配置时提示留空不改 */
 const mailPasswordPlaceholder = computed(() => (mail.value?.username ? '已配置，留空保持原授权码' : 'SMTP 授权码（QQ/163 为授权码而非登录密码）'))
 
@@ -526,6 +659,7 @@ onMounted(() => {
   loadModelConfig()
   loadProfile()
   loadMail()
+  loadWecom()
 })
 </script>
 

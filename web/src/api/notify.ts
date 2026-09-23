@@ -50,3 +50,47 @@ export function saveMailConfig(data: MailConfigRequest) {
 export function testMail() {
   return post<void>('/notify/mail/test')
 }
+
+
+/** 微信通知配置视图（V5.20；secret 不回传，configured=关键配置是否齐全） */
+export interface WecomConfigVO {
+  /** 微信通知总开关 */
+  enabled: boolean
+  /** 企业 ID（打码） */
+  corpid: string
+  /** 自建应用 AgentId */
+  agentId: string
+  /** 接收人（@all 或 userid 列表） */
+  touser: string
+  /** 关键配置是否齐全（corpid/agentId/secret） */
+  configured: boolean
+}
+
+/** 保存微信通知配置的请求体（secret 留空 = 不修改已存 Secret） */
+export interface WecomConfigRequest {
+  /** 微信通知总开关 */
+  enabled?: boolean
+  /** 企业 ID */
+  corpid?: string
+  /** 自建应用 AgentId */
+  agentId?: string
+  /** 自建应用 Secret */
+  secret?: string
+  /** 接收人（@all 或 userid 列表） */
+  touser?: string
+}
+
+/** 微信通知配置视图 */
+export function wecomConfig() {
+  return get<WecomConfigVO>('/notify/wecom/config')
+}
+
+/** 保存微信通知配置（保存即生效，无需重启） */
+export function saveWecomConfig(data: WecomConfigRequest) {
+  return put<WecomConfigVO>('/notify/wecom/config', data)
+}
+
+/** 发送微信测试消息（失败抛业务异常，界面提示原因） */
+export function testWecom() {
+  return post<void>('/notify/wecom/test')
+}

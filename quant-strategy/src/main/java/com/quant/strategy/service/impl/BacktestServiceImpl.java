@@ -26,6 +26,7 @@ import com.quant.strategy.entity.BacktestTradeDetail;
 import com.quant.strategy.mapper.BacktestRecordMapper;
 import com.quant.strategy.mapper.BacktestTradeDetailMapper;
 import com.quant.strategy.service.BacktestService;
+import com.quant.strategy.oscillation.OscillatingUpStrategy;
 import com.quant.strategy.valuation.ValPercentileStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,12 +91,25 @@ public class BacktestServiceImpl implements BacktestService {
         return record.getId();
     }
 
+    /**
+     * 回测预热天数（自然日）：策略按"根数"回看时须换算，保证首个决策日就有足够历史。
+     * 估值百分位按 windowYears；震荡向上按 K线天数（×1.6 + 30 冗余）；其余策略只需近期行情。
+     */
+    private int warmupDaysOf(String strategyType, JsonNode params) {
+        if (ValPercentileStrategy.TYPE.equals(strategyType)) {
+            return params.path("windowYears").asInt(10) * 366 + 60;
+        }
+        if (OscillatingUpStrategy.TYPE.equals(strategyType)) {
+            return (int) Math.ceil(params.path("windowDays").asInt(60) * 1.6) + 30;
+        }
+        return 30;
+    }
+
     @Async("taskExecutor")
     protected void runBacktest(Long recordId, String fundCode, Strategy strategy, JsonNode params,
                                LocalDate startDate, LocalDate endDate, BigDecimal initialCapital) {
         try {
-            int warmupDays = ValPercentileStrategy.TYPE.equals(strategy.type())
-                    ? params.path("windowYears").asInt(10) * 366 + 60 : 30;
+            int warmupDays = warmupDaysOf(strategy.type(), params);
             MarketDataLoader.LoadedData loaded = dataLoader.load(fundCode, startDate, endDate, warmupDays);
             MarketDataSeries series = loaded.series();
             int startIndex = 0;
@@ -105,6 +119,8 @@ public class BacktestServiceImpl implements BacktestService {
                     break;
                 }
             }
+            // 策略级前置校验（如震荡向上：本金必须买得起满仓份额，否则档位规则失真）
+            strategy.validateBacktest(series, startIndex, params, initialCapital);
             BacktestEngine.BacktestResult result = engine.execute(strategy, params, series, initialCapital, startIndex);
             // 裁剪至请求区间（warmup 段仅用于估值窗口）
             List<Object[]> equity = trim(result.equityCurve(), startDate);
@@ -115,9 +131,18 @@ public class BacktestServiceImpl implements BacktestService {
                     .toList();
             IndicatorCalculator.Metrics metrics = indicatorCalculator.calculate(equity, initialCapital,
                     feeProperties.getRiskFreeRate(), trades.size(), result.sellCount(), result.winCount());
+            // 买入持有基准的区间指标：复用同一指标器（基准曲线、期初资金、无交易）
+            IndicatorCalculator.Metrics bench = indicatorCalculator.calculate(benchmark, initialCapital,
+                    0, 0, 0, 0);
             BacktestRecord update = new BacktestRecord();
             update.setId(recordId);
             update.setFinalAssets(result.finalAssets());
+            update.setAvgPositionShare(result.avgPositionShare());
+            update.setAvgPositionValue(result.avgPositionValue());
+            update.setAvgPositionCost(result.avgPositionCost());
+            update.setPositionReturnPct(result.positionReturnPct());
+            update.setBenchTotalReturnPct(bench.totalReturnPct());
+            update.setBenchMaxDrawdownPct(bench.maxDrawdownPct());
             update.setTotalReturnPct(metrics.totalReturnPct());
             update.setAnnualizedPct(metrics.annualizedPct());
             update.setMaxDrawdownPct(metrics.maxDrawdownPct());

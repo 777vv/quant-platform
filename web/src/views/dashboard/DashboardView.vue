@@ -285,7 +285,7 @@
     </el-row>
 
     <!-- 数据类速览：引导态（未开始使用）下只在确实有数据时渲染，避免成排灰空态 -->
-    <el-row v-if="showMovers || showSync" :gutter="12">
+    <el-row v-if="showMovers || showTradesCard" :gutter="12">
       <el-col v-if="showMovers" :span="8" :xs="24">
         <el-card shadow="never" class="board-card">
           <template #header><span>自选 7 日涨跌榜</span></template>
@@ -327,46 +327,41 @@
           <ChartPanel v-else :option="pieOption" height="260px" />
         </el-card>
       </el-col>
-      <el-col v-if="showSync" :span="8" :xs="24">
+      <el-col v-if="showTradesCard" :span="8" :xs="24">
         <el-card shadow="never" class="board-card">
           <template #header>
             <div class="card-header">
-              <span>数据同步状态</span>
-              <span class="muted">{{ overview?.syncSummary ?? '--' }}</span>
+              <span>交易流水</span>
+              <router-link class="trades-link" to="/trades">查看全部</router-link>
             </div>
           </template>
-          <el-empty v-if="overview && overview.syncStatus.length === 0" description="暂无自选基金" :image-size="60" />
-          <el-table v-else :data="overview?.syncStatus ?? []" size="small" :row-class-name="syncRowClass">
-            <el-table-column prop="fundCode" label="代码" width="80" />
-            <el-table-column prop="fundName" label="基金" min-width="120" show-overflow-tooltip />
-            <el-table-column label="本地数据日" width="105">
+          <el-table v-loading="tradesLoading" :data="recentTrades" size="small">
+            <el-table-column label="交易日期" min-width="96">
+              <template #default="{ row }">{{ row.tradeDate }}</template>
+            </el-table-column>
+            <el-table-column label="类型" min-width="68">
               <template #default="{ row }">
-                <span :class="row.status === 'LAGGING' ? 'text-down' : ''">{{ row.lastDataDate ?? '无数据' }}</span>
+                <el-tag :type="typeTagOf(row.tradeType)" size="small">{{ typeTextOf(row.tradeType) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="80">
+            <el-table-column label="基金" min-width="120" show-overflow-tooltip>
               <template #default="{ row }">
-                <el-tag :type="row.status === 'NORMAL' ? 'success' : 'danger'" size="small">
-                  {{ row.status === 'NORMAL' ? '正常' : '滞后' }}
-                </el-tag>
+                <template v-if="row.fundCode">
+                  {{ row.fundCode }}
+                  <span v-if="fundNameOf(row.fundCode)" class="muted">{{ fundNameOf(row.fundCode) }}</span>
+                </template>
+                <span v-else class="muted">账户资金</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="80" align="center">
-              <template #default="{ row }">
-                <el-button
-                  v-if="row.status === 'LAGGING'"
-                  size="small"
-                  type="primary"
-                  link
-                  :loading="syncingCode === row.fundCode"
-                  @click="retrySync(row.fundCode)"
-                >
-                  重试
-                </el-button>
-                <span v-else class="muted">--</span>
-              </template>
+            <el-table-column label="金额" min-width="100" align="right">
+              <template #default="{ row }">{{ formatAmount(row.amount) }}</template>
             </el-table-column>
           </el-table>
+          <el-empty
+            v-if="!tradesLoading && recentTrades.length === 0"
+            description="暂无交易流水"
+            :image-size="60"
+          />
         </el-card>
       </el-col>
     </el-row>
@@ -377,7 +372,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import type { EChartsOption } from 'echarts'
 import ChartPanel from '@/components/charts/ChartPanel.vue'
 import SparkLine from '@/components/dashboard/SparkLine.vue'
@@ -394,7 +388,7 @@ import {
 } from '@/api/dashboard'
 import { recentSignals, markSignalsRead, type SignalRecord } from '@/api/strategy'
 import TradeEntryDialog from '@/components/trade/TradeEntryDialog.vue'
-import { syncFund, syncProgress } from '@/api/fund'
+import { pageTrades, watchlist, type TradeFlow } from '@/api/fund'
 import { changeColorClass, formatAmount, formatPercent } from '@/utils/format'
 import { changeColor, UP, DOWN } from '@/utils/palette'
 
@@ -448,7 +442,30 @@ const signalsLoading = ref(false)
 /** 近 7 日收益柱图数据（由 1M 曲线派生，避免额外口径分叉） */
 const weekCurve = ref<ProfitCurveVO | null>(null)
 /** 正在手动重试同步的基金代码（行内 loading） */
-const syncingCode = ref('')
+/** 最近交易流水（仪表盘卡片，最近 6 笔） */
+const recentTrades = ref<TradeFlow[]>([])
+const tradesLoading = ref(false)
+/** 基金代码 → 名称（自选池，供流水卡片显示名称） */
+const fundNameMap = ref<Record<string, string>>({})
+
+async function loadRecentTrades() {
+  tradesLoading.value = true
+  try {
+    recentTrades.value = (await pageTrades({ page: 1, size: 6 })).records
+  } finally {
+    tradesLoading.value = false
+  }
+}
+
+async function loadFundNames() {
+  const funds = await watchlist().catch(() => [])
+  const map: Record<string, string> = {}
+  funds.forEach((fund) => {
+    map[fund.fundCode] = fund.fundName
+  })
+  fundNameMap.value = map
+}
+
 
 /** 指数/速览自动刷新间隔（毫秒）：与后端 5 分钟行情任务对齐 */
 const AUTO_REFRESH_MS = 5 * 60 * 1000
@@ -516,7 +533,7 @@ const guideSteps = computed(() => [
   {
     no: 1,
     title: '导入指数基金',
-    desc: '支持场内 ETF 与场外指数基金，自动拉取近 10 年（或自成立以来）历史数据',
+    desc: '支持场内 ETF 与场外指数基金，自动拉取近 15 年（或自成立以来）历史数据',
     button: '去数据导入',
     done: (assets.value?.watchCount ?? 0) > 0,
     action: () => router.push('/import')
@@ -543,7 +560,8 @@ const guideSteps = computed(() => [
 const showMovers = computed(() => !needGuide.value || (overview.value?.movers.length ?? 0) > 0)
 
 /** 同步状态是否有内容可展示（引导态下无自选基金则整卡不渲染） */
-const showSync = computed(() => !needGuide.value || (overview.value?.syncStatus.length ?? 0) > 0)
+/** 交易流水卡片是否展示（引导态下无流水则不渲染） */
+const showTradesCard = computed(() => !needGuide.value || recentTrades.value.length > 0)
 
 /** 资产配置是否有内容可展示（只有现金时也有"现金"份额，故按数据判断而非引导态） */
 const showAllocation = computed(() => !needGuide.value || (overview.value?.allocation.length ?? 0) > 0)
@@ -795,35 +813,36 @@ async function openSignal(signal: SignalRecord) {
   router.push(`/funds/${signal.fundCode}`)
 }
 
-/** 同步状态行样式：滞后行整行标红 */
-function syncRowClass({ row }: { row: { status: string } }): string {
-  return row.status === 'LAGGING' ? 'sync-lagging-row' : ''
+/** 交易类型选项（与后端 TradeTypeEnum 一致） */
+const TRADE_TYPES = [
+  { value: 1, label: '买入' },
+  { value: 2, label: '卖出' },
+  { value: 3, label: '分红' },
+  { value: 4, label: '转入' },
+  { value: 5, label: '转出' }
+]
+
+function typeTextOf(tradeType: number): string {
+  return TRADE_TYPES.find((item) => item.value === tradeType)?.label ?? '未知'
 }
 
-/** 滞后基金一键重试：触发增量同步并轮询进度，完成后刷新速览 */
-async function retrySync(fundCode: string) {
-  syncingCode.value = fundCode
-  try {
-    const { taskId } = await syncFund(fundCode)
-    for (let i = 0; i < 60; i++) {
-      await new Promise((resolve) => window.setTimeout(resolve, 2000))
-      const progress = await syncProgress(taskId)
-      if (progress.status === 'DONE') {
-        ElMessage.success(`${fundCode} 同步完成（新增 ${progress.imported} 条）`)
-        break
-      }
-      if (progress.status === 'FAILED') {
-        ElMessage.error(`同步失败：${progress.message ?? '未知原因'}`)
-        break
-      }
-    }
-    await loadOverview()
-    await loadAssets()
-    await loadCurve()
-    await loadWeekCurve()
-  } finally {
-    syncingCode.value = ''
+/** 类型标签色：买入红 / 卖出绿 / 分红琥珀 / 划转中性（与交易流水页同规则） */
+function typeTagOf(tradeType: number): 'danger' | 'success' | 'warning' | 'info' {
+  switch (tradeType) {
+    case 1:
+      return 'danger'
+    case 2:
+      return 'success'
+    case 3:
+      return 'warning'
+    default:
+      return 'info'
   }
+}
+
+/** 基金名称查询（取不到时返回空串，模板显示为只留代码） */
+function fundNameOf(fundCode: string): string {
+  return fundNameMap.value[fundCode] ?? ''
 }
 
 /** 带符号金额（正数补 +） */
@@ -855,11 +874,15 @@ function onVisibilityChange() {
 }
 
 onMounted(() => {
+  loadFundNames()
+  loadRecentTrades()
   loadAssets()
   loadOverview()
   loadIndices()
   loadCurve()
   loadWeekCurve()
+  loadFundNames()
+  loadRecentTrades()
   loadSignals()
   document.addEventListener('visibilitychange', onVisibilityChange)
   timer = window.setInterval(() => {
@@ -1173,7 +1196,7 @@ onUnmounted(() => {
 }
 
 .index-region {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--q-text-muted);
   border: 1px solid var(--q-border-light);
   border-radius: var(--q-radius-sm);

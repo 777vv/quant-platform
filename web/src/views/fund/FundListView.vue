@@ -165,12 +165,22 @@
           <el-table-column prop="lastSyncDate" label="最后同步" min-width="96">
             <template #default="{ row }">{{ row.lastSyncDate || '--' }}</template>
           </el-table-column>
-          <!-- 操作列 fixed：必须用确定宽度（min-width 与固定列定位不兼容），故这里保留 width -->
-          <el-table-column label="操作" width="168" fixed="right">
+          <!-- 操作列 fixed：必须用确定宽度（min-width 与固定列定位不兼容），故这里保留 width。
+               三按钮收进「更多」下拉（V5.3）：整列 168→80px，按钮不再换行，省出的宽度让给数据列 -->
+          <el-table-column label="操作" width="80" fixed="right">
             <template #default="{ row }">
-              <el-button size="small" :loading="syncingCode === row.fundCode" @click="handleSync(row)">同步</el-button>
-              <el-button size="small" @click="openTagEdit(row.fundCode)">标签</el-button>
-              <el-button size="small" type="danger" plain @click="handleRemove(row)">删除</el-button>
+              <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
+                <el-button size="small" :loading="syncingCode === row.fundCode">
+                  更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="sync">同步</el-dropdown-item>
+                    <el-dropdown-item command="tag">标签</el-dropdown-item>
+                    <el-dropdown-item command="remove" divided>删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </el-table-column>
         </el-table>
@@ -229,13 +239,7 @@
           <el-table-column label="已实现盈亏" min-width="96" align="right">
             <template #default="{ row }">{{ fmt(row.realizedPnl, 2) }}</template>
           </el-table-column>
-          <!-- 操作列 fixed：必须用确定宽度（与 min-width 不兼容） -->
-          <el-table-column label="操作" width="140" fixed="right">
-            <template #default="{ row }">
-              <el-button size="small" type="primary" plain @click="openEntry(row.fundCode, 1)">录流水</el-button>
-              <el-button size="small" @click="$router.push(`/funds/${row.fundCode}`)">详情</el-button>
-            </template>
-          </el-table-column>
+
         </el-table>
       </el-tab-pane>
     </el-tabs>
@@ -345,6 +349,17 @@ function selectableFund(row: WatchItemVO): boolean {
 function openTagEdit(code: string) {
   tagEditFund.value = code
   tagEditVisible.value = true
+}
+
+/** 操作列「更多」下拉的命令分发（同步 / 标签 / 删除） */
+function onRowCommand(command: string, row: WatchItemVO) {
+  if (command === 'sync') {
+    handleSync(row)
+  } else if (command === 'tag') {
+    openTagEdit(row.fundCode)
+  } else if (command === 'remove') {
+    handleRemove(row)
+  }
 }
 
 /** 跳转对比页并带上已选基金 */

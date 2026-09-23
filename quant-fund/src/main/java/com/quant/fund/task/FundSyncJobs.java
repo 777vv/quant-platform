@@ -27,10 +27,19 @@ public class FundSyncJobs {
         this.syncSummaryService = syncSummaryService;
     }
 
-    /** 每交易日 15:30 ETF 日K全量覆盖（修正前复权口径） */
+    /** 每交易日 15:30 ETF 日K全量覆盖（修正前复权口径）——当天的收盘价由这轮定稿 */
     @Scheduled(cron = "0 30 15 * * MON-FRI")
     public void syncEtfDaily() {
         runWithTrace("etf:daily", syncService::syncAllEtfDaily);
+    }
+
+    /**
+     * 每交易日 15:05 档案（规模/费率）强制刷新（用户口径：收盘后立即再刷一次最新规模），
+     * 并把当日规模快照落进 fund_scale_history（行情图「基金规模」副图数据源）。
+     */
+    @Scheduled(cron = "0 5 15 * * MON-FRI")
+    public void refreshProfiles() {
+        runWithTrace("profile:refresh", syncService::refreshAllProfiles);
     }
 
     /** 每交易日 20:00 场外净值同步 */
@@ -61,20 +70,14 @@ public class FundSyncJobs {
         }
     }
 
-    /** 每交易日 17:00 非持仓自选基金增量同步（持仓基金由盘中高频任务覆盖） */
-    @Scheduled(cron = "0 0 17 * * MON-FRI")
-    public void syncNonHolding() {
-        runWithTrace("sync:non-holding", syncService::syncNonHoldingFunds);
-    }
-
     /**
-     * 每 10 分钟：持仓基金盘中增量同步。
+     * 每 10 分钟：全部自选 ETF 盘中增量同步（V5.3 起自选+持仓全覆盖）。
      * cron 只能限定到 MON-FRI，交易时段（9:30-11:30 / 13:00-15:00）由服务内自判，
-     * 非时段直接空转返回（不产生外部请求）。
+     * 非时段直接空转返回；节假日由数据源自判（成功请求但无当天 bar），当天剩余时间跳过。
      */
     @Scheduled(cron = "0 */10 * * * MON-FRI")
-    public void syncHoldingIntraday() {
-        runWithTrace("sync:holding", syncService::syncHoldingFundsIntraday);
+    public void syncWatchIntraday() {
+        runWithTrace("sync:watch", syncService::syncWatchFundsIntraday);
     }
 
     /** 每日 22:00 数据同步状态汇总（刷新仪表盘速览缓存） */

@@ -1,14 +1,15 @@
 #!/bin/sh
-# 项目记忆与技能的"双工具"一致性脚本
+# 项目记忆与技能的"双工具"同步脚本
 #
-# 背景：两个工具读取的记忆与技能位置不同，记忆正文可以共用（Claude Code 的 CLAUDE.md 用 @ 导入 AGENTS.md），
-# 但**技能目录无法共用**（ZCode 读 .zcode/skills，Claude Code 读 .claude/skills），只能各放一份，
-# 于是"改一处忘另一处"是必然会发生的事——本脚本把这件事机械化：
+# 背景：ZCode 读 AGENTS.md 与 .zcode/skills；Claude Code 读 CLAUDE.md 与 .claude/skills。
+# 四个位置两两成对：CLAUDE.md 是 AGENTS.md 的完整镜像，.claude/skills 是 .zcode/skills 的完整镜像。
+# "改一处忘另一处"必然会发生——本脚本把同步机械化（用户口径：只要一边动了，必须同步两边）：
 #
-#   sh sync-memory.sh          校验两边一致（不一致则列出差异并以退出码 1 失败，可挂到提交前检查）
-#   sh sync-memory.sh --write  以 .zcode/skills 为准，覆盖生成 .claude/skills（改完技能后执行）
+#   sh sync-memory.sh          校验两边一致（不一致则列出差异并以退出码 1 失败）
+#   sh sync-memory.sh --write  以 AGENTS.md 与 .zcode/skills 为准，重新生成 CLAUDE.md 与 .claude/skills
 #
-# 约定：技能内容以 `.zcode/skills` 为唯一来源，`.claude/skills` 是它的镜像；不要直接编辑镜像。
+# 约定：内容只改 AGENTS.md 与 .zcode/skills；CLAUDE.md 与 .claude/skills 是生成物，不要手改。
+# （V5.7 起废弃"CLAUDE.md 只放 @导入"的单源设计——用户指出那一侧看不到规则，改为完整镜像。）
 set -e
 
 cd "$(dirname "$0")"
@@ -17,27 +18,32 @@ SRC=".zcode/skills"
 DST=".claude/skills"
 MEMORY="AGENTS.md"
 CLAUDE_MD="CLAUDE.md"
+CLAUDE_HEADER='<!-- CLAUDE.md 是 AGENTS.md 的完整镜像（由 sh sync-memory.sh --write 生成，勿手改）。规则：记忆/技能只要动了任何一边，必须立即同步另一边 -->'
 
-if [ ! -d "$SRC" ]; then
-  echo "错误：未找到技能源目录 $SRC"
-  exit 1
-fi
+# CLAUDE.md 的期望内容 = 镜像头 + 空行 + AGENTS.md 全文
+expected_claude() {
+  printf '%s
+
+' "$CLAUDE_HEADER"
+  cat "$MEMORY"
+}
 
 if [ "$1" = "--write" ]; then
   mkdir -p "$DST"
   rm -rf "$DST"
   mkdir -p "$DST"
   cp -r "$SRC"/. "$DST"/
+  expected_claude > "$CLAUDE_MD"
   echo "已同步：$SRC -> $DST"
   for f in "$SRC"/*/SKILL.md; do
     [ -f "$f" ] || continue
     echo "  · $(dirname "$f" | sed 's|.*/||')"
   done
+  echo "已同步：$MEMORY -> $CLAUDE_MD（完整镜像）"
 else
   fail=0
 
   # 0) 每个技能的 frontmatter 必须合规：name 与目录名一致、description 非空
-  #    （规范见 .zcode/skills/skill-authoring/SKILL.md——目录名与 name 不一致会让两工具加载行为不一致）
   for f in "$SRC"/*/SKILL.md; do
     [ -f "$f" ] || continue
     dir=$(dirname "$f" | sed 's|.*/||')
@@ -46,8 +52,8 @@ else
       fail=1
       continue
     fi
-    name=$(sed -n '2p' "$f" | sed -n 's/^name:[[:space:]]*//p' | tr -d '\r')
-    desc=$(sed -n '3p' "$f" | sed -n 's/^description:[[:space:]]*//p' | tr -d '\r')
+    name=$(sed -n '2p' "$f" | sed -n 's/^name:[[:space:]]*//p' | tr -d '')
+    desc=$(sed -n '3p' "$f" | sed -n 's/^description:[[:space:]]*//p' | tr -d '')
     if [ "$name" != "$dir" ]; then
       echo "frontmatter 不一致：$f 的 name='$name' 与目录名 '$dir' 不同"
       fail=1
@@ -68,28 +74,26 @@ else
     fail=1
   fi
 
-  # 2) Claude Code 侧的记忆入口必须导入 AGENTS.md（否则它读不到项目记忆）
-  if [ -f "$CLAUDE_MD" ]; then
-    if ! grep -q '^@AGENTS\.md' "$CLAUDE_MD"; then
-      echo "不一致：$CLAUDE_MD 缺少 '@AGENTS.md' 导入行"
+  # 2) CLAUDE.md 必须是 AGENTS.md 的完整镜像（V5.7：不再用 @导入单源，用户要求两边都要有正文）
+  if [ ! -f "$CLAUDE_MD" ]; then
+    echo "不一致：$CLAUDE_MD 不存在（执行 sh sync-memory.sh --write 生成）"
+    fail=1
+  else
+    tmp=$(mktemp)
+    expected_claude > "$tmp"
+    if ! cmp -s "$CLAUDE_MD" "$tmp"; then
+      echo "不一致：$CLAUDE_MD 与 $MEMORY 的镜像内容不同（AGENTS.md 改了但 CLAUDE.md 没同步）——"
+      diff "$CLAUDE_MD" "$tmp" | sed 's/^/    /' | head -20 || true
       fail=1
     fi
-  else
-    echo "不一致：$CLAUDE_MD 不存在（Claude Code 侧读不到项目记忆）"
-    fail=1
-  fi
-
-  # 3) 记忆正文只应有一份：CLAUDE.md 里若出现 AGENTS.md 的标题，说明被复制粘贴了
-  if [ -f "$CLAUDE_MD" ] && grep -q '^# AGENTS.md' "$CLAUDE_MD"; then
-    echo "不一致：$CLAUDE_MD 里出现了 AGENTS.md 的正文（应只保留 @AGENTS.md 导入，避免两处维护漂移）"
-    fail=1
+    rm -f "$tmp"
   fi
 
   if [ "$fail" = "0" ]; then
-    echo "记忆与技能两边一致：$SRC == $DST，且 $CLAUDE_MD 正确导入 $MEMORY"
+    echo "记忆与技能两边一致：$SRC == $DST，且 $CLAUDE_MD == $MEMORY 完整镜像"
   else
     echo ""
-    echo "修复：改完技能后执行  sh sync-memory.sh --write"
+    echo "修复：执行  sh sync-memory.sh --write  后再校验"
     exit 1
   fi
 fi

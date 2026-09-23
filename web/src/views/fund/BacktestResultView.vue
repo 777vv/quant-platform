@@ -7,17 +7,63 @@
       <el-col :span="6"><el-card shadow="never"><el-statistic title="最大回撤" :value="record.maxDrawdownPct ?? 0" :precision="2" suffix="%" /></el-card></el-col>
       <el-col :span="6"><el-card shadow="never"><el-statistic title="夏普比率" :value="record.sharpe ?? 0" :precision="2" /></el-card></el-col>
     </el-row>
+    <!-- 结论条：一眼看出策略相对"买入持有"是胜是负（分别按全额与同仓位两个口径） -->
+    <el-card v-if="verdicts.length" shadow="never" class="block verdict-card">
+      <div class="verdict-list">
+        <div v-for="item in verdicts" :key="item.label" class="verdict-item">
+          <span class="verdict-label">{{ item.label }}</span>
+          <span class="verdict-value">{{ item.leftText }}</span>
+          <span class="verdict-vs">vs</span>
+          <span class="verdict-value">{{ item.rightText }}</span>
+          <el-tag :type="item.win ? 'success' : 'danger'" size="small" effect="dark">{{ item.win ? '跑赢' : '落后' }}</el-tag>
+        </div>
+      </div>
+    </el-card>
+
     <el-card shadow="never" class="block">
-      <el-descriptions :column="5" border size="small">
+      <el-descriptions :column="5" border size="small" title="回测概况">
         <el-descriptions-item label="基金">{{ record.fundCode }}</el-descriptions-item>
-        <el-descriptions-item label="策略">{{ record.strategyType }}</el-descriptions-item>
+        <el-descriptions-item label="策略">{{ strategyName }}</el-descriptions-item>
         <el-descriptions-item label="区间">{{ record.startDate }} ~ {{ record.endDate }}</el-descriptions-item>
         <el-descriptions-item label="初始资金">{{ record.initialCapital }}</el-descriptions-item>
         <el-descriptions-item label="期末资产">{{ record.finalAssets }}</el-descriptions-item>
-        <el-descriptions-item label="回撤峰谷">{{ record.ddPeakDate || '--' }} → {{ record.ddTroughDate || '--' }}</el-descriptions-item>
-        <el-descriptions-item label="回撤修复">{{ record.ddRecoverDate || '未修复' }}</el-descriptions-item>
+      </el-descriptions>
+      <el-descriptions :column="5" border size="small" title="策略表现" class="desc-block">
+        <el-descriptions-item label="总收益%">{{ record.totalReturnPct ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="年化%">{{ record.annualizedPct ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="最大回撤%">{{ record.maxDrawdownPct ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="夏普">{{ record.sharpe ?? '--' }}</el-descriptions-item>
         <el-descriptions-item label="交易笔数">{{ record.tradeCount }}</el-descriptions-item>
         <el-descriptions-item label="胜率">{{ record.winRate == null ? '--' : record.winRate + '%' }}</el-descriptions-item>
+        <el-descriptions-item label="回撤峰谷">{{ record.ddPeakDate || '--' }} → {{ record.ddTroughDate || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="回撤修复">{{ record.ddRecoverDate || '未修复' }}</el-descriptions-item>
+        <el-descriptions-item label="平均仓位份额">{{ record.avgPositionShare ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="平均持仓市值">{{ record.avgPositionValue ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="平均持仓成本">{{ record.avgPositionCost ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="平均成本/本金">
+          {{ avgCostRatioPct }}
+          <el-tooltip content="平均持仓成本 ÷ 初始资金。自检恒等式：总收益率 = 持仓资产收益率 × 本比例。若比例超过 100%，说明策略把赚到的钱又投了进去（复利再投入），此时持仓资产收益率仍可能低于总收益率，属正常现象">
+            <el-icon class="desc-help"><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </el-descriptions-item>
+      </el-descriptions>
+      <el-descriptions :column="5" border size="small" title="与「买入持有」对照" class="desc-block">
+        <el-descriptions-item label="持仓资产收益率%">
+          <span :class="record.positionReturnPct == null ? '' : record.positionReturnPct >= 0 ? 'text-up' : 'text-down'">
+            {{ record.positionReturnPct ?? '--' }}
+          </span>
+          <el-tooltip content="（期末资产 − 初始资金）÷ 平均持仓成本。分母是「实际投进去的钱」（不随行情虚增），所以平均仓位没打满时会高于总收益率；自检：总收益率 = 本指标 × (平均持仓成本 ÷ 初始资金)">
+            <el-icon class="desc-help"><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </el-descriptions-item>
+        <el-descriptions-item label="持有总收益%">{{ record.benchTotalReturnPct ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="持有最大回撤%">{{ record.benchMaxDrawdownPct ?? '--' }}</el-descriptions-item>
+        <el-descriptions-item label="同仓位持有收益%">
+          {{ sameExposureBenchPct }}
+          <el-tooltip content="把买入持有基准按策略的平均仓位占比折算，回答「同样的仓位暴露下策略是否跑赢」；按平均仓位等比折算，属近似对照">
+            <el-icon class="desc-help"><QuestionFilled /></el-icon>
+          </el-tooltip>
+        </el-descriptions-item>
         <el-descriptions-item label="参数">{{ record.params }}</el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -50,10 +96,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
-import type { EChartsOption } from 'echarts'
-import { UP } from '@/utils/palette'
+import type { EChartsOption, ScatterSeriesOption } from 'echarts'
+import { DOWN, UP } from '@/utils/palette'
 import ChartPanel from '@/components/charts/ChartPanel.vue'
 import { backtestDetail, backtestTrades } from '@/api/strategy'
 import type { BacktestRecord, BacktestTrade } from '@/api/strategy'
@@ -65,10 +112,111 @@ const trades = ref<BacktestTrade[]>([])
 const equityOption = ref<EChartsOption | null>(null)
 const drawdownOption = ref<EChartsOption | null>(null)
 
+/**
+ * 同仓位持有收益%：把「买入持有」基准按策略的平均仓位占比折算。
+ * 口径说明：策略平均只用了 X% 的资金，直接拿全额基准比不公平；
+ * 折算后回答"同样的仓位暴露下，策略比一直持有好还是差"。
+ * 近似之处：按**平均**仓位等比折算，未还原逐日仓位变化（波动的仓位会带来看不见的差异）。
+ */
+/**
+ * 平均持仓成本占初始资金的比例（自检用）：总收益率 = 持仓资产收益率 × 本比例。
+ * 超过 100% 表示策略把盈利再投入（成本基础超过本金），此时持仓资产收益率可能仍低于总收益率。
+ */
+const avgCostRatioPct = computed(() => {
+  const item = record.value
+  if (!item || item.avgPositionCost == null || !item.initialCapital) {
+    return '--'
+  }
+  return `${(item.avgPositionCost / item.initialCapital * 100).toFixed(1)}%`
+})
+
+/** 策略展示名（类型码 → 中文名，未知回退类型码） */
+const strategyName = computed(() => {
+  const map: Record<string, string> = { GRID: '网格交易', VAL_PERCENTILE: '估值百分位', OSC_UP: '震荡向上' }
+  return record.value ? map[record.value.strategyType] ?? record.value.strategyType : '--'
+})
+
+/**
+ * 结论条（两组口径）：
+ * ① 持仓资产收益率 vs 持有总收益——策略"投出去的钱"的收益率是否高于一直持有；
+ * ② 总收益 vs 同仓位持有收益——同仓位暴露下的胜负。
+ * 数据缺失（老回测）时不显示，避免给出误导结论。
+ */
+const verdicts = computed(() => {
+  const item = record.value
+  if (!item) {
+    return []
+  }
+  const list: { label: string; leftText: string; rightText: string; win: boolean }[] = []
+  const pos = item.positionReturnPct
+  const bench = item.benchTotalReturnPct
+  if (pos != null && bench != null) {
+    list.push({
+      label: '持仓资产收益率 vs 持有总收益',
+      leftText: `${pos}%`,
+      rightText: `${bench}%`,
+      win: Number(pos) > Number(bench)
+    })
+  }
+  const same = sameExposureBenchPct.value
+  if (item.totalReturnPct != null && same !== '--') {
+    list.push({
+      label: '总收益 vs 同仓位持有',
+      leftText: `${item.totalReturnPct}%`,
+      rightText: `${same}%`,
+      win: Number(item.totalReturnPct) > Number(same)
+    })
+  }
+  return list
+})
+
+const sameExposureBenchPct = computed(() => {
+  const item = record.value
+  if (!item || item.benchTotalReturnPct == null || item.avgPositionValue == null
+      || !item.initialCapital) {
+    return '--'
+  }
+  const exposure = item.avgPositionValue / item.initialCapital
+  return (item.benchTotalReturnPct * exposure).toFixed(4)
+})
+
 function lineOf(curveJson: string | null): { dates: string[]; values: number[] } | null {
   if (!curveJson) return null
   const arr = JSON.parse(curveJson) as [string, number][]
   return { dates: arr.map((p) => p[0]), values: arr.map((p) => Number(p[1])) }
+}
+
+/**
+ * 资金曲线上的买卖点散点（数据直接来自页面已取回的交易明细，不重复请求）。
+ * 纵坐标取该成交日收盘后的资金曲线值；成交日不在曲线区间内的记录跳过。
+ * 悬浮提示不展示买卖点本身（skill 3.2.1：标记不进 tooltip，避免用成交价污染原有悬浮信息）。
+ */
+function markerSeries(
+  direction: 'BUY' | 'SELL',
+  dates: string[],
+  values: number[]
+): ScatterSeriesOption[] {
+  const valueByDate = new Map(dates.map((d, i) => [d, values[i]]))
+  const data = trades.value
+    .filter((trade) => trade.direction === direction && valueByDate.has(trade.tradeDate))
+    .map((trade) => ({ value: [trade.tradeDate, valueByDate.get(trade.tradeDate)] }))
+  if (data.length === 0) {
+    return []
+  }
+  const isBuy = direction === 'BUY'
+  return [
+    {
+      type: 'scatter',
+      name: isBuy ? '买入点' : '卖出点',
+      data,
+      // 买入三角朝上、卖出三角朝下，方向一眼可辨
+      symbol: 'triangle',
+      symbolRotate: isBuy ? 0 : 180,
+      symbolSize: 9,
+      itemStyle: { color: isBuy ? UP : DOWN },
+      tooltip: { show: false }
+    }
+  ]
 }
 
 onMounted(async () => {
@@ -92,9 +240,19 @@ onMounted(async () => {
         lineStyle: { width: 1.2, type: 'dashed' }
       })
     }
+    // 买卖点标注（红▲买入 / 绿▼卖出）
+    const markers = [...markerSeries('BUY', equity.dates, equity.values), ...markerSeries('SELL', equity.dates, equity.values)]
+    equitySeries.push(...markers)
+    const legendData = ['策略', '买入持有']
+    if (markers.some((m) => m.name === '买入点')) {
+      legendData.push('买入点')
+    }
+    if (markers.some((m) => m.name === '卖出点')) {
+      legendData.push('卖出点')
+    }
     equityOption.value = {
       tooltip: { trigger: 'axis' },
-      legend: { data: ['策略', '买入持有'] },
+      legend: { data: legendData },
       grid: { left: '8%', right: '3%', top: '12%', bottom: '10%' },
       xAxis: { type: 'category', data: equity.dates },
       yAxis: { type: 'value', scale: true },
@@ -125,6 +283,49 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 结论条：一排"左值 vs 右值 + 胜负标签"，比在描述列表里找数字直观 */
+.verdict-card :deep(.el-card__body) {
+  padding: var(--q-space-3) var(--q-space-4);
+}
+
+.verdict-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--q-space-2) var(--q-space-4);
+}
+
+.verdict-item {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  font-size: var(--q-font-xs);
+}
+
+.verdict-label {
+  color: var(--q-text-muted);
+}
+
+.verdict-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--q-text-primary);
+}
+
+.verdict-vs {
+  color: var(--q-text-muted);
+}
+
+/* 三组描述之间的间距 */
+.desc-block {
+  margin-top: var(--q-space-3);
+}
+
+.desc-help {
+  margin-left: 4px;
+  color: var(--q-text-muted);
+  cursor: help;
+}
+
 .page-header {
   margin-bottom: 8px;
 }

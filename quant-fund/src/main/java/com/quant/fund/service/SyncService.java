@@ -46,12 +46,15 @@ public interface SyncService {
     List<IndexQuote> getIndexQuotes();
 
     /**
-     * 自动同步（V2.2）：非持仓的自选基金每日 17:00（交易日）增量同步。
+     * 档案（规模/费率）强制刷新：每交易日 15:05 对全部自选基金执行（用户口径：收盘后立即再刷一次
+     * 最新规模），并把当日规模快照落进 fund_scale_history。幂等，可手动调用。
      */
-    void syncNonHoldingFunds();
+    void refreshAllProfiles();
 
     /**
-     * 自动同步（V2.2）：持仓基金盘中每 10 分钟增量同步（仅交易时段 9:30-11:30 / 13:00-15:00，任务内自判）。
+     * 自动同步（V5.3）：全部自选 ETF 盘中每 10 分钟增量同步
+     * （仅交易日交易时段 9:30-11:30 / 13:00-15:00，任务内自判；节假日由数据源自判并全天跳过）。
+     * 场外基金净值没有盘中口径，仍走 20:00 / 次日 07:00 的净值同步。
      */
-    void syncHoldingFundsIntraday();
+    void syncWatchFundsIntraday();
 }

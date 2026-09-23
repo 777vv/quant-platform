@@ -184,7 +184,7 @@ onMounted(async () => {
 
 .manual-body :deep(h1) {
   margin: 0 0 var(--q-space-3);
-  font-size: 22px;
+  font-size: 23px;
   color: var(--q-text-primary);
 }
 
@@ -192,13 +192,13 @@ onMounted(async () => {
   margin: var(--q-space-4) 0 var(--q-space-2);
   padding-bottom: 6px;
   border-bottom: 1px solid var(--q-border);
-  font-size: 18px;
+  font-size: 19px;
   color: var(--q-text-primary);
 }
 
 .manual-body :deep(h3) {
   margin: var(--q-space-3) 0 6px;
-  font-size: 15px;
+  font-size: 16px;
   color: var(--q-text-primary);
 }
 

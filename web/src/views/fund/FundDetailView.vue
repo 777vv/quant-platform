@@ -100,6 +100,13 @@
           </el-radio-group>
           <el-checkbox v-model="showMacd" size="small" @change="loadChart">MACD 副图</el-checkbox>
           <el-checkbox v-model="showYield" size="small" @change="loadChart">股息率副图</el-checkbox>
+          <el-checkbox v-model="showScale" size="small" @change="loadChart">规模副图</el-checkbox>
+          <span v-if="showScale && scaleData && scaleData.length === 0" class="muted">
+            规模历史自 V5.3 上线日起逐日积累（数据源只披露当前规模，无法回补）
+          </span>
+          <span v-else-if="showScale && scaleData && scaleData.length > 0 && scaleData.length < 10" class="muted">
+            规模历史已积累 {{ scaleData.length }} 天（自 {{ scaleData[0].date }} 起，每个交易日 +1），数据较少时副图仅右端可见
+          </span>
           <span v-if="showYield && yieldData && !yieldData.priceAvailable" class="muted">
             历史股息率待补齐：需要未复权价（已排入下次同步）
           </span>
@@ -226,18 +233,25 @@
           <el-button type="primary" size="small" @click="strategyDialogVisible = true">新增策略</el-button>
         </div>
         <el-table :data="strategies" border size="small">
-          <el-table-column prop="strategyType" label="类型" width="140" />
-          <el-table-column prop="strategyName" label="名称" width="110" />
-          <el-table-column label="参数" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.params }}</template>
-          </el-table-column>
-          <el-table-column label="启用" width="90">
+          <el-table-column label="策略" min-width="150">
             <template #default="{ row }">
-              <el-switch :model-value="row.enabled === 1" @change="toggleStrategy(row)" />
+              <span class="strategy-name">{{ row.strategyName || strategyNameOf(row.strategyType) }}</span>
+              <el-tag size="small" type="info" effect="plain" class="strategy-code">{{ row.strategyType }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="90">
+          <!-- 参数列展示中文摘要（原始 JSON 可读性差），完整配置点「详情」看弹框 -->
+          <el-table-column label="参数摘要" min-width="320" show-overflow-tooltip>
+            <template #default="{ row }">{{ paramSummaryOf(row) }}</template>
+          </el-table-column>
+          <el-table-column label="启用" width="96">
             <template #default="{ row }">
+              <el-switch v-model="row.enabled" :active-value="1" :inactive-value="0" active-text="启用"
+                         inline-prompt @change="toggleStrategy(row)" />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="150">
+            <template #default="{ row }">
+              <el-button size="small" link type="primary" @click="openParamDetail(row)">详情</el-button>
               <el-button size="small" type="danger" plain @click="handleDeleteStrategy(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -266,37 +280,90 @@
           <StrategyParamForm v-model="backtestForm.params" :type="backtestForm.strategyType" />
           <el-button type="primary" :loading="backtestRunning" @click="handleBacktest">开始回测</el-button>
         </el-card>
+        <!-- 列宽口径：数字列 min-width 均分富余宽度；失败原因等长文本列用省略号 + 悬浮全显 -->
         <el-table :data="backtestRecords" border size="small">
-          <el-table-column prop="id" label="#" width="60" />
-          <el-table-column prop="strategyType" label="策略" width="130" />
-          <el-table-column label="区间" width="200">
+          <el-table-column prop="id" label="#" width="56" />
+          <el-table-column label="策略" min-width="92">
+            <template #default="{ row }">{{ strategyNameOf(row.strategyType) }}</template>
+          </el-table-column>
+          <el-table-column label="区间" min-width="178">
             <template #default="{ row }">{{ row.startDate }} ~ {{ row.endDate }}</template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column label="状态" width="80">
             <template #default="{ row }">
               <el-tag :type="row.status === 1 ? 'success' : row.status === 2 ? 'danger' : 'info'" size="small">
                 {{ row.status === 1 ? '成功' : row.status === 2 ? '失败' : '运行中' }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="总收益%" width="100" align="right">
-            <template #default="{ row }">{{ row.totalReturnPct ?? '--' }}</template>
+          <!-- 分组表头：策略表现 / 持有基准对照 / 仓位与资金效率 三组分开，一眼看清对比关系 -->
+          <el-table-column label="策略表现" align="center">
+            <el-table-column label="总收益%" min-width="92" align="right">
+              <template #default="{ row }">{{ row.totalReturnPct ?? '--' }}</template>
+            </el-table-column>
+            <el-table-column label="最大回撤%" min-width="98" align="right">
+              <template #default="{ row }">{{ row.maxDrawdownPct ?? '--' }}</template>
+            </el-table-column>
+            <el-table-column prop="tradeCount" label="交易数" min-width="76" align="right" />
           </el-table-column>
-          <el-table-column label="最大回撤%" width="110" align="right">
-            <template #default="{ row }">{{ row.maxDrawdownPct ?? '--' }}</template>
+          <el-table-column label="持有基准对照" align="center">
+            <el-table-column label="持有总收益%" min-width="104" align="right">
+              <template #default="{ row }">
+                <span :class="benchClassOf(row)">{{ row.benchTotalReturnPct ?? '--' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="持有最大回撤%" min-width="112" align="right">
+              <template #default="{ row }">{{ row.benchMaxDrawdownPct ?? '--' }}</template>
+            </el-table-column>
           </el-table-column>
-          <el-table-column prop="tradeCount" label="交易数" width="80" align="right" />
-          <el-table-column prop="errorMsg" label="失败原因" min-width="140" show-overflow-tooltip />
+          <el-table-column label="仓位与资金效率" align="center">
+            <el-table-column label="平均仓位份额" min-width="108" align="right">
+              <template #default="{ row }">{{ row.avgPositionShare ?? '--' }}</template>
+            </el-table-column>
+            <el-table-column label="持仓资产收益率%" min-width="116" align="right">
+              <template #header>
+                持仓资产收益率%
+                <el-tooltip content="策略收益 ÷ 平均持仓成本（实际投进去的钱）。平均仓位没打满时它高于总收益率；avg 成本口径，不随行情虚增" placement="top">
+                  <el-icon class="th-help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </template>
+              <template #default="{ row }">
+                <span :class="positionClassOf(row)">{{ row.positionReturnPct ?? '--' }}</span>
+              </template>
+            </el-table-column>
+          </el-table-column>
+          <el-table-column label="策略详情" min-width="76">
+            <template #default="{ row }">
+              <el-button size="small" link type="primary" @click="openStrategyDetail(row)">详情</el-button>
+            </template>
+          </el-table-column>
+          <el-table-column prop="errorMsg" label="失败原因" min-width="120" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.errorMsg || '--' }}</template>
+          </el-table-column>
           <el-table-column label="操作" width="90" fixed="right">
             <template #default="{ row }">
               <el-button size="small" @click="$router.push(`/backtest/${row.id}`)">结果</el-button>
             </template>
           </el-table-column>
         </el-table>
+
+        <!-- 策略配置详情弹框：把 params JSON 解析成带中文标签的键值表 -->
+        <el-dialog v-model="strategyDetailVisible" title="策略配置详情" width="520px">
+          <el-descriptions v-if="strategyDetailRow" :column="1" border size="small">
+            <el-descriptions-item label="策略">{{ strategyNameOf(strategyDetailRow.strategyType) }}</el-descriptions-item>
+            <el-descriptions-item label="基金">{{ strategyDetailRow.fundCode }}</el-descriptions-item>
+            <el-descriptions-item v-for="item in strategyDetailItems" :key="item.label" :label="item.label">
+              {{ item.value }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <template #footer>
+            <el-button @click="strategyDetailVisible = false">关闭</el-button>
+          </template>
+        </el-dialog>
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="strategyDialogVisible" title="新增策略配置" width="460px">
+    <el-dialog v-model="strategyDialogVisible" title="新增策略配置" width="760px">
       <el-form label-width="100px">
         <el-form-item label="策略类型">
           <el-select v-model="newStrategyType" style="width: 100%">
@@ -352,6 +419,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import type { EChartsOption } from 'echarts'
 import {
   CANDLE_UP,
@@ -399,6 +467,7 @@ import {
   fundKline,
   fundMarks,
   fundNav,
+  fundScaleHistory,
   fundTags,
   fundValuation,
   pageTrades,
@@ -408,6 +477,7 @@ import type {
   DividendYieldVO,
   FundDetailVO,
   FundMarkVO,
+  FundScalePoint,
   FundTagVO,
   SeriesPoint,
   TradeFlow,
@@ -488,21 +558,25 @@ const showMacd = ref(false)
 const showYield = ref(false)
 const yieldData = ref<DividendYieldVO | null>(null)
 
+/** 规模副图开关与数据（fund_scale_history 每日快照，自上线日起积累） */
+const showScale = ref(false)
+const scaleData = ref<FundScalePoint[] | null>(null)
+
 /** 全屏查看状态（双击图表进入，Esc 或关闭按钮退出） */
 const fullscreen = ref(false)
 
 /** 图表高度随副图数量自适应 */
 const chartHeight = computed(() => `${420 + subChartCount.value * 100}px`)
 
-/** 除成交量外的副图数量（MACD / 股息率），用于图表高度与网格划分 */
-const subChartCount = computed(() => (showMacd.value ? 1 : 0) + (showYield.value ? 1 : 0))
+/** 除成交量外的副图数量（MACD / 股息率 / 规模），用于图表高度与网格划分 */
+const subChartCount = computed(() => (showMacd.value ? 1 : 0) + (showYield.value ? 1 : 0) + (showScale.value ? 1 : 0))
 
 /**
  * 副图纵向布局：主图 + 成交量 +（MACD）+（股息率）。
  * 图表数量随开关变化，写死百分比会在开关组合下互相重叠，故按数量算：
  * 每张副图占固定高度，主图吃掉剩余空间，副图之间留 gap，底部预留 dataZoom 滑块的位置。
  *
- * @returns grids 每张图的 [top%, height%]（顺序：主图, 成交量, MACD?, 股息率?）
+ * @returns grids 每张图的 [top%, height%]（顺序：主图, 成交量, MACD?, 股息率?, 规模?）
  */
 function subChartGrids(): { top: number; height: number }[] {
   const extra = subChartCount.value
@@ -575,6 +649,62 @@ function appendYieldSubChart(
       itemStyle: { color: PRIMARY }
     })
   }
+}
+
+/**
+ * 追加「基金规模副图」（独立单位：亿元）：规模快照的阶梯线。
+ * 快照来自 fund_scale_history（每日档案刷新成功后落一行），
+ * 每个交易日取"该日之前最近一次快照"的值，阶梯线直观呈现规模变化。
+ *
+ * @param series    图表 series 数组（就地追加）
+ * @param xAxes     x 轴数组（就地追加）
+ * @param yAxes     y 轴数组（就地追加）
+ * @param dates     主图日期轴
+ * @param gridIndex 该副图所在的网格下标
+ */
+function appendScaleSubChart(
+  series: Record<string, unknown>[],
+  xAxes: Record<string, unknown>[],
+  yAxes: Record<string, unknown>[],
+  dates: string[],
+  gridIndex: number
+) {
+  xAxes.push({ type: 'category', gridIndex, data: dates, axisLabel: { show: false } })
+  yAxes.push({
+    gridIndex,
+    scale: true,
+    axisLabel: { formatter: '{value}亿', show: true },
+    splitLine: { show: false }
+  })
+  series.push({
+    type: 'line',
+    name: '基金规模',
+    xAxisIndex: gridIndex,
+    yAxisIndex: gridIndex,
+    data: expandScale(dates),
+    step: 'end',
+    connectNulls: false,
+    // 数据点本身显示圆标：积累初期只有少数几天，仅画细线几乎看不见（V5.18 用户反馈"副图没加载出来"实为此因）
+    showSymbol: true,
+    symbol: 'circle',
+    symbolSize: 5,
+    lineStyle: { width: 1.6, color: MACD_DEA },
+    itemStyle: { color: MACD_DEA }
+  })
+}
+
+/** 把稀疏的规模快照铺满主图日期轴：每个交易日取"该日之前最近一次快照"的规模（首个快照之前为空） */
+function expandScale(dates: string[]): (number | null)[] {
+  const sorted = (scaleData.value ?? []).slice().sort((a, b) => a.date.localeCompare(b.date))
+  let cursor = 0
+  let current: number | null = null
+  return dates.map((date) => {
+    while (cursor < sorted.length && sorted[cursor].date <= date) {
+      current = Number(sorted[cursor].scale)
+      cursor += 1
+    }
+    return current
+  })
 }
 
 /** 把 {top,height} 数字转成 ECharts 需要的百分号字符串 */
@@ -704,6 +834,10 @@ async function loadChart() {
   if (showYield.value) {
     const span = range ? Math.max(1, daysBetween(shiftDays(range[0], -1), range[1])) : rangeDays.value
     yieldData.value = await fundDividendYield(code, span).catch(() => null)
+  }
+  // 规模副图打开时才拉：全量返回（自上线日起，量小）
+  if (showScale.value) {
+    scaleData.value = await fundScaleHistory(code).catch(() => [])
   }
   const points: SeriesPoint[] =
     detail.value.fundType === 1
@@ -852,6 +986,7 @@ function klineOption(points: SeriesPoint[]): EChartsOption {
   const volumes = points.map((p) => p.volume)
   const macdOn = showMacd.value
   const yieldOn = showYield.value
+  const scaleOn = showScale.value
   const grids: Record<string, unknown>[] = toGridOption(subChartGrids())
   const xAxes: Record<string, unknown>[] = [
     { type: 'category', data: dates, boundaryGap: true },
@@ -966,6 +1101,9 @@ function klineOption(points: SeriesPoint[]): EChartsOption {
   if (yieldOn) {
     appendYieldSubChart(series, xAxes, yAxes, dates, macdOn ? 3 : 2)
   }
+  if (scaleOn) {
+    appendScaleSubChart(series, xAxes, yAxes, dates, (macdOn ? 1 : 0) + (yieldOn ? 1 : 0) + 2)
+  }
 
   const axisIndexes = Array.from({ length: 2 + subChartCount.value }, (_, i) => i)
   return {
@@ -992,6 +1130,7 @@ function navOption(points: SeriesPoint[], mode: 'unitNav' | 'accNav' | 'adjNav')
   const values = points.map((p) => Number(p[mode]))
   const macdOn = showMacd.value
   const yieldOn = showYield.value
+  const scaleOn = showScale.value
   const grids: Record<string, unknown>[] = toGridOption(subChartGrids())
   const xAxes: Record<string, unknown>[] = [
     { type: 'category', data: dates },
@@ -1102,6 +1241,9 @@ function navOption(points: SeriesPoint[], mode: 'unitNav' | 'accNav' | 'adjNav')
 
   if (yieldOn) {
     appendYieldSubChart(series, xAxes, yAxes, dates, macdOn ? 3 : 2)
+  }
+  if (scaleOn) {
+    appendScaleSubChart(series, xAxes, yAxes, dates, (macdOn ? 1 : 0) + (yieldOn ? 1 : 0) + 2)
   }
 
   // 原来没有 MACD 时只驱动轴 0，成交量副图不会跟着缩放；这里按实际网格数量生成
@@ -1217,6 +1359,120 @@ watch(navMode, () => loadChart())
 // ===== 策略配置与回测 =====
 const strategies = ref<StrategyConfig[]>([])
 const strategyTypeList = ref<StrategyTypeVO[]>([])
+
+/** 策略类型 → 展示名（来自注册表；未知类型回退类型码） */
+function strategyNameOf(type: string): string {
+  return strategyTypeList.value.find((t) => t.type === type)?.name ?? type
+}
+
+/** 策略配置详情弹框 */
+const strategyDetailVisible = ref(false)
+const strategyDetailRow = ref<BacktestRecord | null>(null)
+const strategyDetailItems = ref<{ label: string; value: string }[]>([])
+
+/** 各策略参数的中文名（与 StrategyParamForm 的界面名一致） */
+const PARAM_LABELS: Record<string, Record<string, string>> = {
+  GRID: {
+    mode: '网格模式', upper: '网格上沿', lower: '网格下沿', grids: '格数',
+    sharePerGrid: '每格份额', basePosition: '底仓份额', anchorPrice: '锚点价'
+  },
+  VAL_PERCENTILE: {
+    lowPct: '低估阈值%', highPct: '高估阈值%', steps: '分档数',
+    windowYears: '回看窗口(年)', sharePerStep: '每档份额', basePosition: '底仓份额'
+  },
+  OSC_UP: {
+    initialShare: '初始仓位份额', baseShare: '底仓份额', fullShare: '满仓份额', windowDays: 'K线天数',
+    riseReducePct: '上涨减仓%', fallAddPct: '下跌加仓%',
+    buyShare: '买入份额', sellShare: '卖出份额'
+  }
+}
+
+/**
+ * 按标签表的键序排列参数（标签表里有的排前面、保持阅读顺序，未知键排在后面）。
+ */
+function orderByLabels(parsed: Record<string, unknown>, labels: Record<string, string>): [string, unknown][] {
+  const known = Object.keys(labels)
+  return Object.entries(parsed).sort((a, b) => {
+    const ia = known.indexOf(a[0])
+    const ib = known.indexOf(b[0])
+    return (ia < 0 ? Number.MAX_SAFE_INTEGER : ia) - (ib < 0 ? Number.MAX_SAFE_INTEGER : ib)
+  })
+}
+
+/** 参数摘要（策略配置列表用）：中文标签=值 逗号拼接；解析失败回退原始 JSON */
+function paramSummaryOf(row: StrategyConfig): string {
+  const labels = PARAM_LABELS[row.strategyType] ?? {}
+  let parsed: Record<string, unknown> = {}
+  try {
+    parsed = JSON.parse(row.params) as Record<string, unknown>
+  } catch {
+    return row.params
+  }
+  const parts = orderByLabels(parsed, labels).map(([key, value]) => {
+    const text = key === 'mode' ? (value === 'geometric' ? '等比' : '等差') : String(value)
+    return `${labels[key] ?? key}=${text}`
+  })
+  return parts.join('，')
+}
+
+/** 策略配置行 → 复用同一弹框（策略配置页签的「详情」） */
+function openParamDetail(row: StrategyConfig) {
+  strategyDetailRow.value = {
+    id: row.id,
+    fundCode: row.fundCode,
+    strategyType: row.strategyType,
+    params: row.params
+  } as unknown as BacktestRecord
+  const labels = PARAM_LABELS[row.strategyType] ?? {}
+  let parsed: Record<string, unknown> = {}
+  try {
+    parsed = JSON.parse(row.params) as Record<string, unknown>
+  } catch {
+    parsed = {}
+  }
+  strategyDetailItems.value = orderByLabels(parsed, labels).map(([key, value]: [string, unknown]) => ({
+    label: labels[key] ?? key,
+    value: key === 'mode' ? (value === 'geometric' ? '等比' : '等差') : String(value)
+  }))
+  strategyDetailVisible.value = true
+}
+
+/** 打开策略配置详情弹框：解析 params JSON → 带中文标签的键值列表（未知键回退原始键名） */
+function openStrategyDetail(row: BacktestRecord) {
+  strategyDetailRow.value = row
+  const labels = PARAM_LABELS[row.strategyType] ?? {}
+  let parsed: Record<string, unknown> = {}
+  try {
+    parsed = JSON.parse(row.params) as Record<string, unknown>
+  } catch {
+    parsed = {}
+  }
+  strategyDetailItems.value = orderByLabels(parsed, labels)
+    .map(([key, value]: [string, unknown]) => {
+      let valueText = String(value)
+      if (key === 'mode') {
+        valueText = value === 'geometric' ? '等比' : '等差'
+      }
+      return { label: labels[key] ?? key, value: valueText }
+    })
+  strategyDetailVisible.value = true
+}
+
+/** 持有收益的涨跌色：正红负绿（红涨绿跌），与策略总收益同规则 */
+function benchClassOf(row: BacktestRecord): string {
+  if (row.benchTotalReturnPct == null) {
+    return ''
+  }
+  return row.benchTotalReturnPct >= 0 ? 'text-up' : 'text-down'
+}
+
+/** 持仓资产收益率的涨跌色：正红负绿（红涨绿跌） */
+function positionClassOf(row: BacktestRecord): string {
+  if (row.positionReturnPct == null) {
+    return ''
+  }
+  return row.positionReturnPct >= 0 ? 'text-up' : 'text-down'
+}
 const strategyDialogVisible = ref(false)
 const newStrategyType = ref('GRID')
 const newStrategyParams = ref<Record<string, unknown>>({})
@@ -1251,8 +1507,13 @@ async function handleSaveStrategy() {
   loadStrategies()
 }
 
+/**
+ * 切换策略启用状态：开关用 v-model 绑到 row.enabled（写回的是**新值**），
+ * 所以这里直接提交当前值，**不能再取反**——早期版本用 :model-value 单向绑定才需要取反，
+ * 改成 v-model 后取反会把状态写反（实测踩过）。
+ */
 async function toggleStrategy(row: StrategyConfig) {
-  await updateStrategy(row.id, { enabled: row.enabled === 1 ? 0 : 1 })
+  await updateStrategy(row.id, { enabled: row.enabled })
   loadStrategies()
 }
 
@@ -1305,6 +1566,23 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.strategy-name {
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.strategy-code {
+  transform: scale(0.9);
+}
+
+/* 表头里的口径说明问号 */
+.th-help {
+  margin-left: 2px;
+  vertical-align: -2px;
+  color: var(--q-text-muted);
+  cursor: help;
+}
+
 /* 图例里的标记字：与图上气泡同色，说明 b/s/q 的含义 */
 .mark-b {
   color: var(--q-color-up);

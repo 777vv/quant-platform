@@ -29,7 +29,7 @@ public class SyncController {
         this.syncLogMapper = syncLogMapper;
     }
 
-    /** 手动触发全局任务：etf / nav / valuation / indices */
+    /** 手动触发全局任务：etf / nav / valuation / indices / profiles（档案规模强制刷新） */
     @PostMapping("/{type}")
     public R<Void> trigger(@PathVariable String type) {
         switch (type) {
@@ -37,6 +37,7 @@ public class SyncController {
             case "nav" -> syncService.syncAllOtcNav();
             case "valuation" -> syncService.syncValuation();
             case "indices" -> syncService.refreshIndexQuotes();
+            case "profiles" -> syncService.refreshAllProfiles();
             default -> throw new com.quant.common.exception.BizException("未知同步类型: " + type);
         }
         return R.ok();

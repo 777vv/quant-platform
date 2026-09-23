@@ -99,6 +99,6 @@ function formatPrice(value: number): string {
   align-items: center;
   justify-content: center;
   color: var(--q-text-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 </style>

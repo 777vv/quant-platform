@@ -263,27 +263,25 @@ public class EastmoneyClient {
      * 解析时按行内日期出现顺序取前三个（登记日/除息日/发放日），除息日缺失的行直接跳过。
      *
      * @param code 基金代码
-     * @return 按除息日升序的分红记录；解析失败返回空列表（不阻断同步）
+     * @return 按除息日升序的分红记录；空列表 = 页面成功返回但该基金确实无分红记录
+     * @throws BizException 抓取失败（网络/封堵/解析异常）——失败必须透出，
+     *                      不能吞成空列表，否则与"无分红"无法区分、分红同步会永远停在旧数据
      */
     public List<DividendItem> fetchFundDividends(String code) {
         List<DividendItem> items = new ArrayList<>();
-        try {
-            String html = getWithRetry(URL_F10_DIVIDEND.replace("{code}", code), REFERER_F10.replace("{code}", code));
-            java.util.regex.Matcher row = PATTERN_DIVIDEND_ROW.matcher(html);
-            while (row.find()) {
-                java.util.regex.Matcher dates = PATTERN_DATE.matcher(row.group(0));
-                List<LocalDate> found = new ArrayList<>();
-                while (dates.find() && found.size() < 3) {
-                    found.add(LocalDate.parse(dates.group(1)));
-                }
-                if (found.size() < 2) {
-                    continue;
-                }
-                items.add(new DividendItem(found.get(0), found.get(1),
-                        found.size() > 2 ? found.get(2) : null, decimal(row.group(1))));
+        String html = getWithRetry(URL_F10_DIVIDEND.replace("{code}", code), REFERER_F10.replace("{code}", code));
+        java.util.regex.Matcher row = PATTERN_DIVIDEND_ROW.matcher(html);
+        while (row.find()) {
+            java.util.regex.Matcher dates = PATTERN_DATE.matcher(row.group(0));
+            List<LocalDate> found = new ArrayList<>();
+            while (dates.find() && found.size() < 3) {
+                found.add(LocalDate.parse(dates.group(1)));
             }
-        } catch (Exception e) {
-            LOGGER.warn("基金[{}]分红记录解析失败（不影响同步）: {}", code, e.getMessage());
+            if (found.size() < 2) {
+                continue;
+            }
+            items.add(new DividendItem(found.get(0), found.get(1),
+                    found.size() > 2 ? found.get(2) : null, decimal(row.group(1))));
         }
         items.sort(java.util.Comparator.comparing(DividendItem::exDate));
         return items;

@@ -76,6 +76,24 @@ public class BacktestRecord {
     /** 交易笔数 */
     private Integer tradeCount;
 
+    /** 平均仓位份额：回测决策期逐日持仓份额的平均值（衡量策略资金利用程度） */
+    private java.math.BigDecimal avgPositionShare;
+
+    /** 持有总收益%：买入持有基准（期初全仓买入并持有到期末）的区间总收益率 */
+    private java.math.BigDecimal benchTotalReturnPct;
+
+    /** 持有最大回撤%：买入持有基准曲线的最大回撤 */
+    private java.math.BigDecimal benchMaxDrawdownPct;
+
+    /** 平均持仓市值：决策期逐日（持仓份额×收盘价）的均值（持仓资产收益率的分母） */
+    private java.math.BigDecimal avgPositionValue;
+
+    /** 平均持仓成本：决策期逐日"摊薄成本×份额"的均值（＝剩余持仓的实际投入，持仓资产收益率的分母） */
+    private java.math.BigDecimal avgPositionCost;
+
+    /** 持仓资产收益率%：（期末资产−初始资金）÷ 平均持仓成本×100，衡量实际投出资金的决策质量（V5.14 成本口径） */
+    private java.math.BigDecimal positionReturnPct;
+
     /** 0=运行中 1=成功 2=失败 */
     private Integer status;
 

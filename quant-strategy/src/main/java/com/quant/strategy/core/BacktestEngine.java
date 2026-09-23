@@ -31,6 +31,8 @@ public class BacktestEngine {
      * 回测结果：交易明细 + 资金/回撤/基准曲线（[date, value] 数组）+ 平仓统计
      */
     public record BacktestResult(List<BacktestTradeDetail> trades, List<Object[]> equityCurve,
+                                 BigDecimal avgPositionShare, BigDecimal avgPositionValue,
+                                 BigDecimal avgPositionCost, BigDecimal positionReturnPct,
                                  List<Object[]> drawdownCurve, List<Object[]> benchmarkCurve,
                                  BigDecimal finalAssets, int sellCount, int winCount) {
     }
@@ -54,6 +56,10 @@ public class BacktestEngine {
         BacktestAction pending = BacktestAction.hold();
         BigDecimal peak = initialCapital;
         BigDecimal benchmarkShares = BigDecimal.ZERO;
+        BigDecimal shareSum = BigDecimal.ZERO;
+        BigDecimal valueSum = BigDecimal.ZERO;
+        BigDecimal costSum = BigDecimal.ZERO;
+        int shareDays = 0;
         for (int i = 0; i < data.size(); i++) {
             MarketDataSeries.DayPoint point = data.get(i);
             // 1) 执行前一交易日的信号：ETF 次日开盘成交，场外按次日净值
@@ -77,6 +83,14 @@ public class BacktestEngine {
             if (i == startIndex && point.close().compareTo(BigDecimal.ZERO) > 0) {
                 benchmarkShares = initialCapital.divide(point.close(), 4, RoundingMode.HALF_UP);
             }
+            // 决策期逐日累计持仓份额与持仓市值（回测结束后取平均 → 「平均仓位份额 / 平均持仓市值」）
+            if (i >= startIndex) {
+                shareSum = shareSum.add(state.getShares());
+                valueSum = valueSum.add(state.getShares().multiply(point.close()));
+                // 持仓成本基础 = 摊薄成本 × 份额（卖出按份额比例退出、加仓按加权摊薄，等于"剩余持仓的实际投入"）
+                costSum = costSum.add(state.getAvgCost().multiply(state.getShares()));
+                shareDays++;
+            }
             BigDecimal equity = state.getCash()
                     .add(state.getShares().multiply(point.close())).setScale(2, RoundingMode.HALF_UP);
             BigDecimal benchmark = benchmarkShares.multiply(point.close()).setScale(2, RoundingMode.HALF_UP);
@@ -92,7 +106,21 @@ public class BacktestEngine {
         }
         BigDecimal finalAssets = equityCurve.isEmpty() ? initialCapital
                 : (BigDecimal) equityCurve.get(equityCurve.size() - 1)[1];
-        return new BacktestResult(trades, equityCurve, drawdownCurve, benchmarkCurve, finalAssets,
+        BigDecimal avgPositionShare = shareDays == 0 ? BigDecimal.ZERO
+                : shareSum.divide(BigDecimal.valueOf(shareDays), 2, RoundingMode.HALF_UP);
+        BigDecimal avgPositionValue = shareDays == 0 ? BigDecimal.ZERO
+                : valueSum.divide(BigDecimal.valueOf(shareDays), 2, RoundingMode.HALF_UP);
+        BigDecimal avgPositionCost = shareDays == 0 ? BigDecimal.ZERO
+                : costSum.divide(BigDecimal.valueOf(shareDays), 2, RoundingMode.HALF_UP);
+        // 持仓资产收益率 = 策略收益 ÷ **平均持仓成本** ×100（V5.14 由"平均持仓市值"改为成本口径）：
+        // 分母用"实际投进去的钱"（成本基础不随行情虚增），因此上涨行情里不会像市值口径那样被抬高、
+        // 与"平均仓位未满时收益率应高于总收益率"的直觉一致；恒等式：总收益率 = 本指标 × (平均成本 ÷ 初始资金)。
+        // 从未持仓（均值 0）时为 null
+        BigDecimal positionReturnPct = avgPositionCost.compareTo(BigDecimal.ZERO) <= 0 ? null
+                : finalAssets.subtract(initialCapital).multiply(BigDecimal.valueOf(100))
+                        .divide(avgPositionCost, 4, RoundingMode.HALF_UP);
+        return new BacktestResult(trades, equityCurve, avgPositionShare, avgPositionValue, avgPositionCost,
+                positionReturnPct, drawdownCurve, benchmarkCurve, finalAssets,
                 state.getSellCount(), state.getWinCount());
     }
 

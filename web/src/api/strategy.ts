@@ -33,6 +33,19 @@ export interface BacktestRecord {
   sharpe: number | null
   winRate: number | null
   tradeCount: number
+
+  /** 平均仓位份额：决策期逐日持仓份额均值（老记录为 null） */
+  avgPositionShare: number | null
+  /** 持有总收益%：买入持有基准的区间总收益率（老记录为 null） */
+  benchTotalReturnPct: number | null
+  /** 持有最大回撤%：买入持有基准的最大回撤（老记录为 null） */
+  benchMaxDrawdownPct: number | null
+  /** 平均持仓市值：决策期逐日持仓市值均值（老记录为 null） */
+  avgPositionValue: number | null
+  /** 平均持仓成本：决策期逐日"摊薄成本×份额"的均值（＝剩余持仓的实际投入）（老记录为 null） */
+  avgPositionCost: number | null
+  /** 持仓资产收益率%：（期末资产−初始资金）÷平均持仓成本，衡量实际投出资金的决策质量（老记录为 null） */
+  positionReturnPct: number | null
   status: number
   errorMsg: string | null
   equityCurve: string | null

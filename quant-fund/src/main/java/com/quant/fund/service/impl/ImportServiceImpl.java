@@ -335,10 +335,13 @@ public class ImportServiceImpl implements ImportService {
         return null;
     }
 
-    /** 导入起点：近10年与成立日的较大者 */
+    /**
+     * 导入起点：近 15 年与成立日的较大者（用户口径，V5.3 由 10 年放宽到 15 年）。
+     * 15:30 日K全量覆盖走同一函数——已导入的基金无需手动重导，次日覆盖自动补长到 15 年。
+     */
     static LocalDate historyBegin(LocalDate estabDate) {
-        LocalDate tenYears = LocalDate.now().minusYears(10);
-        return estabDate != null && estabDate.isAfter(tenYears) ? estabDate : tenYears;
+        LocalDate windowStart = LocalDate.now().minusYears(15);
+        return estabDate != null && estabDate.isAfter(windowStart) ? estabDate : windowStart;
     }
 
     private void writeLog(SyncTypeEnum type, String fundCode, boolean ok, int count, String error,

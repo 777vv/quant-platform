@@ -630,7 +630,7 @@ onMounted(() => {
 }
 
 .ai-ball-text {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
 }
 
@@ -730,7 +730,7 @@ onMounted(() => {
   margin-top: 6px;
   padding-top: 4px;
   border-top: 1px dashed var(--q-border);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--q-text-muted);
 }
 
@@ -934,7 +934,7 @@ onMounted(() => {
 
 .ai-disclaimer {
   margin-top: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--q-text-muted);
   line-height: 1.5;
 }

@@ -7,11 +7,13 @@ import com.quant.common.result.PageResult;
 import com.quant.common.result.R;
 import com.quant.fund.dto.FundDetailVO;
 import com.quant.fund.dto.DividendYieldVO;
+import com.quant.fund.dto.FundScaleHistoryVO;
 import com.quant.fund.dto.FundMarkVO;
 import com.quant.fund.dto.SeriesPoint;
 import com.quant.fund.dto.ValuationSeriesVO;
 import com.quant.fund.dto.WatchItemVO;
 import com.quant.fund.service.DividendYieldService;
+import com.quant.fund.service.FundScaleHistoryService;
 import com.quant.fund.service.FundMarkService;
 import com.quant.fund.service.FundQueryService;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -37,11 +39,16 @@ public class FundController {
     /** 分红股息率（单次 + TTM） */
     private final DividendYieldService dividendYieldService;
 
+    /** 基金规模历史（行情图「基金规模」副图） */
+    private final FundScaleHistoryService scaleHistoryService;
+
     public FundController(FundQueryService fundQueryService, FundMarkService fundMarkService,
-                          DividendYieldService dividendYieldService) {
+                          DividendYieldService dividendYieldService,
+                          FundScaleHistoryService scaleHistoryService) {
         this.fundQueryService = fundQueryService;
         this.fundMarkService = fundMarkService;
         this.dividendYieldService = dividendYieldService;
+        this.scaleHistoryService = scaleHistoryService;
     }
 
     /** 自选基金列表（最新价/涨跌幅/估值百分位/最后同步时间） */
@@ -84,6 +91,12 @@ public class FundController {
     public R<DividendYieldVO> dividendYield(@PathVariable String code,
             @RequestParam(defaultValue = "3650") int range) {
         return R.ok(dividendYieldService.series(code, range));
+    }
+
+    /** 基金规模历史（每日档案刷新后逐日积累；按日期升序） */
+    @GetMapping("/{code}/scale-history")
+    public R<List<FundScaleHistoryVO>> scaleHistory(@PathVariable String code) {
+        return R.ok(scaleHistoryService.history(code));
     }
 
     /** 基金详情（档案 + 最新行情） */

@@ -69,6 +69,9 @@ public class FundBasic {
     /** 档案（规模/费率/跟踪指数）最近刷新日：同日不重复拉取档案页 */
     private LocalDate profileSyncDate;
 
+    /** 分红记录最近"成功"刷新日：只有抓取成功才更新；失败留空/留旧值，下次同步自动重试 */
+    private LocalDate dividendSyncDate;
+
     /** 1=在自选池 0=已移除（软删，历史数据保留） */
     private Integer status;
 

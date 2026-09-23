@@ -15,9 +15,13 @@ import com.quant.common.exception.BizException;
 import com.quant.common.result.PageResult;
 import com.quant.common.util.JsonUtils;
 import com.quant.fund.entity.FundBasic;
+import com.quant.fund.entity.FundPosition;
 import com.quant.fund.entity.SyncLog;
 import com.quant.fund.enums.SyncTypeEnum;
+import com.quant.fund.entity.TradeFlow;
 import com.quant.fund.mapper.FundBasicMapper;
+import com.quant.fund.mapper.FundPositionMapper;
+import com.quant.fund.mapper.TradeFlowMapper;
 import com.quant.fund.mapper.SyncLogMapper;
 import com.quant.strategy.core.MarketDataLoader;
 import com.quant.strategy.core.MarketDataSeries;
@@ -29,6 +33,7 @@ import com.quant.strategy.dto.SignalItemVO;
 import com.quant.strategy.entity.SignalRecord;
 import com.quant.strategy.entity.StrategyConfig;
 import com.quant.strategy.grid.GridStrategy;
+import com.quant.strategy.oscillation.OscillatingUpStrategy;
 import com.quant.strategy.mapper.SignalRecordMapper;
 import com.quant.strategy.mapper.StrategyConfigMapper;
 import com.quant.strategy.service.SignalService;
@@ -79,15 +84,24 @@ public class SignalServiceImpl implements SignalService {
     /** 基金档案（分页查询时批量解析基金名称用） */
     private final FundBasicMapper fundBasicMapper;
 
+    /** 持仓汇总（震荡向上按实际持仓判断档位） */
+    private final FundPositionMapper positionMapper;
+
+    /** 交易流水（震荡向上以最近一次实际买卖为状态锚点） */
+    private final TradeFlowMapper tradeFlowMapper;
+
     public SignalServiceImpl(StrategyConfigMapper configMapper, SignalRecordMapper signalRecordMapper,
                              SyncLogMapper syncLogMapper, MarketDataLoader marketDataLoader,
-                             StrategyRegistry registry, FundBasicMapper fundBasicMapper) {
+                             StrategyRegistry registry, FundBasicMapper fundBasicMapper,
+                             FundPositionMapper positionMapper, TradeFlowMapper tradeFlowMapper) {
         this.configMapper = configMapper;
         this.signalRecordMapper = signalRecordMapper;
         this.syncLogMapper = syncLogMapper;
         this.marketDataLoader = marketDataLoader;
         this.registry = registry;
         this.fundBasicMapper = fundBasicMapper;
+        this.positionMapper = positionMapper;
+        this.tradeFlowMapper = tradeFlowMapper;
     }
 
     @Override
@@ -196,15 +210,50 @@ public class SignalServiceImpl implements SignalService {
             config.setParams(JsonUtils.toJson(params));
             configMapper.updateById(config);
         }
-        Signal signal = strategy.generateSignal(new StrategyContext(loaded.fund(), params, series));
         LocalDate signalDate = series.get(series.size() - 1).date();
+        // 当前仓位与最近一次实际交易：供需持仓状态的策略使用（震荡向上的档位与首次/二次判断）。
+        // ⚠️ 锚点是【实际交易流水】而非信号——信号发了没照做（无流水）即不算数，状态机以成交为准（用户口径 V5.9）
+        BigDecimal currentShares = currentShares(config.getFundCode());
+        TradeFlow lastTrade = lastTrade(config.getFundCode());
+        Signal signal = strategy.generateSignal(new StrategyContext(loaded.fund(), params, series,
+                currentShares,
+                lastTrade == null ? null : (lastTrade.getTradeType() == 1 ? Signal.BUY : Signal.SELL),
+                lastTrade == null ? null : lastTrade.getPrice(),
+                lastTrade == null ? null : lastTrade.getTradeDate()));
         return upsert(config, signalDate, signal);
     }
 
-    /** 窗口天数：估值百分位按 windowYears 回看；网格只需近期行情 */
+    /**
+     * 当前持仓份额（平台记录的实际持仓；无持仓返回 0）。
+     * 口径：用户手动记录的交易流水汇总（fund_position.total_share），策略只是读取、不做推算。
+     */
+    private BigDecimal currentShares(String fundCode) {
+        FundPosition position = positionMapper.selectOne(new LambdaQueryWrapper<FundPosition>()
+                .eq(FundPosition::getFundCode, fundCode));
+        return position == null || position.getTotalShare() == null ? BigDecimal.ZERO : position.getTotalShare();
+    }
+
+    /**
+     * 最近一次实际买卖交易（trade_flow，只认 买入/卖出 两种类型，分红与划转不算）。
+     * 无记录返回 null = "起步"状态（震荡向上按首次分支、用 windowDays 窗口处理）。
+     */
+    private TradeFlow lastTrade(String fundCode) {
+        return tradeFlowMapper.selectOne(new LambdaQueryWrapper<TradeFlow>()
+                .eq(TradeFlow::getFundCode, fundCode)
+                .in(TradeFlow::getTradeType, List.of(1, 2))
+                .orderByDesc(TradeFlow::getTradeDate)
+                .orderByDesc(TradeFlow::getId)
+                .last("limit 1"));
+    }
+
+    /** 窗口天数：估值百分位按 windowYears 回看；震荡向上按 K线天数 换算；网格只需近期行情 */
     private int windowDays(String strategyType, JsonNode params) {
         if (ValPercentileStrategy.TYPE.equals(strategyType)) {
             return Strategy.intOr(params, "windowYears", 10) * VAL_WINDOW_DAYS_PER_YEAR;
+        }
+        if (OscillatingUpStrategy.TYPE.equals(strategyType)) {
+            // loadRecent 收的是自然日：A 股年约 243 个交易日，按 1.6 倍 + 30 天冗余，保证窗口内至少有 K线天数 根 bar
+            return (int) Math.ceil(Strategy.intOr(params, "windowDays", 60) * 1.6) + 30;
         }
         return GRID_WINDOW_DAYS;
     }

@@ -101,6 +101,13 @@
 
 .el-button--small {
   font-weight: 500;
+  /* EP 对 small 按钮硬编码 12px，随 V5.15 全站字号上调改用 token */
+  font-size: var(--q-font-xs);
+}
+
+/* 小号标签同理（EP 硬编码 12px） */
+.el-tag--small {
+  font-size: var(--q-font-xs);
 }
 
 /* ---------- 标签：小圆角胶囊风 ---------- */

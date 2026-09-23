@@ -3,6 +3,8 @@ package com.quant.strategy.core;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+import tools.jackson.databind.JsonNode;
+
 /**
  * 策略 SPI（技术文档 6.4）：新增策略 = 新增一个 @Component 实现类，不改框架代码
  */
@@ -25,6 +27,21 @@ public interface Strategy {
      * 引擎负责在 index+1 日按开盘价（ETF）/净值（场外）撮合，规避未来函数
      */
     BacktestAction decide(int index, MarketDataSeries data, BacktestState state);
+
+    /**
+     * 回测发起前的策略级前置校验（默认不校验）。
+     *
+     * <p>典型用途：仓位以"份数"为口径的策略（如震荡向上）需要确认初始本金买得起满仓份额，
+     * 否则回测跑出来的仓位档位与配置含义不符。抛 BizException 会让该次回测置为失败并展示原因。
+     *
+     * @param series         回测行情序列（含预热段）
+     * @param startIndex     决策起始下标（区间首日）
+     * @param params         策略参数
+     * @param initialCapital 初始本金
+     */
+    default void validateBacktest(MarketDataSeries series, int startIndex, JsonNode params,
+            BigDecimal initialCapital) {
+    }
 
     /** 安全取 BigDecimal（Jackson3 对缺失节点 decimalValue() 会抛异常，可选参数必须走此方法） */
     static BigDecimal dec(tools.jackson.databind.JsonNode node, String field, BigDecimal defaultValue) {

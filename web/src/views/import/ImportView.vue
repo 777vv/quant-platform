@@ -1,6 +1,6 @@
 <template>
   <el-card class="import-card">
-    <template #header><span>基金数据导入（近10年，不足10年自成立起）</span></template>
+    <template #header><span>基金数据导入（近15年，不足15年自成立起）</span></template>
     <el-row :gutter="12" align="middle">
       <el-col :span="8">
         <el-input v-model="code" placeholder="输入基金代码，如 510300 / 110003" maxlength="12" clearable @keyup.enter="handleCheck">

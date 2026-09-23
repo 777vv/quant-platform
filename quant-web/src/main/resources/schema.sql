@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS fund_basic (
   premium_rate   DECIMAL(10,4) DEFAULT NULL COMMENT '溢价率（%）=（当日收盘价 − 当日单位净值）/ 当日单位净值，仅场内 ETF',
   premium_date   DATE         DEFAULT NULL COMMENT '溢价率对应的净值日（与收盘价同日，保证分子分母同一天）',
   profile_sync_date DATE      DEFAULT NULL COMMENT '档案（规模/费率/跟踪指数）最近刷新日；同日不重复拉取',
+  dividend_sync_date DATE     DEFAULT NULL COMMENT '分红记录最近成功刷新日；失败不更新、下次同步自动重试',
   status         TINYINT      DEFAULT 1 COMMENT '1正常 0已删除(自选移除)',
   last_sync_date DATE         DEFAULT NULL COMMENT '行情/净值最后同步日期',
   created_at     DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -180,6 +181,27 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_basic' AND COLUMN_NAME = 'profile_sync_date');
 SET @sql := IF(@c = 0, 'ALTER TABLE fund_basic ADD COLUMN profile_sync_date DATE DEFAULT NULL COMMENT ''档案最近刷新日''', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_basic' AND COLUMN_NAME = 'dividend_sync_date');
+SET @sql := IF(@c = 0, 'ALTER TABLE fund_basic ADD COLUMN dividend_sync_date DATE DEFAULT NULL COMMENT ''分红记录最近成功刷新日''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_share');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_share DECIMAL(18,2) DEFAULT NULL COMMENT ''平均仓位份额''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'bench_total_return_pct');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN bench_total_return_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持有总收益%''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'bench_max_drawdown_pct');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN bench_max_drawdown_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持有最大回撤%''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_value');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_value DECIMAL(18,2) DEFAULT NULL COMMENT ''平均持仓市值''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'position_return_pct');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN position_return_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持仓资产收益率%''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_cost');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_cost DECIMAL(18,2) DEFAULT NULL COMMENT ''平均持仓成本''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 9. 持仓汇总（由流水重算的冗余表；position 为 MySQL 关键字，故命名 fund_position）
 CREATE TABLE IF NOT EXISTS fund_position (
@@ -227,6 +249,12 @@ CREATE TABLE IF NOT EXISTS backtest_record (
   sharpe              DECIMAL(10,4) DEFAULT NULL COMMENT '夏普比率',
   win_rate            DECIMAL(10,4) DEFAULT NULL COMMENT '胜率%',
   trade_count         INT        DEFAULT 0 COMMENT '交易笔数',
+  avg_position_share  DECIMAL(18,2) DEFAULT NULL COMMENT '平均仓位份额：决策期逐日持仓份额均值（V5.11）',
+  bench_total_return_pct DECIMAL(10,4) DEFAULT NULL COMMENT '持有总收益%：买入持有基准区间总收益率（V5.11）',
+  bench_max_drawdown_pct DECIMAL(10,4) DEFAULT NULL COMMENT '持有最大回撤%：买入持有基准最大回撤（V5.11）',
+  avg_position_value  DECIMAL(18,2) DEFAULT NULL COMMENT '平均持仓市值：决策期逐日持仓市值均值（V5.12）',
+  avg_position_cost   DECIMAL(18,2) DEFAULT NULL COMMENT '平均持仓成本：决策期逐日摊薄成本×份额均值（V5.14）',
+  position_return_pct DECIMAL(10,4) DEFAULT NULL COMMENT '持仓资产收益率%：策略收益÷平均持仓成本（V5.14 成本口径）',
   status              TINYINT    DEFAULT 0 COMMENT '0运行中 1成功 2失败',
   error_msg           VARCHAR(512) DEFAULT NULL COMMENT '失败原因',
   equity_curve        MEDIUMTEXT  DEFAULT NULL COMMENT '资金曲线JSON [{d,v}]',
@@ -435,3 +463,14 @@ INSERT IGNORE INTO sys_mail_config (id, enabled, host, port, username, password,
 SELECT 1, 0, NULL, 465, NULL, NULL, NULL, NULL
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_mail_config WHERE id = 1);
 
+-- V5.3 基金规模历史（每日档案刷新成功后落一行，幂等同日覆盖；供行情图「基金规模」副图使用。
+-- 注意：数据源只披露当前规模，历史无法回补，曲线自本表上线日起逐日积累）
+CREATE TABLE IF NOT EXISTS fund_scale_history (
+  id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+  fund_code   VARCHAR(12) NOT NULL COMMENT '基金代码',
+  stat_date   DATE        NOT NULL COMMENT '统计日期（档案刷新成功那天）',
+  fund_scale  DECIMAL(18,2) DEFAULT NULL COMMENT '净资产规模（亿元）',
+  scale_date  DATE        DEFAULT NULL COMMENT '规模数据截止日（东财披露，通常为季末）',
+  created_at  DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  UNIQUE KEY uk_fund_date (fund_code, stat_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '基金规模历史表';

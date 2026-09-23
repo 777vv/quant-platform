@@ -15,8 +15,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * 策略信号定时任务（FR5，M4-03）：
- * 每交易日 21:00（净值 20:00、估值 20:30 同步完成后）计算全部启用策略信号，
- * 并触发邮件摘要通知；Redisson 锁防止多实例/人工手动触发并发重复计算。
+ * 每交易日 09:00（盘前）计算全部启用策略信号并触发邮件摘要（用户口径 V5.3：信号是交易日的、
+ * 早上 9 点执行，由 21:00 改来）。信号基于上一交易日收盘数据生成（9 点时当天 bar 尚不存在），
+ * 信号日期即上一交易日；节假日（MON-FRI 但休市）跑一轮只会幂等重算出与上一交易日相同的信号，
+ * 已通知过的不会重发邮件，无害。Redisson 锁防止多实例/人工手动触发并发重复计算。
  */
 @Component
 public class SignalJob {
@@ -41,8 +43,8 @@ public class SignalJob {
         this.lockUtils = lockUtils;
     }
 
-    /** 每交易日 21:00 信号计算 + 邮件摘要 */
-    @Scheduled(cron = "0 0 21 * * MON-FRI")
+    /** 每交易日 09:00（盘前）信号计算 + 邮件摘要 */
+    @Scheduled(cron = "0 0 9 * * MON-FRI")
     public void generateSignals() {
         MDC.put("traceId", TraceIdGenerator.nextJob("signal"));
         try {

@@ -246,6 +246,19 @@ export function fundDividendYield(code: string, range = 3650) {
   return get<DividendYieldVO>(`/funds/${code}/dividend-yield`, { range })
 }
 
+/** 基金规模历史点（每日档案刷新成功后逐日积累，自 V5.3 上线日起） */
+export interface FundScalePoint {
+  /** 统计日期（档案刷新成功那天） */
+  date: string
+  /** 净资产规模（亿元） */
+  scale: number
+}
+
+/** 查询基金规模历史（按日期升序；行情图「规模副图」数据源） */
+export function fundScaleHistory(code: string) {
+  return get<FundScalePoint[]>(`/funds/${code}/scale-history`)
+}
+
 /** 行情图交易标记（买入 b / 卖出 s / 分红 q） */
 export interface FundMarkVO {
   /** 标记日期（与 K 线交易日对齐） */

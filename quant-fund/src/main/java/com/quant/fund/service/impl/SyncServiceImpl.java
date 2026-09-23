@@ -41,6 +41,7 @@ import com.quant.fund.mapper.IndexQuoteMapper;
 import com.quant.fund.mapper.IndexValuationMapper;
 import com.quant.fund.mapper.SyncLogMapper;
 import com.quant.fund.service.DividendService;
+import com.quant.fund.service.FundScaleHistoryService;
 import com.quant.fund.service.SyncService;
 import com.quant.fund.service.TaskProgressStore;
 import org.slf4j.Logger;
@@ -110,6 +111,9 @@ public class SyncServiceImpl implements SyncService {
     /** 分红记录（行情图【q】标记的数据源，随档案每日刷新） */
     private final DividendService dividendService;
 
+    /** 基金规模历史（档案刷新成功后逐日落一行） */
+    private final FundScaleHistoryService scaleHistoryService;
+
     private final TaskProgressStore progressStore;
 
     private final TransactionTemplate transactionTemplate;
@@ -126,7 +130,7 @@ public class SyncServiceImpl implements SyncService {
                            TaskProgressStore progressStore, TransactionTemplate transactionTemplate,
                            DashboardProperties dashboardProperties, LockUtils lockUtils,
                            StringRedisTemplate redisTemplate, FundPositionMapper positionMapper,
-                           DividendService dividendService) {
+                           DividendService dividendService, FundScaleHistoryService scaleHistoryService) {
         this.client = client;
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
@@ -141,6 +145,7 @@ public class SyncServiceImpl implements SyncService {
         this.redisTemplate = redisTemplate;
         this.positionMapper = positionMapper;
         this.dividendService = dividendService;
+        this.scaleHistoryService = scaleHistoryService;
     }
 
     @Override
@@ -408,13 +413,18 @@ public class SyncServiceImpl implements SyncService {
      * 刷新基础数据（每次数据同步后调用）：
      * <ol>
      *   <li><b>档案类</b>（规模/费率/跟踪指数）：每天最多拉一次档案页（按 profile_sync_date 判断）——
-     *       这些字段一天内不变，而持仓基金盘中每 10 分钟同步一次，逐次拉 HTML 页纯属浪费且拉长任务耗时；</li>
+     *       这些字段一天内不变，而盘中每 10 分钟同步一次，逐次拉 HTML 页纯属浪费且拉长任务耗时；
+     *       每交易日 15:05 有一次强制刷新（用户口径：收盘后立即再刷一次最新规模）；</li>
+     *   <li><b>分红记录</b>：独立的 dividend_sync_date 标记——只有"抓取成功"才算刷过，
+     *       失败（数据源封堵等）次日自动重试，直到成功为止（V5.3 前失败会被静默吞掉，
+     *       510300 的分红因此长期缺数、股息率一直显示 "--"）；</li>
      *   <li><b>溢价率</b>：场内 ETF 每次同步都重算（价格与净值都会变）。</li>
      * </ol>
-     * 两者失败都只记日志，不影响行情/净值同步结果。
+     * 全部失败都只记日志，不影响行情/净值同步结果。
      */
     private void refreshBasicData(FundBasic fund, boolean forceProfile) {
         refreshProfileIfNeeded(fund, forceProfile);
+        refreshDividendsIfNeeded(fund, forceProfile);
         if (fund.getFundType() != null && fund.getFundType() == FundTypeEnum.ETF.getCode()) {
             refreshPremiumRate(fund);
         }
@@ -422,7 +432,7 @@ public class SyncServiceImpl implements SyncService {
 
     /**
      * 档案类基础数据（规模/费率/跟踪指数）刷新。
-     * 自动同步（含持仓盘中每 10 分钟）每天最多刷一次；**手动点"同步"时强制刷**——
+     * 自动同步（含盘中每 10 分钟）每天最多刷一次；**手动点"同步"时强制刷**——
      * 手动是明确的用户意图，且能让当天导入/变更的基金立刻看到规模与费率。
      *
      * @param force true=忽略"当天已刷"标记，强制重新拉取档案页
@@ -447,15 +457,37 @@ public class SyncServiceImpl implements SyncService {
             fund.setCustFeeRate(profile.custFeeRate());
             fund.setSalesFeeRate(profile.salesFeeRate());
             fund.setProfileSyncDate(LocalDate.now());
+            // 规模历史随每次成功的档案刷新落一行（幂等，同日覆盖），供基金规模走势副图使用
+            scaleHistoryService.record(fund.getFundCode(), profile.fundScale(), profile.fundScaleDate());
         } catch (Exception e) {
             LOGGER.warn("基金[{}]档案（规模/费率）刷新失败: {}", fund.getFundCode(), e.getMessage());
         }
-        // 分红记录与档案同频刷新（每日一次 / 手动强制）：行情图【q】标记只读库里已落好的记录，
-        // 抓取绝不放在看图请求路径上；单独 try/catch，与档案刷新互不影响
+    }
+
+    /**
+     * 分红记录刷新（股息率数据的分子）。
+     * 与档案解耦、拥有独立的成功标记 dividend_sync_date：
+     * <ul>
+     *   <li>抓取成功（含"该基金确实无分红"）→ 写标记，当天不再重复拉；</li>
+     *   <li>抓取失败 → 不写标记并告警，同一天内的后续同步与次日同步都会重试。</li>
+     * </ul>
+     * 行情图【q】标记只读库里已落好的记录，抓取绝不放在看图请求路径上。
+     *
+     * @param force true=忽略标记强制刷新（手动同步）
+     */
+    private void refreshDividendsIfNeeded(FundBasic fund, boolean force) {
+        if (!force && LocalDate.now().equals(fund.getDividendSyncDate())) {
+            return;
+        }
         try {
             dividendService.refresh(fund.getFundCode());
+            fundBasicMapper.update(null, new LambdaUpdateWrapper<FundBasic>()
+                    .eq(FundBasic::getFundCode, fund.getFundCode())
+                    .set(FundBasic::getDividendSyncDate, LocalDate.now()));
+            fund.setDividendSyncDate(LocalDate.now());
         } catch (Exception e) {
-            LOGGER.warn("基金[{}]分红记录刷新失败: {}", fund.getFundCode(), e.getMessage());
+            LOGGER.warn("基金[{}]分红记录刷新失败（股息率可能缺失/滞后，下次同步自动重试）: {}",
+                    fund.getFundCode(), e.getMessage());
         }
     }
 
@@ -640,81 +672,121 @@ public class SyncServiceImpl implements SyncService {
         LOGGER.info("指数[{}]估值增量 {} 条", indexCode, entities.size());
     }
 
-    /**
-     * 自动同步（V2.2）：非持仓的自选基金，每交易日 17:00 增量同步。
-     * 持仓基金由盘中高频任务覆盖，此处跳过（以 fund_position 份额>0 判定"持仓"）。
-     */
-    @Override
-    public void syncNonHoldingFunds() {
-        lockUtils.runWithLock("job:sync:non-holding", 60, () -> {
-            LocalDateTime startAt = LocalDateTime.now();
-            List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
-                    .eq(FundBasic::getStatus, 1).orderByAsc(FundBasic::getFundCode));
-            int ok = 0;
-            List<String> errors = new ArrayList<>();
-            for (FundBasic fund : funds) {
-                if (isHolding(fund.getFundCode())) {
-                    continue;
-                }
-                try {
-                    syncFundData(fund, false);
-                    ok++;
-                } catch (Exception e) {
-                    LOGGER.warn("非持仓自动同步[{}]失败: {}", fund.getFundCode(), e.getMessage());
-                    errors.add(fund.getFundCode() + ":" + e.getMessage());
-                }
-            }
-            writeLog(SyncTypeEnum.AUTO, null, errors.isEmpty(), ok,
-                    errors.isEmpty() ? null : String.join(" | ", errors), startAt);
-        });
-    }
+    /** 交易日自判的 Redis 键前缀（值 pending/confirmed，键按自然日，自动过期由 TTL 保证） */
+    private static final String HOLIDAY_KEY_PREFIX = "market:holiday:";
+
+    /** 交易日自判"待确认"的观察时长（秒）：连续两次观察都无当天 bar 才判节假日 */
+    private static final long HOLIDAY_PENDING_SECONDS = 900;
 
     /**
-     * 自动同步（V2.2）：持仓基金盘中增量同步（ETF 含当日实时未定型数据）。
+     * 自动同步（V5.3）：全部自选 ETF 盘中增量同步（含当日实时未定型数据）。
      * 交易时段由任务层判断（cron 已限定 MON-FRI），此处再校验 9:30-11:30 / 13:00-15:00，
      * 非时段直接返回——保证 cron 调粗粒度时不产生多余请求。
+     *
+     * <p>交易日自判（不引入日历依赖，用数据源自身回答"今天开不开市"）：
+     * 同步成功（HTTP 正常）但库里没有今天这根 bar → 今天疑似节假日；
+     * 连续两轮观察（间隔 ≥ 一轮 10 分钟）都没有 → 确认为节假日并写 Redis 标记
+     * （自然日过期），当天剩余时间不再发起任何请求。请求失败（封堵/网络）不做结论，下轮自然重试。
+     * 场外基金净值没有盘中口径，不参加本任务（仍走 20:00 / 次日 07:00 的净值同步）。
      */
     @Override
-    public void syncHoldingFundsIntraday() {
+    public void syncWatchFundsIntraday() {
         LocalTime now = LocalTime.now();
         boolean morning = !now.isBefore(LocalTime.of(9, 30)) && !now.isAfter(LocalTime.of(11, 30));
         boolean afternoon = !now.isBefore(LocalTime.of(13, 0)) && !now.isAfter(LocalTime.of(15, 0));
         if (!morning && !afternoon) {
             return;
         }
-        lockUtils.runWithLock("job:sync:holding", 60, () -> {
+        if (isConfirmedHoliday()) {
+            LOGGER.debug("今日判定为节假日（数据源自判），盘中同步跳过");
+            return;
+        }
+        lockUtils.runWithLock("job:sync:watch", 60, () -> {
             LocalDateTime startAt = LocalDateTime.now();
-            List<FundPosition> positions = positionMapper.selectList(new LambdaQueryWrapper<>());
+            List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                    .eq(FundBasic::getStatus, 1).eq(FundBasic::getFundType, FundTypeEnum.ETF.getCode()));
             int ok = 0;
             List<String> errors = new ArrayList<>();
-            for (FundPosition position : positions) {
-                if (position.getTotalShare() == null || position.getTotalShare().compareTo(BigDecimal.ZERO) <= 0) {
-                    continue;
-                }
-                FundBasic fund = fundBasicMapper.selectOne(new LambdaQueryWrapper<FundBasic>()
-                        .eq(FundBasic::getFundCode, position.getFundCode()));
-                if (fund == null || fund.getStatus() != 1) {
-                    continue;
-                }
+            for (FundBasic fund : funds) {
                 try {
                     syncFundData(fund, false);
                     ok++;
                 } catch (Exception e) {
-                    LOGGER.warn("持仓盘中同步[{}]失败: {}", position.getFundCode(), e.getMessage());
-                    errors.add(position.getFundCode() + ":" + e.getMessage());
+                    LOGGER.warn("盘中同步[{}]失败: {}", fund.getFundCode(), e.getMessage());
+                    errors.add(fund.getFundCode() + ":" + e.getMessage());
                 }
+            }
+            // 交易日自判：全部同步成功但没有任何一只出现今天的 bar → 记一次"疑似节假日"观察
+            if (errors.isEmpty() && !funds.isEmpty() && !hasTodayBar(funds.get(0).getFundCode())) {
+                observeHoliday();
+            } else if (!funds.isEmpty() && hasTodayBar(funds.get(0).getFundCode())) {
+                // 出现当天 bar = 今天确定开市，清掉可能存在的"疑似"标记
+                redisTemplate.delete(HOLIDAY_KEY_PREFIX + LocalDate.now());
             }
             writeLog(SyncTypeEnum.AUTO, null, errors.isEmpty(), ok,
                     errors.isEmpty() ? null : String.join(" | ", errors), startAt);
         });
     }
 
-    /** 是否持仓（份额 > 0） */
-    private boolean isHolding(String fundCode) {
-        FundPosition position = positionMapper.selectOne(new LambdaQueryWrapper<FundPosition>()
-                .eq(FundPosition::getFundCode, fundCode));
-        return position != null && position.getTotalShare() != null
-                && position.getTotalShare().compareTo(BigDecimal.ZERO) > 0;
+    /** 今天已被确认为节假日（数据源自判） */
+    private boolean isConfirmedHoliday() {
+        String value = redisTemplate.opsForValue().get(HOLIDAY_KEY_PREFIX + LocalDate.now());
+        return "confirmed".equals(value);
+    }
+
+    /** 某基金本地是否已有今天这根 bar */
+    private boolean hasTodayBar(String fundCode) {
+        return klineMapper.selectCount(new LambdaQueryWrapper<FundEtfKline>()
+                .eq(FundEtfKline::getFundCode, fundCode)
+                .eq(FundEtfKline::getTradeDate, LocalDate.now())) > 0;
+    }
+
+    /**
+     * 记一次"疑似节假日"观察：第一次记 pending（短 TTL，当天内有效），
+     * 已有 pending 又再次观察到 → 升级为 confirmed（持续到自然日结束），当天剩余时间全部跳过。
+     */
+    private void observeHoliday() {
+        String key = HOLIDAY_KEY_PREFIX + LocalDate.now();
+        String value = redisTemplate.opsForValue().get(key);
+        if ("pending".equals(value)) {
+            java.time.Duration tillMidnight = java.time.Duration.between(LocalDateTime.now(),
+                    LocalDate.now().plusDays(1).atStartOfDay());
+            redisTemplate.opsForValue().set(key, "confirmed", tillMidnight);
+            LOGGER.info("连续两轮未见当天行情，判定今日为节假日（数据源自判），盘中同步今日不再发起");
+        } else if (value == null) {
+            redisTemplate.opsForValue().set(key, "pending", java.time.Duration.ofSeconds(HOLIDAY_PENDING_SECONDS));
+        }
+    }
+
+    /**
+     * 档案（规模/费率）强制刷新（每交易日 15:05）：收盘后立即再刷一次最新规模，
+     * 并把当日规模快照落进 fund_scale_history（供行情图「基金规模」副图）。
+     * 成功后 profile_sync_date 已是今天 → 15:30 日K全量覆盖的档案刷新会自然跳过，不会重复拉。
+     */
+    @Override
+    public void refreshAllProfiles() {
+        if (isConfirmedHoliday()) {
+            LOGGER.debug("今日判定为节假日（数据源自判），15:05 档案刷新跳过");
+            return;
+        }
+        lockUtils.runWithLock("job:profile:refresh", 60, () -> {
+            List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                    .eq(FundBasic::getStatus, 1));
+            int ok = 0;
+            List<String> errors = new ArrayList<>();
+            for (FundBasic fund : funds) {
+                try {
+                    refreshProfileIfNeeded(fund, true);
+                    refreshPremiumRate(fund);
+                    ok++;
+                } catch (Exception e) {
+                    LOGGER.warn("档案刷新[{}]失败: {}", fund.getFundCode(), e.getMessage());
+                    errors.add(fund.getFundCode() + ":" + e.getMessage());
+                }
+            }
+            LOGGER.info("15:05 档案（规模/费率）强制刷新完成：成功 {}/{} 只{}", ok, funds.size(),
+                    errors.isEmpty() ? "" : "，失败: " + String.join(" | ", errors));
+        });
     }
 
     private FundEtfKline toKlineEntity(String fundCode, EastmoneyClient.KlineItem item) {

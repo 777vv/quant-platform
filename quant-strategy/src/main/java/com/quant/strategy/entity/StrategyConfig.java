@@ -31,6 +31,9 @@ public class StrategyConfig {
     /** 参数 JSON 字符串（保存前经 Strategy.validateParams 校验） */
     private String params;
 
+    /** 备注（用户自填，如建仓思路 / 调参缘由；V5.34 新增） */
+    private String remark;
+
     /** 1=启用（每日信号计算）0=停用 */
     private Integer enabled;
 

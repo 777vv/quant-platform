@@ -2,13 +2,12 @@ package com.quant.strategy.task;
 
 import java.util.List;
 
-import com.quant.common.log.TraceIdGenerator;
+import com.quant.common.log.JobLogs;
 import com.quant.fund.dto.DashboardOverviewVO;
 import com.quant.fund.service.SyncSummaryService;
 import com.quant.strategy.notify.NotifyService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -31,11 +30,13 @@ public class SyncAlertJob {
         this.notifyService = notifyService;
     }
 
-    /** 每日 22:05 检查同步状态并对滞后基金告警 */
+    /**
+     * 每日 22:05 检查同步状态并对滞后基金告警。
+     * 统一走 {@link JobLogs#run}：打印「开始执行 / 执行结束（耗时）」+ 任务级 traceId 串联本轮日志。
+     */
     @Scheduled(cron = "0 5 22 * * *")
     public void alertLagging() {
-        MDC.put("traceId", TraceIdGenerator.nextJob("sync:alert"));
-        try {
+        JobLogs.run("sync:alert", () -> {
             List<DashboardOverviewVO.SyncStatusItem> lagging = syncSummaryService.summary().stream()
                     .filter(item -> SyncSummaryService.STATUS_LAGGING.equals(item.status()))
                     .toList();
@@ -45,10 +46,6 @@ public class SyncAlertJob {
             }
             LOGGER.warn("检测到 {} 只基金数据滞后，触发告警邮件", lagging.size());
             notifyService.sendSyncAlert(lagging);
-        } catch (Exception e) {
-            LOGGER.error("同步异常告警任务失败: {}", e.getMessage(), e);
-        } finally {
-            MDC.clear();
-        }
+        });
     }
 }

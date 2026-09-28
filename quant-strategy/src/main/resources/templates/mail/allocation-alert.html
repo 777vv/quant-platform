@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8"/>
+  <title>仓位配置偏离告警</title>
+</head>
+<body style="margin:0;padding:24px;background:#f5f7fa;font-family:'Microsoft YaHei',Arial,sans-serif;color:#303133;">
+<div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #ebeef5;">
+  <div style="padding:20px 24px;background:#8b5a1f;color:#ffffff;">
+    <div style="font-size:18px;font-weight:bold;">量化投资平台 · 仓位配置偏离告警</div>
+    <div style="font-size:13px;margin-top:6px;color:#f5dfc6;" th:text="${time}">2026-09-29 09:00:00</div>
+  </div>
+  <div style="padding:20px 24px;">
+    <p style="font-size:14px;line-height:1.8;margin:0 0 6px;">
+      当前组合与【平台配置 → 仓位配置】的目标范围不一致，共
+      <b style="color:#c0392b;" th:text="${violationCount}">2</b> 类越界：
+    </p>
+    <p style="font-size:13px;color:#606266;margin:0 0 16px;">
+      总资产 <b th:text="${totalAssets}">62345.00</b> 元（其中现金 <span th:text="${cash}">1234.00</span> 元）
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead>
+      <tr style="background:#f5f7fa;">
+        <th style="padding:8px 10px;text-align:left;border:1px solid #ebeef5;">类别</th>
+        <th style="padding:8px 10px;text-align:right;border:1px solid #ebeef5;">当前金额(元)</th>
+        <th style="padding:8px 10px;text-align:right;border:1px solid #ebeef5;">当前占比</th>
+        <th style="padding:8px 10px;text-align:center;border:1px solid #ebeef5;">目标范围</th>
+        <th style="padding:8px 10px;text-align:center;border:1px solid #ebeef5;">状态</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr th:each="row : ${rows}">
+        <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${row.label}">现金</td>
+        <td style="padding:8px 10px;text-align:right;border:1px solid #ebeef5;" th:text="${row.amount}">1234.00</td>
+        <td style="padding:8px 10px;text-align:right;border:1px solid #ebeef5;"
+            th:styleappend="${row.bad} == '1' ? 'color:#c0392b;font-weight:bold;' : ''"
+            th:text="${row.current} + '%'">2.00%</td>
+        <td style="padding:8px 10px;text-align:center;border:1px solid #ebeef5;" th:text="${row.range}">10% ~ 30%</td>
+        <td style="padding:8px 10px;text-align:center;border:1px solid #ebeef5;"
+            th:styleappend="${row.bad} == '1' ? 'color:#c0392b;' : 'color:#27ae60;'"
+            th:text="${row.ok}">✗ 越界</td>
+      </tr>
+      </tbody>
+    </table>
+    <p style="font-size:12px;color:#909399;line-height:1.8;margin:16px 0 0;">
+      分类口径：现金 = 现金余额 + 标签「现金」的基金市值；A股/美股/亚太/欧洲 = 打了对应标签的基金市值。
+      本检查每周二 09:00 自动执行，也可在【平台配置 → 仓位配置】手动触发；范围内不发送。
+    </p>
+  </div>
+</div>
+</body>
+</html>

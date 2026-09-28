@@ -1,18 +1,22 @@
 package com.quant.fund.task;
 
-import com.quant.common.log.TraceIdGenerator;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+
+import com.quant.common.log.JobLogs;
 import com.quant.fund.service.SyncService;
 import com.quant.fund.service.SyncSummaryService;
 import com.quant.fund.service.TradingCalendarService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
  * 基金数据定时任务（FR5，技术文档 6.6）：
- * 任务级 traceId 便于从日志溯源单次执行；互斥由 SyncService 内的 Redisson 锁保证。
+ * 每个任务统一走 {@link JobLogs#run}，打印「开始执行 / 执行结束（耗时）」并用任务级 traceId
+ * 串联本轮全部日志（V5.38，用户要求：便于按 traceId 从日志文件排查问题）；
+ * 互斥由 SyncService 内的 Redisson 锁保证。
  */
 @Component
 public class FundSyncJobs {
@@ -39,10 +43,11 @@ public class FundSyncJobs {
      */
     @Scheduled(cron = "0 30 15 * * MON-FRI")
     public void syncEtfDaily() {
-        if (isClosedToday("etf:daily")) {
-            return;
-        }
-        runWithTrace("etf:daily", syncService::syncAllEtfDaily);
+        JobLogs.run("etf:daily", () -> {
+            if (!isClosedToday("etf:daily")) {
+                syncService.syncAllEtfDaily();
+            }
+        });
     }
 
     /**
@@ -51,7 +56,7 @@ public class FundSyncJobs {
      */
     @Scheduled(cron = "0 5 15 * * MON-FRI")
     public void refreshProfiles() {
-        runWithTrace("profile:refresh", syncService::refreshAllProfiles);
+        JobLogs.run("profile:refresh", syncService::refreshAllProfiles);
     }
 
     /**
@@ -61,25 +66,27 @@ public class FundSyncJobs {
      */
     @Scheduled(cron = "0 0 20 * * MON-FRI")
     public void syncNav() {
-        if (isClosedToday("nav")) {
-            return;
-        }
-        runWithTrace("nav", syncService::syncAllOtcNav);
+        JobLogs.run("nav", () -> {
+            if (!isClosedToday("nav")) {
+                syncService.syncAllOtcNav();
+            }
+        });
     }
 
     /** 次日 07:00 净值补拉（幂等，未公布的此处补齐）——**每天跑，不加交易日闸门**（兜底性质） */
     @Scheduled(cron = "0 0 7 * * *")
     public void compensateNav() {
-        runWithTrace("nav:compensate", syncService::syncAllOtcNav);
+        JobLogs.run("nav:compensate", syncService::syncAllOtcNav);
     }
 
     /** 每交易日 20:30 指数估值增量同步。交易日闸门（V5.33）：节假日估值源无新数据，空转无意义。 */
     @Scheduled(cron = "0 30 20 * * MON-FRI")
     public void syncValuation() {
-        if (isClosedToday("valuation")) {
-            return;
-        }
-        runWithTrace("valuation", syncService::syncValuation);
+        JobLogs.run("valuation", () -> {
+            if (!isClosedToday("valuation")) {
+                syncService.syncValuation();
+            }
+        });
     }
 
     /**
@@ -89,15 +96,14 @@ public class FundSyncJobs {
      */
     @Scheduled(cron = "0 */5 9-23 * * *")
     public void refreshIndexQuotes() {
-        java.time.DayOfWeek w = java.time.LocalDate.now().getDayOfWeek();
-        if (w == java.time.DayOfWeek.SATURDAY || w == java.time.DayOfWeek.SUNDAY) {
-            return;
-        }
-        try {
+        JobLogs.run("index:quotes", () -> {
+            DayOfWeek week = LocalDate.now().getDayOfWeek();
+            if (week == DayOfWeek.SATURDAY || week == DayOfWeek.SUNDAY) {
+                LOGGER.info("周末全球休市，任务[index:quotes]跳过：不刷新缓存");
+                return;
+            }
             syncService.refreshIndexQuotes();
-        } catch (Exception e) {
-            LOGGER.error("全球指数行情刷新失败", e);
-        }
+        });
     }
 
     /**
@@ -107,38 +113,24 @@ public class FundSyncJobs {
      */
     @Scheduled(cron = "0 */5 * * * MON-FRI")
     public void syncWatchIntraday() {
-        runWithTrace("sync:watch", syncService::syncWatchFundsIntraday);
+        JobLogs.run("sync:watch", syncService::syncWatchFundsIntraday);
     }
 
     /** 每日 22:00 数据同步状态汇总（刷新仪表盘速览缓存） */
     @Scheduled(cron = "0 0 22 * * *")
     public void syncSummary() {
-        runWithTrace("sync:summary", syncSummaryService::computeSummary);
+        JobLogs.run("sync:summary", syncSummaryService::computeSummary);
     }
 
     /**
      * 今日是否休市（法定节假日/调休休市，周末已被 cron 排除）。
-     * 命中时留一条 INFO 便于从日志确认"任务是有意跳过而非漏跑"。
+     * 命中时留一条 INFO 便于从日志确认"任务是有意跳过而非漏跑"——该日志共用本轮的 traceId。
      */
     private boolean isClosedToday(String jobName) {
-        if (tradingCalendarService.isTradingDay(java.time.LocalDate.now())) {
+        if (tradingCalendarService.isTradingDay(LocalDate.now())) {
             return false;
         }
-        org.slf4j.MDC.put("traceId", com.quant.common.log.TraceIdGenerator.nextJob(jobName));
-        try {
-            LOGGER.info("今日非交易日（休市名单），任务[{}]跳过", jobName);
-        } finally {
-            org.slf4j.MDC.clear();
-        }
+        LOGGER.info("今日（{}）非交易日（休市名单），任务[{}]跳过：不执行", LocalDate.now(), jobName);
         return true;
-    }
-
-    private void runWithTrace(String jobName, Runnable task) {
-        MDC.put("traceId", TraceIdGenerator.nextJob(jobName));
-        try {
-            task.run();
-        } finally {
-            MDC.clear();
-        }
     }
 }

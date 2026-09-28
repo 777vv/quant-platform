@@ -315,6 +315,62 @@
         </el-form-item>
       </el-form>
     </el-card>
+
+    <el-row :gutter="12">
+      <el-col :span="24">
+        <!-- 第五行：仓位配置（V5.36：全局资产配置目标范围，每周二 09:00 自动检查）——通栏卡，与上面 AI/邮件/微信三张卡同宽对齐 -->
+        <el-card shadow="never">
+          <template #header>
+            <div class="card-header">
+              <span>仓位配置</span>
+              <div class="header-status">
+                <el-tag :type="allocationForm.enabled === 1 ? 'success' : 'info'" size="small">
+                  {{ allocationForm.enabled === 1 ? '每周二 09:00 自动检查' : '检查已停用' }}
+                </el-tag>
+              </div>
+            </div>
+          </template>
+          <el-form label-width="90px">
+            <el-form-item label="每周检查">
+              <el-switch v-model="allocationForm.enabled" :active-value="1" :inactive-value="0" active-text="启用" inline-prompt />
+            </el-form-item>
+            <el-form-item v-for="cat in ALLOCATION_CATEGORIES" :key="cat.key" :label="cat.label">
+              <div class="range-row">
+                <div class="range-inputs">
+                  <el-input-number
+                    v-model="allocationForm[cat.minField]"
+                    :min="0"
+                    :max="100"
+                    :precision="1"
+                    :controls="false"
+                    class="range-num"
+                  />
+                  <span class="range-sep">% ~</span>
+                  <el-input-number
+                    v-model="allocationForm[cat.maxField]"
+                    :min="0"
+                    :max="100"
+                    :precision="1"
+                    :controls="false"
+                    class="range-num"
+                  />
+                  <span class="range-sep">%</span>
+                </div>
+                <div class="range-tip">{{ cat.tip }}</div>
+              </div>
+            </el-form-item>
+            <div class="form-note">
+              现金 = 现金余额 + 打了<b>「现金」</b>标签的基金（如债基）；A股/美股/亚太/欧洲按基金标签归类。
+              任一类别占比越出目标范围 → <b>发送邮件 + 微信提醒</b>；全部在范围内则不发任何消息。
+            </div>
+            <el-form-item class="form-actions">
+              <el-button type="primary" :loading="savingAllocation" @click="saveAllocation">保存仓位配置</el-button>
+              <el-button plain :loading="checkingAllocation" @click="runAllocationCheck">立即检查</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
@@ -323,6 +379,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { getProfile, updatePassword, updateProfile } from '@/api/auth'
+import { allocationConfig, checkAllocation, saveAllocationConfig } from '@/api/allocation'
 import {
   mailConfig,
   saveMailConfig,
@@ -587,6 +644,78 @@ async function sendWecomTest() {
   }
 }
 
+// ===== 仓位配置（V5.36：五类资产目标占比范围，每周二 09:00 自动检查，越界发邮件+微信） =====
+const ALLOCATION_CATEGORIES = [
+  { key: 'cash', label: '现金比例', minField: 'cashMin', maxField: 'cashMax', tip: '现金余额 + 「现金」标签基金（如债基）' },
+  { key: 'a', label: 'A股比例', minField: 'aShareMin', maxField: 'aShareMax', tip: '打「A股」标签的基金' },
+  { key: 'us', label: '美股比例', minField: 'usMin', maxField: 'usMax', tip: '打「美股」标签的基金' },
+  { key: 'asia', label: '亚太比例', minField: 'asiaMin', maxField: 'asiaMax', tip: '打「亚太」标签的基金' },
+  { key: 'eu', label: '欧洲比例', minField: 'euMin', maxField: 'euMax', tip: '打「欧洲」标签的基金' }
+] as const
+
+const savingAllocation = ref(false)
+const checkingAllocation = ref(false)
+const allocationForm = reactive<Record<string, number>>({
+  enabled: 1,
+  cashMin: 0, cashMax: 100,
+  aShareMin: 0, aShareMax: 100,
+  usMin: 0, usMax: 100,
+  asiaMin: 0, asiaMax: 100,
+  euMin: 0, euMax: 100
+})
+
+async function loadAllocation() {
+  const cfg = await allocationConfig()
+  Object.assign(allocationForm, {
+    enabled: cfg.enabled ?? 1,
+    cashMin: cfg.cashMin, cashMax: cfg.cashMax,
+    aShareMin: cfg.aShareMin, aShareMax: cfg.aShareMax,
+    usMin: cfg.usMin, usMax: cfg.usMax,
+    asiaMin: cfg.asiaMin, asiaMax: cfg.asiaMax,
+    euMin: cfg.euMin, euMax: cfg.euMax
+  })
+}
+
+/** 保存配置（保存即生效；返回保存后的配置便于核对） */
+async function saveAllocation() {
+  savingAllocation.value = true
+  try {
+    const saved = await saveAllocationConfig({
+      enabled: allocationForm.enabled === 1,
+      cashMin: allocationForm.cashMin, cashMax: allocationForm.cashMax,
+      aShareMin: allocationForm.aShareMin, aShareMax: allocationForm.aShareMax,
+      usMin: allocationForm.usMin, usMax: allocationForm.usMax,
+      asiaMin: allocationForm.asiaMin, asiaMax: allocationForm.asiaMax,
+      euMin: allocationForm.euMin, euMax: allocationForm.euMax
+    })
+    ElMessage.success(`仓位配置已保存并生效（${saved.enabled === 1 ? '每周二 09:00 自动检查' : '检查已停用'}）`)
+    await loadAllocation()
+  } finally {
+    savingAllocation.value = false
+  }
+}
+
+/** 立即检查（与每周二任务同一执行体）：范围内不发送，越界发邮件+微信并回显明细 */
+async function runAllocationCheck() {
+  checkingAllocation.value = true
+  try {
+    const { alerted, result } = await checkAllocation()
+    if (!result.evaluated) {
+      ElMessage.warning('总资产为 0，无法评估仓位比例（先在【交易流水】记账或转入资金）')
+      return
+    }
+    const bad = result.rows.filter((row) => !row.ok)
+    if (!alerted || bad.length === 0) {
+      ElMessage.success(`仓位检查通过：五类占比均在目标范围内，未发送告警（总资产 ${result.totalAssets} 元）`)
+      return
+    }
+    const detail = bad.map((row) => `${row.label} ${row.currentPct}%（目标 ${row.minPct}%~${row.maxPct}%）`).join('；')
+    ElMessage.warning(`已发送告警（邮件+微信）：${detail}`)
+  } finally {
+    checkingAllocation.value = false
+  }
+}
+
 /** 授权码占位：已配置时提示留空不改 */
 const mailPasswordPlaceholder = computed(() => (mail.value?.username ? '已配置，留空保持原授权码' : 'SMTP 授权码（QQ/163 为授权码而非登录密码）'))
 
@@ -678,6 +807,7 @@ onMounted(() => {
   loadProfile()
   loadMail()
   loadWecom()
+  loadAllocation()
 })
 </script>
 
@@ -775,5 +905,33 @@ onMounted(() => {
 
 .mail-tip {
   margin-top: var(--q-space-3);
+}
+
+/* 仓位配置的范围行：下限 ~ 上限 一行排开，右侧紧跟口径说明（通栏宽度下不会换行） */
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  width: 100%;
+}
+
+.range-inputs {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-1);
+}
+
+.range-num {
+  width: 84px;
+}
+
+.range-sep {
+  color: var(--q-text-secondary);
+}
+
+.range-tip {
+  font-size: var(--q-font-xs);
+  color: var(--q-text-secondary);
+  line-height: 1.5;
 }
 </style>

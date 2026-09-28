@@ -406,6 +406,11 @@ watch(
   margin-right: 0;
 }
 
+/* 参数标签不换行（弹框加宽后空间足够；换行的两行标签与控件基线错位很难看） */
+.param-grid :deep(.param-label) {
+  white-space: nowrap;
+}
+
 /* 数字/单选/下拉等控件铺满所在格子，不再固定 150px 留白 */
 .param-grid :deep(.el-input-number),
 .param-grid :deep(.el-select) {

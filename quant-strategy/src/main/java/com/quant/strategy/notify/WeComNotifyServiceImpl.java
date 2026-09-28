@@ -141,6 +141,30 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
     }
 
     @Override
+    public void sendAllocationAlert(com.quant.fund.dto.AllocationCheckVO result,
+                                    java.util.List<com.quant.fund.dto.AllocationCheckVO.Row> violations) {
+        // 与交易信号同口径：未启用/未配置直接跳过；发送失败只记日志（不影响邮件通道）
+        SysWecomConfig row = loadConfig();
+        if (!Integer.valueOf(1).equals(row.getEnabled()) || !isConfigured(row)) {
+            return;
+        }
+        try {
+            String nl = System.lineSeparator();
+            StringBuilder sb = new StringBuilder("【个人量化投资助手】仓位配置偏离告警");
+            sb.append(nl).append("总资产 ").append(result.totalAssets())
+                    .append(" 元（现金 ").append(result.cashBalance()).append(" 元）");
+            for (com.quant.fund.dto.AllocationCheckVO.Row v : violations) {
+                sb.append(nl).append(v.label()).append("：当前 ").append(v.currentPct())
+                        .append("%，目标 ").append(v.minPct()).append("%~").append(v.maxPct()).append("%");
+            }
+            sendText(row, sb.toString());
+            LOGGER.info("微信仓位告警推送成功：{} 类越界", violations.size());
+        } catch (Exception e) {
+            LOGGER.error("微信仓位告警推送失败（不影响邮件）", e);
+        }
+    }
+
+    @Override
     public void sendSignalDigest(List<SignalRecord> signals) {
         if (signals == null || signals.isEmpty()) {
             return;

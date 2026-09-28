@@ -239,9 +239,9 @@
               <el-tag size="small" type="info" effect="plain" class="strategy-code">{{ row.strategyType }}</el-tag>
             </template>
           </el-table-column>
-          <!-- 参数列展示中文摘要（原始 JSON 可读性差），完整配置点「详情」看弹框 -->
-          <el-table-column label="参数摘要" min-width="320" show-overflow-tooltip>
-            <template #default="{ row }">{{ paramSummaryOf(row) }}</template>
+          <!-- 参数摘要列已移除（V5.35）：点「编辑」可看完整配置；备注列保留 -->
+          <el-table-column label="备注" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.remark || '—' }}</template>
           </el-table-column>
           <el-table-column label="启用" width="96">
             <template #default="{ row }">
@@ -251,7 +251,7 @@
           </el-table-column>
           <el-table-column label="操作" width="150">
             <template #default="{ row }">
-              <el-button size="small" link type="primary" @click="openParamDetail(row)">详情</el-button>
+              <el-button size="small" link type="primary" @click="openEditStrategy(row)">编辑</el-button>
               <el-button size="small" type="danger" plain @click="handleDeleteStrategy(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -369,10 +369,11 @@
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="strategyDialogVisible" title="新增策略配置" width="760px">
-      <el-form label-width="100px">
+    <el-dialog v-model="strategyDialogVisible" :title="editingStrategyId ? '编辑策略配置' : '新增策略配置'" width="1000px" class="strategy-dialog">
+      <el-form label-width="150px" class="strategy-form">
         <el-form-item label="策略类型">
-          <el-select v-model="newStrategyType" style="width: 100%">
+          <!-- 编辑模式下禁切类型：类型是 (基金,类型) 唯一键的一半，换类型等于换策略，应删除重建 -->
+          <el-select v-model="newStrategyType" style="width: 100%" :disabled="!!editingStrategyId">
             <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
           </el-select>
         </el-form-item>
@@ -381,6 +382,16 @@
           v-model="newStrategyParams"
           :type="newStrategyType"
         />
+        <el-form-item label="备注">
+          <el-input
+            v-model="newStrategyRemark"
+            type="textarea"
+            :rows="2"
+            maxlength="255"
+            show-word-limit
+            placeholder="选填：记下建仓思路 / 调参缘由（如：窄幅震荡区间，先小仓位试）"
+          />
+        </el-form-item>
         <div v-if="prefillHint" class="prefill-hint">{{ prefillHint }}</div>
       </el-form>
       <template #footer>
@@ -1463,40 +1474,7 @@ function displayValue(key: string, value: unknown): string {
   return ENUM_LABELS[key]?.[text] ?? text
 }
 
-/** 参数摘要（策略配置列表用）：中文标签=值 逗号拼接；解析失败回退原始 JSON */
-function paramSummaryOf(row: StrategyConfig): string {
-  const labels = PARAM_LABELS[row.strategyType] ?? {}
-  let parsed: Record<string, unknown> = {}
-  try {
-    parsed = JSON.parse(row.params) as Record<string, unknown>
-  } catch {
-    return row.params
-  }
-  const parts = orderByLabels(parsed, labels).map(([key, value]) => `${labels[key] ?? key}=${displayValue(key, value)}`)
-  return parts.join('，')
-}
 
-/** 策略配置行 → 复用同一弹框（策略配置页签的「详情」） */
-function openParamDetail(row: StrategyConfig) {
-  strategyDetailRow.value = {
-    id: row.id,
-    fundCode: row.fundCode,
-    strategyType: row.strategyType,
-    params: row.params
-  } as unknown as BacktestRecord
-  const labels = PARAM_LABELS[row.strategyType] ?? {}
-  let parsed: Record<string, unknown> = {}
-  try {
-    parsed = JSON.parse(row.params) as Record<string, unknown>
-  } catch {
-    parsed = {}
-  }
-  strategyDetailItems.value = orderByLabels(parsed, labels).map(([key, value]: [string, unknown]) => ({
-    label: labels[key] ?? key,
-    value: displayValue(key, value)
-  }))
-  strategyDetailVisible.value = true
-}
 
 /** 打开策略配置详情弹框：解析 params JSON → 带中文标签的键值列表（未知键回退原始键名） */
 function openStrategyDetail(row: BacktestRecord) {
@@ -1532,6 +1510,10 @@ function positionClassOf(row: BacktestRecord): string {
   return row.positionReturnPct >= 0 ? 'text-up' : 'text-down'
 }
 const strategyDialogVisible = ref(false)
+/** 编辑中的配置 id（null = 新增模式）——V5.34 详情按钮改为编辑后弹框双模式 */
+const editingStrategyId = ref<number | null>(null)
+/** 策略备注（新增/编辑共用弹框；V5.34 新增） */
+const newStrategyRemark = ref('')
 // 策略类型不再硬编码（旧版写死 'GRID'，该策略 V5.28 已下线、会显示成空）：进页按
 // 「本基金已配置的策略 → 本基金最近一次回测的策略 → 注册表里的第一个策略」依次兜底
 const newStrategyType = ref('')
@@ -1604,13 +1586,30 @@ async function handleBacktestTypeChange(type: string) {
   await applyBacktestParams(type, 'form')
 }
 
-/** 打开新增策略弹框：同样回填该策略上次回测的参数（回测调好的参数可直接建配置） */
+/** 打开新增策略弹框（新增模式）：回填该策略上次回测的参数（回测调好的参数可直接建配置） */
 async function openStrategyDialog() {
+  editingStrategyId.value = null
+  newStrategyRemark.value = ''
   strategyDialogVisible.value = true
   if (!newStrategyType.value) {
     newStrategyType.value = defaultStrategyType()
   }
   await applyBacktestParams(newStrategyType.value, 'dialog')
+}
+
+/** 打开编辑弹框（V5.34：详情按钮改为编辑）：预填类型/参数/备注，类型不可改 */
+async function openEditStrategy(row: StrategyConfig) {
+  editingStrategyId.value = row.id
+  newStrategyType.value = row.strategyType
+  try {
+    newStrategyParams.value = JSON.parse(row.params) as Record<string, unknown>
+  } catch {
+    newStrategyParams.value = {}
+  }
+  newStrategyRemark.value = row.remark ?? ''
+  prefillHint.value = ''
+  paramFormKey.value += 1
+  strategyDialogVisible.value = true
 }
 
 /** 默认策略：本基金已配置的 → 最近一次回测的 → 注册表里的第一个 */
@@ -1645,8 +1644,15 @@ async function initBacktestForm() {
 }
 
 async function handleSaveStrategy() {
-  await addStrategy(code, { strategyType: newStrategyType.value, params: newStrategyParams.value })
-  ElMessage.success('策略已保存')
+  const remark = newStrategyRemark.value.trim() || undefined
+  if (editingStrategyId.value) {
+    // 编辑：类型不变（弹框里已禁用），参数/备注可改；enabled 不传 = 保持原值
+    await updateStrategy(editingStrategyId.value, { params: newStrategyParams.value, remark })
+    ElMessage.success('策略已保存')
+  } else {
+    await addStrategy(code, { strategyType: newStrategyType.value, params: newStrategyParams.value, remark })
+    ElMessage.success('策略已保存')
+  }
   strategyDialogVisible.value = false
   loadStrategies()
 }

@@ -3,7 +3,7 @@ package com.quant.strategy.task;
 import java.time.LocalDate;
 import java.util.List;
 
-import com.quant.common.log.TraceIdGenerator;
+import com.quant.common.log.JobLogs;
 import com.quant.common.util.LockUtils;
 import com.quant.fund.service.TradingCalendarService;
 import com.quant.strategy.entity.SignalRecord;
@@ -12,7 +12,6 @@ import com.quant.strategy.service.SignalService;
 import com.quant.strategy.notify.WeComNotifyService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -65,25 +64,24 @@ public class SignalJob {
         this.lockUtils = lockUtils;
     }
 
-    /** 每交易日 09:00（盘前，北京时间）信号计算 + 邮件/微信摘要 */
+    /**
+     * 每交易日 09:00（盘前，北京时间）信号计算 + 邮件/微信摘要。
+     * 统一走 {@link JobLogs#run}：打印「开始执行 / 执行结束（耗时）」+ 任务级 traceId 串联本轮日志，
+     * 失败由模板按铁律 13 记 error + 完整堆栈。
+     */
     @Scheduled(cron = "0 0 9 * * MON-FRI", zone = "Asia/Shanghai")
     public void generateSignals() {
-        if (!tradingCalendarService.isTradingDay(LocalDate.now())) {
-            LOGGER.info("今日（{}）非交易日（周末或休市名单），信号任务跳过：不计算、不发邮件、不发微信", LocalDate.now());
-            return;
-        }
-        MDC.put("traceId", TraceIdGenerator.nextJob("signal"));
-        try {
+        JobLogs.run("signal", () -> {
+            if (!tradingCalendarService.isTradingDay(LocalDate.now())) {
+                LOGGER.info("今日（{}）非交易日（周末或休市名单），信号任务跳过：不计算、不发邮件、不发微信", LocalDate.now());
+                return;
+            }
             lockUtils.runWithLock(LOCK_KEY, LOCK_WAIT_SECONDS, () -> {
                 List<SignalRecord> signals = signalService.generateAll();
                 notifyService.sendSignalDigest(signals);
                 // 微信通道（V5.20/V5.21）：与邮件并行、互不影响；内部自带 2 个交易日冷却
                 wecomNotifyService.sendSignalDigest(signals);
             });
-        } catch (Exception e) {
-            LOGGER.error("信号计算任务失败: {}", e.getMessage(), e);
-        } finally {
-            MDC.clear();
-        }
+        });
     }
 }

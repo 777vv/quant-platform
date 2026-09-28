@@ -8,6 +8,8 @@ export interface StrategyConfig {
   strategyName: string
   params: string
   enabled: number
+  /** 备注（用户自填） */
+  remark?: string
 }
 
 export interface StrategyTypeVO {
@@ -84,11 +86,11 @@ export function fundStrategies(code: string) {
   return get<StrategyConfig[]>(`/funds/${code}/strategies`)
 }
 
-export function addStrategy(code: string, data: { strategyType: string; params: Record<string, unknown> }) {
+export function addStrategy(code: string, data: { strategyType: string; params: Record<string, unknown>; remark?: string }) {
   return post<void>(`/funds/${code}/strategies`, data)
 }
 
-export function updateStrategy(id: number, data: { params?: Record<string, unknown>; enabled?: number }) {
+export function updateStrategy(id: number, data: { params?: Record<string, unknown>; enabled?: number; remark?: string; strategyName?: string }) {
   return put<void>(`/strategies/${id}`, data)
 }
 

@@ -47,6 +47,9 @@ public class NotifyServiceImpl implements NotifyService {
     /** 同步异常告警邮件模板路径 */
     private static final String TEMPLATE_SYNC_ALERT = "mail/sync-alert";
 
+    /** 仓位配置偏离告警邮件模板路径（V5.36） */
+    private static final String TEMPLATE_ALLOCATION = "mail/allocation-alert";
+
     /** 发送失败后的重试次数（FR7：重试 2 次） */
     private static final int RETRY_TIMES = 2;
 
@@ -192,6 +195,31 @@ public class NotifyServiceImpl implements NotifyService {
         model.put("time", TIME_FMT.format(java.time.LocalDateTime.now()));
         model.put("lagging", rows);
         sendWithRetry("【个人量化投资助手】数据同步异常告警（" + lagging.size() + " 只）", TEMPLATE_SYNC_ALERT, model);
+    }
+
+    @Override
+    @Async("taskExecutor")
+    public void sendAllocationAlert(com.quant.fund.dto.AllocationCheckVO result,
+                                    java.util.List<com.quant.fund.dto.AllocationCheckVO.Row> violations) {
+        Map<String, Object> model = new HashMap<>();
+        model.put("time", TIME_FMT.format(java.time.LocalDateTime.now()));
+        model.put("totalAssets", result.totalAssets() == null ? "--" : result.totalAssets().toPlainString());
+        model.put("cash", result.cashBalance() == null ? "--" : result.cashBalance().toPlainString());
+        // 明细行统一转 Map（与信号摘要同一套路，避免 record 与模板取值的兼容性问题）
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (com.quant.fund.dto.AllocationCheckVO.Row row : result.rows()) {
+            Map<String, String> m = new HashMap<>();
+            m.put("label", row.label());
+            m.put("amount", row.amount() == null ? "--" : row.amount().toPlainString());
+            m.put("current", row.currentPct() == null ? "--" : row.currentPct().toPlainString());
+            m.put("range", row.minPct().toPlainString() + "% ~ " + row.maxPct().toPlainString() + "%");
+            m.put("ok", row.ok() ? "✓ 在范围内" : "✗ 越界");
+            m.put("bad", row.ok() ? "0" : "1");
+            rows.add(m);
+        }
+        model.put("rows", rows);
+        sendWithRetry("【个人量化投资助手】仓位配置偏离告警（" + violations.size() + " 类越界）",
+                TEMPLATE_ALLOCATION, model);
     }
 
     @Override

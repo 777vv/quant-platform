@@ -202,9 +202,10 @@ CREATE TABLE IF NOT EXISTS fund_position (
 CREATE TABLE IF NOT EXISTS strategy_config (
   id            BIGINT PRIMARY KEY AUTO_INCREMENT,
   fund_code     VARCHAR(12) NOT NULL COMMENT '基金代码',
-  strategy_type VARCHAR(32) NOT NULL COMMENT 'GRID/VAL_PERCENTILE',
+  strategy_type VARCHAR(32) NOT NULL COMMENT '策略类型（OSC_UP/DIV_GRID/NDX_GRID/PYRAMID_GRID/INV_PYRAMID_GRID 等）',
   strategy_name VARCHAR(64) DEFAULT '' COMMENT '策略名称',
   params        JSON        NOT NULL COMMENT '策略参数',
+  remark        VARCHAR(255) DEFAULT NULL COMMENT '备注（用户自填，如建仓思路/调参缘由）',
   enabled       TINYINT     DEFAULT 1 COMMENT '1启用 0停用',
   created_at    DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at    DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -518,3 +519,30 @@ INSERT IGNORE INTO market_holiday (holiday_date, holiday_name, source) VALUES
   ('2026-10-05', '国庆节', 'manual'),
   ('2026-10-06', '国庆节', 'manual'),
   ('2026-10-07', '国庆节', 'manual');
+
+-- V5.34 迁移：strategy_config 增加备注列（老库幂等补列）
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'strategy_config' AND COLUMN_NAME = 'remark');
+SET @sql := IF(@c = 0, 'ALTER TABLE strategy_config ADD COLUMN remark VARCHAR(255) DEFAULT NULL COMMENT ''备注（用户自填，如建仓思路/调参缘由）'' AFTER params', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- V5.36 全局仓位配置（单行）：五类资产的目标占比范围（%），
+-- 每周二 09:00 仓位检查任务把当前组合与之比对，越界发告警（邮件+微信），在范围内不动作。
+-- 分类口径：现金 = 现金余额 + 标签「现金」的持仓市值；其余类别 = 打了对应标签的持仓市值。
+CREATE TABLE IF NOT EXISTS allocation_config (
+  id          BIGINT PRIMARY KEY COMMENT '固定主键（单行配置，值恒为 1）',
+  enabled     TINYINT      DEFAULT 1 COMMENT '1=启用每周二检查 0=停用',
+  cash_min    DECIMAL(5,2) DEFAULT 0  COMMENT '现金比例下限（%）',
+  cash_max    DECIMAL(5,2) DEFAULT 100 COMMENT '现金比例上限（%）',
+  a_share_min DECIMAL(5,2) DEFAULT 0  COMMENT 'A股比例下限（%）',
+  a_share_max DECIMAL(5,2) DEFAULT 100 COMMENT 'A股比例上限（%）',
+  us_min      DECIMAL(5,2) DEFAULT 0  COMMENT '美股比例下限（%）',
+  us_max      DECIMAL(5,2) DEFAULT 100 COMMENT '美股比例上限（%）',
+  asia_min    DECIMAL(5,2) DEFAULT 0  COMMENT '亚太比例下限（%）',
+  asia_max    DECIMAL(5,2) DEFAULT 100 COMMENT '亚太比例上限（%）',
+  eu_min      DECIMAL(5,2) DEFAULT 0  COMMENT '欧洲比例下限（%）',
+  eu_max      DECIMAL(5,2) DEFAULT 100 COMMENT '欧洲比例上限（%）',
+  updated_at  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近修改时间'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '全局仓位配置表';
+
+INSERT IGNORE INTO allocation_config (id, enabled)
+SELECT 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM allocation_config WHERE id = 1);

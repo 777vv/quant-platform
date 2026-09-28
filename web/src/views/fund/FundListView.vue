@@ -202,7 +202,7 @@
         <el-table
           row-key="fundCode"
           v-loading="holdingLoading"
-          :data="filteredHolding"
+          :data="pagedHolding"
           :empty-text="tagFilter ? `当前标签「${tagFilter}」下无持仓基金` : '暂无持仓'"
           border
           stripe
@@ -211,7 +211,11 @@
                之前名称列是唯一的弹性列，独吞全部剩余宽度（1657px 表格里占到 650px+），
            其余数字列被挤成固定窄列，视觉上头重脚轻 -->
           <el-table-column prop="fundCode" label="代码" min-width="76" />
-          <el-table-column prop="fundName" label="名称" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="fundName" label="名称" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="fund-link" :title="`查看 ${row.fundName} 详情`" @click="$router.push(`/funds/${row.fundCode}`)">{{ row.fundName }}</span>
+          </template>
+        </el-table-column>
           <el-table-column label="持有份额" min-width="96" align="right">
             <template #default="{ row }">{{ fmt(row.totalShare, 2) }}</template>
           </el-table-column>
@@ -241,6 +245,17 @@
           </el-table-column>
 
         </el-table>
+        <!-- 市值降序后的前端分页（持仓是个人数据量级小，前端分页足够且与标签筛选同层） -->
+        <div class="page-bar">
+          <el-pagination
+            v-model:current-page="holdingPage"
+            :page-size="holdingPageSize"
+            :total="filteredHolding.length"
+            layout="total, prev, pager, next"
+            background
+            small
+          />
+        </div>
       </el-tab-pane>
     </el-tabs>
     <TradeEntryDialog v-model="entryVisible" :preset-fund="entryFund" :preset-type="entryType" @saved="onSaved" />
@@ -250,7 +265,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { allFundTags, holdings, removeFund, syncFund, syncProgress, tagLibrary, watchlistPage } from '@/api/fund'
@@ -278,6 +293,9 @@ const watchTableRef = ref<{ clearSelection: () => void } | null>(null)
 const holdingItems = ref<HoldingVO[]>([])
 const watchLoading = ref(false)
 const holdingLoading = ref(false)
+/** 持仓分页（V5.35）：市值降序后每页 10 条 */
+const holdingPage = ref(1)
+const holdingPageSize = 10
 const syncingCode = ref('')
 let pollTimer: number | undefined
 let keywordTimer: number | undefined
@@ -291,6 +309,17 @@ const filteredHolding = computed(() => {
     return holdingItems.value
   }
   return holdingItems.value.filter((item) => (fundTagMap.value[item.fundCode] ?? []).includes(tagFilter.value))
+})
+
+/** 市值降序（V5.35）：null 市值排最后，其余从大到小 */
+const sortedHolding = computed(() => {
+  return [...filteredHolding.value].sort((a, b) => (b.marketValue ?? -1) - (a.marketValue ?? -1))
+})
+
+/** 当前页数据 */
+const pagedHolding = computed(() => {
+  const start = (holdingPage.value - 1) * holdingPageSize
+  return sortedHolding.value.slice(start, start + holdingPageSize)
 })
 
 /** 带符号百分比（溢价率用：正为溢价、负为折价） */
@@ -383,6 +412,14 @@ function openEntry(fundCode?: string, tradeType?: number) {
   entryType.value = tradeType ?? 1
   entryVisible.value = true
 }
+
+/** 标签筛选或数据刷新后回到第一页（防止停留在超出范围的空页） */
+watch([filteredHolding, holdingItems], () => {
+  const max = Math.max(1, Math.ceil(filteredHolding.value.length / holdingPageSize))
+  if (holdingPage.value > max) {
+    holdingPage.value = 1
+  }
+})
 
 /** 记账成功后刷新持仓与自选（份额/市值可能变化） */
 function onSaved() {
@@ -559,5 +596,12 @@ onUnmounted(() => {
 
 .strategy-tag {
   margin-right: 4px;
+}
+
+/* 持仓分页条：右对齐，与表格留出间距 */
+.page-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--q-space-2);
 }
 </style>

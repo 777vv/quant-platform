@@ -258,10 +258,12 @@ public class TradeServiceImpl implements TradeService {
             if (fund == null || fund.getStatus() != 1) {
                 continue;
             }
-            // 跳过"空壳持仓行"：既无份额也无已实现收益（例如流水被全部删除后重算留下的 0 份额行），
-            // 展示出来只会让持仓表多出一行全 0 噪音；仍有已实现收益的行保留以展示历史收益
+            // 跳过"空壳持仓行"：份额为 0 且**没有任何资金痕迹**（已实现收益与总成本都为 0）——
+            // 例如流水被全部删除后重算留下的行。注意"全部卖出"的行必须保留（用户 V5.35 口径）：
+            // 卖光后份额=0、市值=0，但已实现收益/成本有值，是真实的投资历史。
             if (nvl(position.getTotalShare()).compareTo(BigDecimal.ZERO) == 0
-                    && nvl(position.getRealizedPnl()).compareTo(BigDecimal.ZERO) == 0) {
+                    && nvl(position.getRealizedPnl()).compareTo(BigDecimal.ZERO) == 0
+                    && nvl(position.getTotalCost()).compareTo(BigDecimal.ZERO) == 0) {
                 continue;
             }
             LastQuote quote = fundQueryService.lastQuote(fund);

@@ -59,6 +59,7 @@ public class StrategyConfigServiceImpl implements StrategyConfigService {
         config.setStrategyName(request.getStrategyName() == null || request.getStrategyName().isBlank()
                 ? registry.getRequired(request.getStrategyType()).name() : request.getStrategyName());
         config.setParams(paramsJson);
+        config.setRemark(request.getRemark() == null || request.getRemark().isBlank() ? null : request.getRemark().trim());
         config.setEnabled(request.getEnabled() == null ? 1 : request.getEnabled());
         configMapper.insert(config);
     }
@@ -72,6 +73,9 @@ public class StrategyConfigServiceImpl implements StrategyConfigService {
         config.setStrategyName(request.getStrategyName() == null || request.getStrategyName().isBlank()
                 ? old.getStrategyName() : request.getStrategyName());
         config.setParams(paramsJson);
+        // 备注与策略名同语义：null/空白 = 保持原值（编辑时不填备注不应清掉已存的）
+        config.setRemark(request.getRemark() == null || request.getRemark().isBlank()
+                ? old.getRemark() : request.getRemark().trim());
         config.setEnabled(request.getEnabled() == null ? old.getEnabled() : request.getEnabled());
         configMapper.updateById(config);
     }

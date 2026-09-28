@@ -267,7 +267,16 @@
           <template #header><span>持仓概览（市值前 5）</span></template>
           <el-empty v-if="overview && overview.holdings.length === 0" description="暂无持仓" :image-size="60" />
           <el-table v-else :data="overview?.holdings ?? []" size="small">
-            <el-table-column prop="fundName" label="基金" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="fundName" label="基金" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">
+                <!-- 名称即详情入口（与基金池/持仓表同款 fund-link） -->
+                <span
+                  class="fund-link"
+                  :title="`查看 ${row.fundName} 详情`"
+                  @click="$router.push(`/funds/${row.fundCode}`)"
+                >{{ row.fundName }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="市值" align="right" width="90">
               <template #default="{ row }">{{ formatAmount(row.marketValue) }}</template>
             </el-table-column>
@@ -297,7 +306,11 @@
                 <div class="mover-group-title">领涨</div>
                 <ul class="signal-list">
                   <li v-for="item in topMovers" :key="item.fundCode" class="signal-item">
-                    <span class="signal-fund">{{ item.fundName }}</span>
+                    <span
+                      class="signal-fund fund-link"
+                      :title="`查看 ${item.fundName} 详情`"
+                      @click="$router.push(`/funds/${item.fundCode}`)"
+                    >{{ item.fundName }}</span>
                     <span class="index-pct" :class="changeColorClass(item.changePct7d)">
                       {{ formatPercent(item.changePct7d) }}
                     </span>
@@ -308,7 +321,11 @@
                 <div class="mover-group-title">领跌</div>
                 <ul class="signal-list">
                   <li v-for="item in bottomMovers" :key="item.fundCode" class="signal-item">
-                    <span class="signal-fund">{{ item.fundName }}</span>
+                    <span
+                      class="signal-fund fund-link"
+                      :title="`查看 ${item.fundName} 详情`"
+                      @click="$router.push(`/funds/${item.fundCode}`)"
+                    >{{ item.fundName }}</span>
                     <span class="index-pct" :class="changeColorClass(item.changePct7d)">
                       {{ formatPercent(item.changePct7d) }}
                     </span>
@@ -324,7 +341,7 @@
         <el-card shadow="never" class="board-card">
           <template #header><span>资产配置</span></template>
           <el-empty v-if="overview && overview.allocation.length === 0" description="暂无持仓" :image-size="60" />
-          <ChartPanel v-else :option="pieOption" height="260px" />
+          <ChartPanel v-else :option="pieOption" :height="pieHeight" />
         </el-card>
       </el-col>
       <el-col v-if="showTradesCard" :span="8" :xs="24">
@@ -706,15 +723,20 @@ const curveOption = computed<EChartsOption>(() => ({
   ]
 }))
 
-/** 资产配置饼图 */
+/**
+ * 资产配置饼图。
+ * 图例（V5.38 用户要求）：用默认的 plain 类型**换行铺开**，不再用 type:'scroll'——滚动分页一次只显示
+ * 一行、还要点箭头翻页，看不出整体配置；换行后一眼看全。图例占的行数随基金数增加，
+ * 因此画布高度按估算行数加高（见 pieHeight），否则图例会被挤出画布或压住饼图。
+ */
 const pieOption = computed<EChartsOption>(() => ({
   tooltip: { trigger: 'item', formatter: '{b}<br/>市值 {c} 元（{d}%）' },
-  legend: { bottom: 0, type: 'scroll' },
+  legend: { bottom: 0, type: 'plain', left: 'center', itemGap: 8, itemWidth: 12, itemHeight: 8 },
   series: [
     {
       type: 'pie',
-      radius: ['38%', '62%'],
-      center: ['50%', '44%'],
+      radius: ['32%', '52%'],
+      center: ['50%', '40%'],
       label: { formatter: '{b} {d}%' },
       data: (overview.value?.allocation ?? []).map((item) => ({
         name: item.fundName || item.fundCode,
@@ -723,6 +745,22 @@ const pieOption = computed<EChartsOption>(() => ({
     }
   ]
 }))
+
+/**
+ * 饼图画布高度：图例换行后占的行数随基金数增长，按"每项的估算像素宽度 ÷ 可用宽度"推算行数
+ * （中文按 12px/字、其余按 7px/字，加图标与间隙 20px），每多一行加 20px。
+ * 可用宽度取保守值 300px（卡片只占 1/3 行宽，窄窗口下会更小）——宁可画布略高，也不要图例被裁掉。
+ */
+const pieHeight = computed(() => {
+  const items = overview.value?.allocation ?? []
+  const totalWidth = items.reduce((sum, item) => {
+    const name = item.fundName || item.fundCode
+    const textWidth = [...name].reduce((w, ch) => w + (/[\u4e00-\u9fa5]/.test(ch) ? 12 : 7), 0)
+    return sum + textWidth + 28
+  }, 0)
+  const lines = Math.max(1, Math.ceil(totalWidth / 300))
+  return `${216 + (lines - 1) * 20}px`
+})
 
 async function loadAssets() {
   assets.value = await dashboardAssets()
@@ -1261,6 +1299,16 @@ onUnmounted(() => {
 .signal-fund {
   flex: none;
   font-weight: 600;
+}
+
+/* 可点击的基金名称：主色 + 悬停下划线，与基金池/持仓表的详情入口同款（V5.38） */
+.fund-link {
+  color: var(--q-color-primary);
+  cursor: pointer;
+}
+
+.fund-link:hover {
+  text-decoration: underline;
 }
 
 .signal-desc {

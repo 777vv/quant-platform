@@ -45,6 +45,15 @@ public interface NotifyService {
     void sendSyncAlert(List<DashboardOverviewVO.SyncStatusItem> lagging);
 
     /**
+     * 发送仓位配置偏离告警邮件（V5.36）：把越界的类别渲染成表格，失败走既有重试。
+     *
+     * @param result     完整检查结果（含总资产/现金与五类明细）
+     * @param violations 越界的类别行（调用方已过滤）
+     */
+    void sendAllocationAlert(com.quant.fund.dto.AllocationCheckVO result,
+                             java.util.List<com.quant.fund.dto.AllocationCheckVO.Row> violations);
+
+    /**
      * 邮件配置视图（平台配置卡片展示，账号脱敏；V4.9 起配置入库）。
      */
     MailConfigVO mailConfig();

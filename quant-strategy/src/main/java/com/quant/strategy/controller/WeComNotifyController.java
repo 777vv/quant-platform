@@ -40,10 +40,17 @@ public class WeComNotifyController {
         return R.ok(wecomNotifyService.config());
     }
 
-    /** 发送微信测试消息（失败以业务异常返回具体原因，便于在界面排查） */
+    /**
+     * 发送微信测试消息（失败以业务异常返回具体原因，便于在界面排查）。
+     *
+     * <p>V5.26：请求体可空；带上时按"界面当前填写"测试（改了没保存也能测眼前这套），
+     * 留空/打码字段回退库内已存值，全程不落库。
+     *
+     * @param request 界面当前填写的微信配置（可为 null）
+     */
     @PostMapping("/test")
-    public R<Void> test() {
-        wecomNotifyService.testSend();
+    public R<Void> test(@RequestBody(required = false) WeComConfigRequest request) {
+        wecomNotifyService.testSend(request);
         return R.ok();
     }
 }

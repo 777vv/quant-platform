@@ -12,7 +12,7 @@
 
     <artifactId>quant-ai</artifactId>
     <name>quant-ai</name>
-    <description>AI 股票助手：Spring AI + 智谱 GLM + Tools（M5 实现）</description>
+    <description>AI 股票助手</description>
 
     <dependencies>
         <dependency>

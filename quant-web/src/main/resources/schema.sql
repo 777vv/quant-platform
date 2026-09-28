@@ -184,24 +184,6 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_basic' AND COLUMN_NAME = 'dividend_sync_date');
 SET @sql := IF(@c = 0, 'ALTER TABLE fund_basic ADD COLUMN dividend_sync_date DATE DEFAULT NULL COMMENT ''分红记录最近成功刷新日''', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_share');
-SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_share DECIMAL(18,2) DEFAULT NULL COMMENT ''平均仓位份额''', 'SELECT 1');
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'bench_total_return_pct');
-SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN bench_total_return_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持有总收益%''', 'SELECT 1');
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'bench_max_drawdown_pct');
-SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN bench_max_drawdown_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持有最大回撤%''', 'SELECT 1');
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_value');
-SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_value DECIMAL(18,2) DEFAULT NULL COMMENT ''平均持仓市值''', 'SELECT 1');
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'position_return_pct');
-SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN position_return_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持仓资产收益率%''', 'SELECT 1');
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
-SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_cost');
-SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_cost DECIMAL(18,2) DEFAULT NULL COMMENT ''平均持仓成本''', 'SELECT 1');
-PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 9. 持仓汇总（由流水重算的冗余表；position 为 MySQL 关键字，故命名 fund_position）
 CREATE TABLE IF NOT EXISTS fund_position (
@@ -263,6 +245,26 @@ CREATE TABLE IF NOT EXISTS backtest_record (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   KEY idx_fund (fund_code, created_at)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '回测记录表';
+
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_share');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_share DECIMAL(18,2) DEFAULT NULL COMMENT ''平均仓位份额''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'bench_total_return_pct');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN bench_total_return_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持有总收益%''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'bench_max_drawdown_pct');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN bench_max_drawdown_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持有最大回撤%''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_value');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_value DECIMAL(18,2) DEFAULT NULL COMMENT ''平均持仓市值''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'position_return_pct');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN position_return_pct DECIMAL(10,4) DEFAULT NULL COMMENT ''持仓资产收益率%''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'avg_position_cost');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN avg_position_cost DECIMAL(18,2) DEFAULT NULL COMMENT ''平均持仓成本''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 12. 回测交易明细
 CREATE TABLE IF NOT EXISTS backtest_trade_detail (

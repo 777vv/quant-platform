@@ -95,14 +95,33 @@ public class NotifyServiceImpl implements NotifyService {
     }
 
     @Override
-    public void sendTestMail() {
+    public void sendTestMail(MailConfigRequest request) {
+        SysMailConfig stored = mailConfigService.config();
+        // 按"界面当前填写"测试（V5.26 用户口径：表单改了没保存，测试的也应是眼前这套），
+        // 留空或打码的字段回退库内已存值——打码回显（83***@qq.com / ****）不是真值，绝不能当真值去连 SMTP。
+        SysMailConfig effective = new SysMailConfig();
+        effective.setHost(firstText(request == null ? null : request.host(), stored.getHost()));
+        effective.setPort(request != null && request.port() != null ? request.port()
+                : (stored.getPort() == null ? Integer.valueOf(465) : stored.getPort()));
+        effective.setUsername(keepIfMasked(request == null ? null : request.username(), stored.getUsername()));
+        effective.setPassword(keepIfMasked(request == null ? null : request.password(), stored.getPassword()));
+        if (!notBlank(effective.getHost()) || !notBlank(effective.getUsername())) {
+            throw new BizException("请先填写 SMTP 服务器与登录账号再测试");
+        }
+        String to = firstText(request == null ? null : request.toAddr(), stored.getToAddr(), recipientOrNull());
+        if (to == null) {
+            throw new BizException("收件人未配置：请填写收件人，或在基本信息维护通知邮箱");
+        }
+        String from = firstText(request == null ? null : request.fromAddr(), stored.getFromAddr(),
+                effective.getUsername());
         Map<String, Object> model = new HashMap<>();
         model.put("time", TIME_FMT.format(java.time.LocalDateTime.now()));
-        model.put("to", recipient());
-        String subject = "【个人量化投资助手】测试邮件";
-        sendHtml(subject, TEMPLATE_TEST, model);
+        model.put("to", to);
+        // 一次性发送器：不读也不写 mailConfigService 的缓存，测试全程不落库
+        sendVia(mailConfigService.senderFor(effective), from, to,
+                "【个人量化投资助手】测试邮件", TEMPLATE_TEST, model);
         // 测试发送是同步接口，成功必须落日志：便于用户在日志里自查是发出去了还是被上游拒了
-        LOGGER.info("测试邮件发送成功: to={}", recipientOrNull());
+        LOGGER.info("测试邮件发送成功: to={}（按界面当前填写测试，未改变已存配置）", to);
     }
 
     @Override
@@ -233,11 +252,11 @@ public class NotifyServiceImpl implements NotifyService {
                 return true;
             } catch (BizException e) {
                 if (isPermanent(e.getMessage()) || attempt == RETRY_TIMES) {
-                    LOGGER.error("邮件发送失败（第{}次，终止）: subject={} reason={}", attempt + 1, subject, e.getMessage());
+                    LOGGER.error("邮件发送失败（第{}次，终止）: subject={}", attempt + 1, subject, e);
                     return false;
                 }
-                LOGGER.warn("邮件发送失败（第{}次，{}ms 后重试）: {}", attempt + 1, RETRY_BACKOFF_MS,
-                        e.getMessage());
+                LOGGER.error("邮件发送失败（第{}次，{}ms 后重试）: subject={}", attempt + 1, RETRY_BACKOFF_MS, subject,
+                        e);
                 sleepQuietly();
             }
         }
@@ -264,14 +283,27 @@ public class NotifyServiceImpl implements NotifyService {
                 && Integer.valueOf(0).equals(signal.getNotifiedFlag());
     }
 
-    /** 发送 HTML 邮件（统一装配收件人/发件人与异常转译） */
+    /** 发送 HTML 邮件（按库内配置取发送器，统一装配收件人/发件人与异常转译） */
     private void sendHtml(String subject, String template, Map<String, Object> model) {
         JavaMailSender sender = mailConfigService.sender();
         if (sender == null) {
             throw new BizException("邮件服务未配置：请在【平台配置 → 邮件通知】填写 SMTP 服务器与账号后保存");
         }
-        String to = recipient();
-        String from = resolveFrom();
+        sendVia(sender, resolveFrom(), recipient(), subject, template, model);
+    }
+
+    /**
+     * 用给定发送器发 HTML 邮件（testMail 传界面当前配置现建的发送器，其余走库内配置）。
+     *
+     * @param sender   发送器
+     * @param from     发件人
+     * @param to       收件人
+     * @param subject  主题
+     * @param template 模板路径
+     * @param model    模板变量
+     */
+    private void sendVia(JavaMailSender sender, String from, String to,
+            String subject, String template, Map<String, Object> model) {
         try {
             Context context = new Context();
             model.forEach(context::setVariable);
@@ -400,6 +432,16 @@ public class NotifyServiceImpl implements NotifyService {
 
     private boolean notBlank(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /** 返回第一个非空白的值（全空返回 null）；测试发送合并"界面填写 > 库内已存"时用 */
+    private String firstText(String... candidates) {
+        for (String candidate : candidates) {
+            if (candidate != null && !candidate.isBlank()) {
+                return candidate.trim();
+            }
+        }
+        return null;
     }
 
     /** 账号脱敏：保留前两字符与邮箱域名，其余以 *** 展示 */

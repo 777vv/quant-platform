@@ -1,0 +1,60 @@
+# 1Panel 部署模板（应用容器 + 复用 1Panel 应用商店的 MySQL / Redis）
+#
+# 适用场景：服务器上已用 1Panel 装好「MySQL」与「Redis」，只把本应用容器化。
+# 用法：
+#   1) 本机执行 `sh build.sh -DskipFrontend=false` 产出带前端界面的 jar，复制到本目录并改名 app.jar
+#   2) 把本目录（docker-compose.yml + .env + app.jar）放到 1Panel 的编排目录，或按「容器 → 编排 → 创建编排」粘贴本文件
+#   3) 在 1Panel「数据库」里建好库 quant 与账号，把库名/账号/口令填进 .env
+#   4) 确认 MySQL/Redis 的容器名（1Panel → 容器 列表里复制），填进 .env 的 DB_HOST / REDIS_HOST
+#   5) 编排页确认 → 启动；日志在 1Panel「容器 → 日志」或本目录 logs/app.log
+#
+# 自包含替代方案：若服务器上没有 1Panel 商店的 MySQL/Redis，直接用仓库根目录的 docker-compose.yml
+# （含 mysql + redis + 每日备份共 4 个容器，`docker compose up -d --build` 即可），不需要本文件。
+services:
+  # 应用容器：Spring Boot 单体（前端静态资源已打进 jar），只跑 JRE，不装 Maven/Node
+  quant-app:
+    image: eclipse-temurin:21-jre
+    container_name: quant-app
+    environment:
+      # 时区：定时任务按北京时间跑（V5.24 起 cron 已钉死 Asia/Shanghai，这里再兜一层）
+      TZ: Asia/Shanghai
+      JAVA_OPTS: "${JAVA_OPTS:--Xms512m -Xmx1024m -Duser.timezone=Asia/Shanghai}"
+      LOG_PATH: /app/logs
+      # 生产 profile：数据源/Redis 全部走下面的环境变量
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: "jdbc:mysql://${DB_HOST}:${DB_PORT:-3306}/${DB_NAME}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
+      SPRING_DATASOURCE_USERNAME: "${DB_USER}"
+      SPRING_DATASOURCE_PASSWORD: "${DB_PASSWORD}"
+      SPRING_DATA_REDIS_HOST: "${REDIS_HOST}"
+      SPRING_DATA_REDIS_PORT: "${REDIS_PORT:-6379}"
+      # Redis 有密码时取消下一行注释（1Panel 商店装的 Redis 默认带密码，密码在应用详情页）
+      # SPRING_DATA_REDIS_PASSWORD: "${REDIS_PASSWORD}"
+      # 首次启动创建管理员（仅当库里没有任何用户时生效）——务必填强口令，别用默认 admin123
+      QUANT_INIT_ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      QUANT_INIT_ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
+      # 智谱 API Key（可选）：留空也能启动，AI 对话可在【平台配置 → AI 模型配置】里改到数据库
+      ZHIPU_API_KEY: "${ZHIPU_API_KEY:-}"
+    # jar 挂载进容器：升级 = 换掉 app.jar 再重建容器，服务器上无需任何编译环境
+    # 注意 $$JAVA_OPTS（双 $）：compose 会在部署时插值 $VAR，写单 $ 会把上面的 JAVA_OPTS 提前展开成空串；
+    # 双 $ 转义后由容器内的 sh 在运行时展开，环境变量里的 JVM 参数才真正生效（实测过这一坑）
+    command: ["sh", "-c", "java $$JAVA_OPTS -jar /app/app.jar"]
+    volumes:
+      - ./app.jar:/app/app.jar:ro
+      - ./logs:/app/logs
+    ports:
+      # 只监听本机，由 1Panel 的网站反向代理对外（避免直接暴露 8080）；需要直连再改成 "${APP_PORT:-8080}:8080"
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    networks:
+      # 加入 1Panel 应用共用的桥接网络，才能用容器名访问商店里的 MySQL/Redis
+      - 1panel-network
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  1panel-network:
+    # 已存在的 1Panel 网络，必须声明 external，否则会新建一个同名网络、仍然连不通
+    external: true

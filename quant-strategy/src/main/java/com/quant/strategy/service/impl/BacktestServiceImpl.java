@@ -20,6 +20,7 @@ import com.quant.strategy.core.MarketDataLoader;
 import com.quant.strategy.core.MarketDataSeries;
 import com.quant.strategy.core.Strategy;
 import com.quant.strategy.core.StrategyRegistry;
+import com.quant.strategy.grid.AbstractGridStrategy;
 import com.quant.strategy.dto.BacktestRequest;
 import com.quant.strategy.entity.BacktestRecord;
 import com.quant.strategy.entity.BacktestTradeDetail;
@@ -27,7 +28,6 @@ import com.quant.strategy.mapper.BacktestRecordMapper;
 import com.quant.strategy.mapper.BacktestTradeDetailMapper;
 import com.quant.strategy.service.BacktestService;
 import com.quant.strategy.oscillation.OscillatingUpStrategy;
-import com.quant.strategy.valuation.ValPercentileStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
@@ -93,14 +93,16 @@ public class BacktestServiceImpl implements BacktestService {
 
     /**
      * 回测预热天数（自然日）：策略按"根数"回看时须换算，保证首个决策日就有足够历史。
-     * 估值百分位按 windowYears；震荡向上按 K线天数（×1.6 + 30 冗余）；其余策略只需近期行情。
+     * 估值百分位按 windowYears；震荡向上按 K线天数（×1.6 + 30 冗余）；
+     * 红利网格/纳指网格按趋势均线天数（MA60 需要约 90 个自然日，×1.6 + 30 冗余正好覆盖）；其余策略只需近期行情。
      */
     private int warmupDaysOf(String strategyType, JsonNode params) {
-        if (ValPercentileStrategy.TYPE.equals(strategyType)) {
-            return params.path("windowYears").asInt(10) * 366 + 60;
-        }
         if (OscillatingUpStrategy.TYPE.equals(strategyType)) {
             return (int) Math.ceil(params.path("windowDays").asInt(60) * 1.6) + 30;
+        }
+        if (AbstractGridStrategy.isGridType(strategyType)) {
+            int maDays = Math.max(params.path("trendMaDays").asInt(60), 60);
+            return (int) Math.ceil(maDays * 1.6) + 30;
         }
         return 30;
     }

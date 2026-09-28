@@ -46,6 +46,7 @@ spring:
 server:
   # 服务端口（容器内固定 8080，compose 映射宿主机 8080）
   port: 8080
+  address: 0.0.0.0
 
 # ============ MyBatis-Plus ============
 mybatis-plus:

@@ -79,6 +79,17 @@ public class MailConfigService {
         cachedFingerprint = null;
     }
 
+    /**
+     * 按给定配置现建一个一次性发送器（不读缓存、不写缓存）。
+     * 供"测试发送"使用：测试要按界面当前填写跑（V5.26），不能复用、也不能污染按库内配置缓存的发送器。
+     *
+     * @param config 生效配置（host/username 必填，port 可空默认 465）
+     * @return 可用的发送器
+     */
+    public JavaMailSender senderFor(SysMailConfig config) {
+        return buildSender(config);
+    }
+
     /** 按库内配置构建发送器（SSL 465 / STARTTLS 587 两档） */
     private JavaMailSender buildSender(SysMailConfig config) {
         JavaMailSenderImpl sender = new JavaMailSenderImpl();

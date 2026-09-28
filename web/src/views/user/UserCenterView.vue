@@ -568,11 +568,19 @@ async function saveWecom() {
   }
 }
 
-/** 发送微信测试消息（失败原因会以业务异常提示，便于排查） */
+/**
+ * 发送微信测试消息（失败原因会以业务异常提示，便于排查）。
+ * V5.26：带上界面当前填写的配置测试（改了没保存也测眼前这套）；留空/打码 Secret 由后端沿用已存值，不落库。
+ */
 async function sendWecomTest() {
   testingWecom.value = true
   try {
-    await testWecom()
+    await testWecom({
+      corpid: wecomForm.corpid || undefined,
+      agentId: wecomForm.agentId || undefined,
+      secret: wecomForm.secret || undefined,
+      touser: wecomForm.touser || undefined
+    })
     ElMessage.success('微信测试消息已发送，请在微信「企业微信通知」或企业微信 App 查看')
   } finally {
     testingWecom.value = false
@@ -644,12 +652,22 @@ async function savePassword() {
   }
 }
 
-/** 发送测试邮件 */
+/**
+ * 发送测试邮件。
+ * V5.26：带上界面当前填写的配置测试（改了没保存也测眼前这套）；打码账号/留空授权码由后端沿用已存值，不落库。
+ */
 async function sendTestMail() {
   testing.value = true
   try {
-    await testMail()
-    ElMessage.success(`测试邮件已发送至 ${mail.value?.to ?? ''}`)
+    await testMail({
+      host: mailForm.host || undefined,
+      port: mailForm.port || undefined,
+      username: mailForm.username || undefined,
+      password: mailForm.password || undefined,
+      fromAddr: mailForm.fromAddr || undefined,
+      toAddr: mailForm.toAddr || undefined
+    })
+    ElMessage.success(`测试邮件已发送至 ${mailForm.toAddr || mail.value?.to || ''}`)
   } finally {
     testing.value = false
   }

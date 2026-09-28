@@ -291,7 +291,7 @@
           <template #header><span>自选 7 日涨跌榜</span></template>
           <el-empty v-if="overview && overview.movers.length === 0" description="暂无数据" :image-size="60" />
           <template v-else>
-            <!-- 领涨与领跌并排：两榜合起来最多 10 条，竖排会让本卡比同排卡片高出一倍 -->
+            <!-- 领涨与领跌并排：两榜合起来最多 14 条，竖排会让本卡比同排卡片高出一倍 -->
             <div class="mover-columns">
               <div class="mover-column">
                 <div class="mover-group-title">领涨</div>
@@ -483,8 +483,8 @@ const todaySignals = computed(() => {
   return signals.value.filter((signal) => signal.signalDate === latest)
 })
 
-/** 每榜最多展示条数 */
-const MOVER_SIZE = 5
+/** 每榜最多展示条数（V5.31：5 → 7，两榜合计最多 14 条；自选不足 14 只时按实际数量取） */
+const MOVER_SIZE = 7
 
 const topMovers = computed(() => (overview.value?.movers ?? []).slice(0, MOVER_SIZE))
 

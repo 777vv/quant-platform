@@ -251,7 +251,7 @@ public class EastmoneyClient {
             custFeeRate = percentOrScale(html, PATTERN_CUST_FEE);
             salesFeeRate = percentOrScale(html, PATTERN_SALES_FEE);
         } catch (Exception e) {
-            LOGGER.warn("基金[{}]f10档案解析失败（不影响导入）: {}", code, e.getMessage());
+            LOGGER.error("基金[{}]f10档案解析失败（不影响导入）", code, e);
         }
         return new FundProfile(code, name, fundType, estabDate, indexCode, indexName, company,
                 fundScale, fundScaleDate, mgmtFeeRate, custFeeRate, salesFeeRate);
@@ -335,7 +335,7 @@ public class EastmoneyClient {
             return body;
         } catch (Exception e) {
             lastRequestAt = System.currentTimeMillis();
-            LOGGER.debug("探测请求无响应(视为非场内): {} - {}", url, e.getMessage());
+            LOGGER.debug("探测请求无响应(视为非场内): {}", url, e);
             return null;
         }
     }
@@ -609,7 +609,7 @@ public class EastmoneyClient {
             } catch (RestClientException e) {
                 lastError = e;
                 long backoffMs = 1000L * (1L << (attempt - 1));
-                LOGGER.warn("数据源请求失败(第{}次): {} - {}，{}ms后重试", attempt, url, e.getMessage(), backoffMs);
+                LOGGER.error("数据源请求失败(第{}次): {}，{}ms后重试", attempt, url, backoffMs, e);
                 sleep(backoffMs);
             }
         }

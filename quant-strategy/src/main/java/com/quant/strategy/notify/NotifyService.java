@@ -12,8 +12,13 @@ public interface NotifyService {
 
     /**
      * 发送测试邮件（平台配置"发送测试邮件"按钮），失败抛业务异常并在界面提示原因。
+     *
+     * <p>V5.26：按"界面当前填写"测试而非只测库内已存配置——表单改了还没保存时，
+     * 测试的也应是用户眼前这套参数；留空或打码的字段回退库内已存值，全程不落库。
+     *
+     * @param request 界面当前填写的配置（可为 null = 纯按已存配置测试）
      */
-    void sendTestMail();
+    void sendTestMail(MailConfigRequest request);
 
     /**
      * 发送每日信号摘要邮件（异步，失败自动重试 2 次）：

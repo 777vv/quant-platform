@@ -1,64 +1,7 @@
 <template>
   <!-- 自适应网格：容器有多宽就排几列（每列至少 300px），避免每个参数独占一整行留出大片空白 -->
   <div class="param-grid">
-    <template v-if="type === 'GRID'">
-      <el-form-item>
-        <template #label><ParamLabel text="网格模式" help="等差：每格价格差固定（upper−lower）÷格数；等比：每格按固定百分比（上沿÷下沿 开格数次方）。价格波动大选等比，窄幅震荡选等差。" /></template>
-        <el-radio-group v-model="form.mode">
-          <el-radio-button value="arithmetic">等差</el-radio-button>
-          <el-radio-button value="geometric">等比</el-radio-button>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="网格上沿" help="网格区间的最高价。现价上穿此价视为突破上沿 → 建议清仓离场（不再按格交易）。" /></template>
-        <el-input-number v-model="form.upper" :precision="3" :min="0.001" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="网格下沿" help="网格区间的最低价。现价跌破此价视为区间失效 → 只观望不买入；须满足 0 &lt; 下沿 &lt; 上沿。" /></template>
-        <el-input-number v-model="form.lower" :precision="3" :min="0.001" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="格数" help="上下沿之间切成几格，决定触发密度：格数越多、每格越小、交易越频繁（2~100，默认 10）。" /></template>
-        <el-input-number v-model="form.grids" :min="2" :max="100" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="每格份额" help="每下穿一格建议买入、每上穿一格建议卖出的份额（份）。这是网格的单次交易量，不是总仓位。" /></template>
-        <el-input-number v-model="form.sharePerGrid" :min="1" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="底仓份额" help="回测开始时先建立的初始持仓份额（仅在回测首日执行一次），用于模拟「手上已有仓位」的状态。" /></template>
-        <el-input-number v-model="form.basePosition" :min="0" :controls="false" />
-      </el-form-item>
-    </template>
-
-    <template v-else-if="type === 'VAL_PERCENTILE'">
-      <el-form-item>
-        <template #label><ParamLabel text="低估阈值%" help="跟踪指数 PE 百分位低于此值视为低估 → 建议加仓。必须小于高估阈值（1~49）。" /></template>
-        <el-input-number v-model="form.lowPct" :precision="1" :min="1" :max="49" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="高估阈值%" help="PE 百分位高于此值视为高估 → 建议减仓。必须大于低估阈值（51~99）。" /></template>
-        <el-input-number v-model="form.highPct" :precision="1" :min="51" :max="99" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="分档数" help="把低估区切成几档来分批加仓（同理高估区减仓）：档数越多、每次加减越少（1~10）。" /></template>
-        <el-input-number v-model="form.steps" :min="1" :max="10" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="回看窗口(年)" help="算 PE 百分位时回看多少年的估值历史。窗口越长越平滑但越迟钝（1~30，默认 8）。" /></template>
-        <el-input-number v-model="form.windowYears" :min="1" :max="30" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="每档份额" help="每跨越一档低估/高估时建议买入/卖出的份额（份）。" /></template>
-        <el-input-number v-model="form.sharePerStep" :min="1" :controls="false" />
-      </el-form-item>
-      <el-form-item>
-        <template #label><ParamLabel text="底仓份额" help="建仓的起始份额：低于低估阈值时至少持这么多，回测首日先建立。" /></template>
-        <el-input-number v-model="form.basePosition" :min="0" :controls="false" />
-      </el-form-item>
-    </template>
-
-    <template v-else-if="type === 'OSC_UP'">
+    <template v-if="type === 'OSC_UP'">
       <el-form-item>
         <template #label><ParamLabel text="初始仓位份额" help="仅回测首日生效：开始回测时先按这个份额买入建仓（份），后续信号从「已持有初始仓位」起步；填 0 等于不建仓。取值 0 ~ 满仓份额。" /></template>
         <el-input-number v-model="form.initialShare" :min="0" :controls="false" />
@@ -91,6 +34,22 @@
         <template #label><ParamLabel text="卖出份额" help="每次减仓信号的卖出份额（份）。买入份额小于「底仓份额」时不会被底仓下限截断太多。" /></template>
         <el-input-number v-model="form.sellShare" :min="1" :controls="false" />
       </el-form-item>
+
+      <el-form-item>
+        <template #label><ParamLabel text="每档份额增减%" help="分档功能（V5.29）：填 0＝关闭，买卖都用固定份额（与历史行为一致）；正数＝越跌买越多、越涨卖越多（金字塔式）；负数＝越跌买越少、越涨卖越少（倒金字塔式）。第 n 档份额 = 固定份额 × [1 + (n−1)×此值]，n = 触发幅度 ÷ 阈值。例：买入份额 5000、阈值 5%、此值 50 → 跌 5% 买 5000、跌 10% 买 7500、跌 15% 买 10000。" /></template>
+        <el-input-number v-model="form.sizingStepPct" :precision="1" :min="-99" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item v-if="Number(form.sizingStepPct ?? 0) !== 0">
+        <template #label><ParamLabel text="档位基准" help="档位从哪个区间算幅度。锚点窗口（默认）：跟着「上次实际交易」走，每次成交后档位重新起算——与触发口径完全一致，渐进下跌里多为第 1 档，只有急跌/跳空那种「一个窗口内跌得更狠」才会进第 2、3 档；K线窗口：始终按近 K线天数 根算幅度、不随成交重置，渐进下跌会一路累加到第 3、4 档，放大效应更明显（但与「锚点=实际成交」的口径不一致）。" /></template>
+        <el-radio-group v-model="form.sizingBase">
+          <el-radio-button value="anchor">锚点窗口</el-radio-button>
+          <el-radio-button value="window">K线窗口</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item v-if="Number(form.sizingStepPct ?? 0) > 0">
+        <template #label><ParamLabel text="单笔最大倍数" help="深档时的倍数上限（默认 3）：防止「越跌越多」在深跌里把单笔买到过大。份额最终仍受满仓上限夹取。" /></template>
+        <el-input-number v-model="form.maxSizingMultiple" :precision="1" :min="1" :max="10" :controls="false" />
+      </el-form-item>
       <div class="osc-summary">
         <div class="osc-title">策略逻辑速览</div>
         <ul>
@@ -99,6 +58,120 @@
           <li><b>下跌加仓</b>：现价较区间<b>最高点</b>跌幅超过阈值 → 买入「买入份额」份（不会超过满仓）。</li>
           <li><b>同时满足</b>时<b>买入优先</b>；夹取后可交易份额为 0（已满仓/已到底仓）不出信号。</li>
           <li><b>2 个交易日冷却</b>：距上次<b>实际交易</b>不足 2 个交易日时只提示不交易；信号没照做（无交易流水）不算数，次日照样重新提示。</li>
+          <li v-if="Number(form.sizingStepPct ?? 0) !== 0"><b>分档份额</b>：{{ sizingSummary }}——深档的份额变化会写在建议说明里，便于核对。</li>
+        </ul>
+      </div>
+    </template>
+
+    <!-- 网格族（V5.27 红利/纳指网格；V5.28 金字塔/倒金字塔网格）：四个类型共用同一套参数与规则，
+         差异只在默认值取向——金字塔族多一个「每格增减」参数控制逐格份额阶梯 -->
+    <template v-else-if="isGridType">
+      <el-form-item>
+        <template #label><ParamLabel text="网格模式" help="等差：每格价差固定（上沿−下沿）÷格数，适合窄幅震荡（红利）；等比：每格固定百分比，适合跨度大、长期抬升的品种（纳指这类跨境）。" /></template>
+        <el-radio-group v-model="form.mode">
+          <el-radio-button value="arithmetic">等差</el-radio-button>
+          <el-radio-button value="geometric">等比</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="网格下沿" help="网格区间最低价。跌破它算「下穿一格」照常买入，之后按「跌破下沿」的方式处理。格线固定不漂移，请按品种近 1~2 年的实际波动区间设置。" /></template>
+        <el-input-number v-model="form.lower" :precision="3" :min="0.001" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="网格上沿" help="网格区间最高价。涨破它按「涨破上沿」的方式处理（区间上移 / 保留底仓 / 清到只剩底仓）。" /></template>
+        <el-input-number v-model="form.upper" :precision="3" :min="0.001" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="格数" help="上下沿之间切几格（2~200）。格数越多每格越小、交易越频繁、费损越高；建议单格幅度不低于 2 倍日均波动。" /></template>
+        <el-input-number v-model="form.grids" :min="2" :max="200" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="每格单位" help="按份额：每格固定买卖多少份；按金额：每格固定买卖多少钱，价格越低自动买到越多份（成本更平滑）。" /></template>
+        <el-radio-group v-model="form.perGridMode">
+          <el-radio-button value="share">份额</el-radio-button>
+          <el-radio-button value="amount">金额</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item v-if="form.perGridMode === 'amount'">
+        <template #label><ParamLabel text="每格金额" help="每跨一格买卖的金额（元）；实际份额 = 金额 ÷ 现价（向下取整到 0.01 份）。" /></template>
+        <el-input-number v-model="form.amountPerGrid" :min="1" :controls="false" />
+      </el-form-item>
+      <el-form-item v-else>
+        <template #label><ParamLabel text="每格份额" help="每跨一格买卖的份额（份）。单根 K 线跳空穿多格时按格数成交多倍（受「单根最多成交格数」限幅）。" /></template>
+        <el-input-number v-model="form.sharePerGrid" :min="1" :controls="false" />
+      </el-form-item>
+      <el-form-item v-if="isPyramidType">
+        <template #label><ParamLabel text="每格增减" help="金字塔阶梯：每深一格的成交单位比上一格增减多少（与「每格单位」同单位）。正数＝越跌买越多（金字塔，底部重仓摊成本）；负数＝越跌买越少（倒金字塔，底部轻仓）；填 0＝每格等量（普通网格）。买卖共用同一条阶梯，所以低位买得多、高位也卖得多。例：首格 500 份、每格 +250 → 500/750/1000/1250…" /></template>
+        <el-input-number v-model="form.pyramidStep" :precision="2" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="底仓份额" help="卖出下限：建议卖出后的持仓不低于这个数（份）。红利建议留足底仓（收益主要来自长期持有），纳指可留少一些。" /></template>
+        <el-input-number v-model="form.baseShare" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="满仓份额" help="买入上限：建议买入后的持仓不超过这个数（份）。请与可用资金匹配——这是防止单边下跌把子弹打光的硬约束。" /></template>
+        <el-input-number v-model="form.fullShare" :min="1" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="初始仓位份额" help="仅回测首日生效：回测开始时先按这个份额建仓（份），后续从「已持有初始仓位」起步；填 0 等于不建仓。实盘不受影响（始终按实际持仓判断）。⚠️ 请让它大于底仓份额，否则一建仓就贴住卖出下限、网格只买不卖。" /></template>
+        <el-input-number v-model="form.initialShare" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="涨破上沿" help="区间上移：涨破后把整个网格抬高到现价重新落回区间内（跟着趋势走台阶），适合长期创新高的品种（纳指）；保留底仓：按格卖出到上沿容量后保留底仓、区间不动，适合慢牛（红利）；清到只剩底仓：涨破即把网格份额一次性卖光。" /></template>
+        <el-select v-model="form.breakoutMode">
+          <el-option value="shift" label="区间上移（移动网格）" />
+          <el-option value="hold" label="保留底仓、区间不动" />
+          <el-option value="clear" label="清到只剩底仓" />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="跌破下沿" help="买 1 格后观望：跌破下沿算下穿一格、照常买入，之后停在区间外观望；继续按格买入：把下沿之下也当成格子，每多跌一格再买一格（受满仓上限约束）。" /></template>
+        <el-select v-model="form.breakdownMode">
+          <el-option value="hold" label="买 1 格后观望" />
+          <el-option value="buy" label="区间下方继续按格买入" />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="单根最多成交格数" help="一根 K 线（或一次跳空）最多按几格成交，防止极端跳空一次买太多；填 0 表示不限。" /></template>
+        <el-input-number v-model="form.maxGridsPerBar" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="趋势均线天数" help="填 0 关闭。开启后现价低于该均线时禁止买入（卖出不受限），避免跌势里一路接飞刀；均线根数不足时闸门不生效并在建议里说明。纳指建议 60，红利可关闭。" /></template>
+        <el-input-number v-model="form.trendMaDays" :min="0" :max="250" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="溢价率买入上限%" help="填 0 关闭。现价相对净值的溢价率高于此值时禁止买入——跨境 ETF（纳指/标普/日经）溢价常达 8%~10%，高溢价买入等于先亏一笔溢价；红利 ETF 溢价常年接近 0，可关闭。建议 3。" /></template>
+        <el-input-number v-model="form.premiumBuyMaxPct" :precision="2" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="溢价率容忍滞后(天)" help="QDII 基金净值公布常滞后 1~2 天，超过这个天数就把溢价率视为过期、本次不拦截（并在建议里提示），避免用陈旧数据误拦。" /></template>
+        <el-input-number v-model="form.premiumStaleDays" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="回测假设溢价率%" help="回测没有溢价率历史（平台只存最新一天）：留空＝回测跳过溢价闸门（结果会比实盘乐观）；填值＝回测按该固定溢价率判断，例如填 5 模拟高溢价环境。" /></template>
+        <el-input-number v-model="form.backtestPremiumPct" :precision="2" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="PE 买入上限" help="填 0 关闭。跟踪指数 PE 高于此值时禁止买入（估值贵了少买）。仅对平台有 PE 数据的指数生效（中证/上证系列，如中证红利 000922）；纳指无 PE 数据源，此项不生效。" /></template>
+        <el-input-number v-model="form.peBuyMax" :precision="2" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="PE 买入下限" help="填 0 关闭。跟踪指数 PE 低于此值时，买入格数按下面的倍数放大（越便宜买越多）。" /></template>
+        <el-input-number v-model="form.peBuyMin" :precision="2" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="低估买入倍数" help="PE 低于买入下限时的买入格数倍数（1 = 不加倍），例如填 2 表示低估时买双倍格数。" /></template>
+        <el-input-number v-model="form.peBoostMultiplier" :precision="1" :min="1" :controls="false" />
+      </el-form-item>
+      <div class="osc-summary">
+        <div class="osc-title">网格逻辑速览</div>
+        <ul>
+          <li><b>格线固定</b>：由下沿/上沿/格数/模式一次算出，不随成交漂移；实盘与回测同一套口径，回测调好的参数可直接套实盘。</li>
+          <li><b>格位锚点</b>：以<b>最近一次实际成交价</b>为基准（没有成交记录时用上一根收盘），跨几格就买卖几格；信号没照做（无交易流水）次日会重新提示。</li>
+          <li><b>一天跨多格</b>：跳空跌穿 2 格就买 2 格份额（受「单根最多成交格数」与满仓上限夹取）。</li>
+          <li><b>买入闸门</b>：趋势均线 → 溢价率 → 估值，任一拦截即不出买入建议；<b>卖出不受闸门限制</b>。</li>
+          <li><b>收益来自差价</b>：每上穿一格卖出的份额，等于之前每下穿一格买入的份额，来回震荡反复兑现。</li>
+          <li v-if="isPyramidType"><b>逐格阶梯</b>：{{ pyramidSummary }}——一天跨多格时按各格单位<b>逐格累加</b>；深跌/急涨会显著加大单次成交额，靠「满仓份额」兜底。</li>
         </ul>
       </div>
     </template>
@@ -106,7 +179,7 @@
 </template>
 
 <script setup lang="ts">
-import { h, reactive, watch } from 'vue'
+import { computed, h, reactive, watch } from 'vue'
 import { ElIcon, ElTooltip } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 
@@ -143,9 +216,50 @@ const ParamLabel = (props: { text: string; help: string }) =>
 const props = defineProps<{ type: string; modelValue: Record<string, unknown> }>()
 const emit = defineEmits<{ 'update:modelValue': [value: Record<string, unknown>] }>()
 
+/** 网格族类型（共用同一套参数模板）：红利网格 / 纳指网格 / 金字塔网格 / 倒金字塔网格 */
+const GRID_TYPES = ['DIV_GRID', 'NDX_GRID', 'PYRAMID_GRID', 'INV_PYRAMID_GRID']
+
+/** 金字塔族（比普通网格多一个「每格增减」参数） */
+const PYRAMID_TYPES = ['PYRAMID_GRID', 'INV_PYRAMID_GRID']
+
+/** 当前类型是否属于网格族 */
+const isGridType = computed(() => GRID_TYPES.includes(props.type))
+
+/** 当前类型是否金字塔族 */
+const isPyramidType = computed(() => PYRAMID_TYPES.includes(props.type))
+
+/** 震荡向上分档说明（表单内展示档位与份额变化，与后端同一口径） */
+const sizingSummary = computed(() => {
+  const step = Number(form.sizingStepPct ?? 0)
+  const buy = Number(form.buyShare ?? 0)
+  const sell = Number(form.sellShare ?? 0)
+  const limit = Number(form.fallAddPct ?? 0)
+  if (!step) return '已关闭（固定份额）'
+  const mode = step > 0 ? '越跌买越多、越涨卖越多' : '越跌买越少、越涨卖越少'
+  const seq = [1, 2, 3].map((n) => {
+    const m = Math.min(1 + (n - 1) * (step / 100), Number(form.maxSizingMultiple ?? 3))
+    return `${n}档×${Number(m.toFixed(2))}`
+  })
+  return `${mode}：第 ${seq.join('、')} 档，即跌 ${limit}% 买 ${buy} 份 → 跌 ${limit * 2}% 买 ${Math.round(buy * (1 + step / 100))} 份（卖出同理镜像，卖出份额基准 ${sell} 份）`
+})
+
+/**
+ * 阶梯说明文案：与后端同一口径（单位按格位线性取值）——
+ * 买入：单位 = 每格份额 + 每格增减 ×（格数 − 格位）；卖出镜像。故最小 = 每格份额+增减、最大 = 每格份额+增减×格数。
+ */
+const pyramidSummary = computed(() => {
+  const base = Number(form.sharePerGrid ?? 0)
+  const step = Number(form.pyramidStep ?? 0)
+  const grids = Number(form.grids ?? 0)
+  if (!base || !grids) return '请先填写每格份额与格数'
+  if (!step) return `每格等量 ${base} 份`
+  const min = Math.max(base + step, 0.01)
+  const max = Math.max(base + step * grids, 0.01)
+  const trend = step > 0 ? '越低买越多、越高卖越多' : '越低买越少、越高卖越少'
+  return `${trend}：每格 ${step > 0 ? '+' : ''}${step} 份，从 ${min} 份线性变化到 ${max} 份`
+})
+
 const defaults: Record<string, Record<string, unknown>> = {
-  GRID: { mode: 'arithmetic', upper: 5.5, lower: 3.0, grids: 10, sharePerGrid: 2000, basePosition: 4000 },
-  VAL_PERCENTILE: { lowPct: 25, highPct: 75, steps: 5, windowYears: 8, sharePerStep: 3000, basePosition: 5000 },
   // 震荡向上（V5.13 重构）：固定份额 + 区间极值触发
   OSC_UP: {
     initialShare: 10000,
@@ -155,7 +269,105 @@ const defaults: Record<string, Record<string, unknown>> = {
     riseReducePct: 5,
     fallAddPct: 5,
     buyShare: 5000,
-    sellShare: 5000
+    sellShare: 5000,
+    // 分档功能（V5.29）：默认关闭（0），需要时填正/负数开金字塔/倒金字塔式加减
+    sizingStepPct: 0,
+    sizingBase: 'anchor',
+    maxSizingMultiple: 3
+  },
+  // 红利网格（V5.27）：低波动慢牛（实测 515080 年化波动 13.7%、区间 1.395~1.637）→ 等差、约 1.4% 一格、
+  // 底仓占比高、涨破上沿只保留底仓不上移、默认不开趋势闸门；红利 ETF 溢价常年≈0 故溢价闸门关闭
+  DIV_GRID: {
+    mode: 'arithmetic',
+    lower: 1.4,
+    upper: 1.62,
+    grids: 11,
+    perGridMode: 'share',
+    sharePerGrid: 1000,
+    amountPerGrid: 1500,
+    baseShare: 5000,
+    fullShare: 30000,
+    initialShare: 15000,
+    breakoutMode: 'hold',
+    breakdownMode: 'hold',
+    maxGridsPerBar: 0,
+    trendMaDays: 0,
+    premiumBuyMaxPct: 0,
+    premiumStaleDays: 3,
+    peBuyMax: 0,
+    peBuyMin: 0,
+    peBoostMultiplier: 2
+  },
+  // 纳指网格（V5.27）：高波动强趋势跨境（实测 513300 年化波动 23.3%、区间 2.054~2.865、当前溢价 +8.93%）→
+  // 等比、每格约 3.4%、底仓占比低、涨破上沿区间上移、MA60 趋势闸门 + 溢价 3% 买入上限
+  NDX_GRID: {
+    mode: 'geometric',
+    lower: 2.0,
+    upper: 2.8,
+    grids: 10,
+    perGridMode: 'share',
+    sharePerGrid: 500,
+    amountPerGrid: 1200,
+    baseShare: 1000,
+    fullShare: 12000,
+    initialShare: 3000,
+    breakoutMode: 'shift',
+    breakdownMode: 'hold',
+    maxGridsPerBar: 3,
+    trendMaDays: 60,
+    premiumBuyMaxPct: 3,
+    premiumStaleDays: 3,
+    peBuyMax: 0,
+    peBuyMin: 0,
+    peBoostMultiplier: 1
+  },
+  // 金字塔网格（V5.28）：越跌买越多——首格 500 份、每深一格 +250 份（500/750/1000…），底部重仓摊成本；
+  // 取向同红利：等差密格 + 涨破上沿保留底仓 + 关闭趋势/溢价闸门
+  PYRAMID_GRID: {
+    mode: 'arithmetic',
+    lower: 1.4,
+    upper: 1.62,
+    grids: 11,
+    perGridMode: 'share',
+    sharePerGrid: 500,
+    amountPerGrid: 800,
+    pyramidStep: 250,
+    baseShare: 5000,
+    fullShare: 30000,
+    initialShare: 8000,
+    breakoutMode: 'hold',
+    breakdownMode: 'hold',
+    maxGridsPerBar: 0,
+    trendMaDays: 0,
+    premiumBuyMaxPct: 0,
+    premiumStaleDays: 3,
+    peBuyMax: 0,
+    peBuyMin: 0,
+    peBoostMultiplier: 2
+  },
+  // 倒金字塔网格（V5.28）：越跌买越少——首格 1500 份、每深一格 −100 份（1500/1400/1300…，最深处 600 份不归零）；
+  // 取向同纳指：等比宽格 + 涨破上沿区间上移 + MA60 与溢价 3% 闸门
+  INV_PYRAMID_GRID: {
+    mode: 'geometric',
+    lower: 2.0,
+    upper: 2.8,
+    grids: 10,
+    perGridMode: 'share',
+    sharePerGrid: 1500,
+    amountPerGrid: 3000,
+    pyramidStep: -100,
+    baseShare: 1000,
+    fullShare: 12000,
+    initialShare: 3000,
+    breakoutMode: 'shift',
+    breakdownMode: 'hold',
+    maxGridsPerBar: 3,
+    trendMaDays: 60,
+    premiumBuyMaxPct: 3,
+    premiumStaleDays: 3,
+    peBuyMax: 0,
+    peBuyMin: 0,
+    peBoostMultiplier: 1
   }
 }
 
@@ -194,8 +406,9 @@ watch(
   margin-right: 0;
 }
 
-/* 数字/单选等控件铺满所在格子，不再固定 150px 留白 */
-.param-grid :deep(.el-input-number) {
+/* 数字/单选/下拉等控件铺满所在格子，不再固定 150px 留白 */
+.param-grid :deep(.el-input-number),
+.param-grid :deep(.el-select) {
   width: 100%;
 }
 

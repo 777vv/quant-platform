@@ -28,6 +28,12 @@ import tools.jackson.databind.JsonNode;
  *   <li>{@code fallAddPct} 下跌加仓%：跌幅超阈值 → 买入；</li>
  *   <li>{@code buyShare} 买入份额：每次加仓的固定份额；</li>
  *   <li>{@code sellShare} 卖出份额：每次减仓的固定份额；</li>
+ *   <li>{@code sizingStepPct} 每档份额增减%（V5.29）：<b>0=关闭分档</b>（沿用固定份额，行为与历史版本一致）；
+ *       正数＝越跌买越多、越涨卖越多（金字塔式）；负数＝越跌买越少、越涨卖越少（倒金字塔式）。
+ *       第 n 档份额 = 固定份额 × [1 + (n−1)×每档增减%]，n = 触发幅度 ÷ 阈值，倍数夹在 [0.1, maxSizingMultiple]；</li>
+ *   <li>{@code sizingBase} 档位基准：anchor=锚点窗口（默认，随成交重置，与触发口径一致）／
+ *       window=K线天数窗口（不重置，渐进下跌能累加档位）；</li>
+ *   <li>{@code maxSizingMultiple} 单笔最大倍数（默认 3）：深档时的上限；</li>
  *   <li>{@code initialShare} 初始仓位份额（V5.17）：仅<b>回测首日</b>一次性建仓——
  *       回测从"已持有 initialShare 份"起步而不是 0 仓；0＝不建仓（兼容旧配置）。
  *       实盘信号不受影响（始终按实际持仓判断）。</li>
@@ -72,6 +78,27 @@ public class OscillatingUpStrategy implements Strategy {
     /** 建议说明最长保留长度（与 signal_record.suggest_desc 列宽一致） */
     private static final int DESC_MAX_LEN = 255;
 
+    /** 参数名：每档份额增减%（0=关闭分档，正=越跌买越多/越涨卖越多，负=越跌买越少/越涨卖越少） */
+    private static final String P_SIZING_STEP_PCT = "sizingStepPct";
+
+    /** 参数名：档位基准（anchor=相对锚点窗口，随成交重置；window=相对 K线天数窗口，不重置） */
+    private static final String P_SIZING_BASE = "sizingBase";
+
+    /** 参数名：单笔最大倍数（深档时的上限，防越买越大失控） */
+    private static final String P_MAX_SIZING_MULTIPLE = "maxSizingMultiple";
+
+    /** 档位基准：相对锚点窗口（V5.29 用户拍板为默认） */
+    private static final String SIZING_BASE_ANCHOR = "anchor";
+
+    /** 档位基准：相对 K线天数窗口 */
+    private static final String SIZING_BASE_WINDOW = "window";
+
+    /** 默认单笔最大倍数 */
+    private static final BigDecimal DEFAULT_MAX_MULTIPLE = BigDecimal.valueOf(3);
+
+    /** 倍数下限（负向阶梯最深处的兜底倍数）：保证仍能成交，不会变成 0 或负数 */
+    private static final BigDecimal MIN_SIZING_MULTIPLE = new BigDecimal("0.1");
+
     @Override
     public String type() {
         return TYPE;
@@ -110,6 +137,18 @@ public class OscillatingUpStrategy implements Strategy {
         BigDecimal initial = Strategy.dec(params, "initialShare", BigDecimal.ZERO);
         if (initial.compareTo(BigDecimal.ZERO) < 0 || initial.compareTo(full) > 0) {
             throw new BizException("初始仓位份额须在 0 ~ 满仓份额之间，当前 " + initial);
+        }
+        BigDecimal stepPct = Strategy.dec(params, P_SIZING_STEP_PCT, BigDecimal.ZERO);
+        if (stepPct.compareTo(BigDecimal.valueOf(-100)) <= 0 || stepPct.compareTo(BigDecimal.valueOf(500)) > 0) {
+            throw new BizException("每档份额增减% 须在 -100 ~ 500 之间（0=关闭分档），当前 " + stepPct);
+        }
+        BigDecimal maxMultiple = Strategy.dec(params, P_MAX_SIZING_MULTIPLE, DEFAULT_MAX_MULTIPLE);
+        if (maxMultiple.compareTo(BigDecimal.ONE) < 0 || maxMultiple.compareTo(BigDecimal.TEN) > 0) {
+            throw new BizException("单笔最大倍数须在 1 ~ 10 之间，当前 " + maxMultiple);
+        }
+        String sizingBase = Strategy.strOr(params, P_SIZING_BASE, SIZING_BASE_ANCHOR);
+        if (!SIZING_BASE_ANCHOR.equals(sizingBase) && !SIZING_BASE_WINDOW.equals(sizingBase)) {
+            throw new BizException("档位基准只能是 anchor（锚点窗口）或 window（K线窗口），当前 " + sizingBase);
         }
     }
 
@@ -234,10 +273,12 @@ public class OscillatingUpStrategy implements Strategy {
         // ① 下跌加仓（V5.13 用户拍板：买入优先）
         Decision buySide = null;
         if (fallHit) {
-            BigDecimal buyShare = Strategy.dec(params, "buyShare", BigDecimal.ZERO);
+            Sized sized = sizedShare(params, series, Strategy.dec(params, "buyShare", BigDecimal.ZERO),
+                    fallPct, fallLimit, true, anchorIdx, windowStart, index);
             String why = "现价 " + strip(price) + " 较区间最高 " + strip(high) + " 下跌 "
-                    + strip(fallPct) + "%（≥ 下跌加仓阈值 " + strip(fallLimit) + "%），" + windowText;
-            buySide = buy(current, current.add(buyShare).min(full), base, full, why);
+                    + strip(fallPct) + "%（≥ 下跌加仓阈值 " + strip(fallLimit) + "%），" + windowText
+                    + sized.note();
+            buySide = buy(current, current.add(sized.share()).min(full), base, full, why);
             if (!Signal.HOLD.equals(buySide.direction())) {
                 return cooldownGate(series, index, lastTradeDate, buySide);
             }
@@ -245,10 +286,12 @@ public class OscillatingUpStrategy implements Strategy {
         // ② 上涨减仓
         Decision sellSide = null;
         if (riseHit) {
-            BigDecimal sellShare = Strategy.dec(params, "sellShare", BigDecimal.ZERO);
+            Sized sized = sizedShare(params, series, Strategy.dec(params, "sellShare", BigDecimal.ZERO),
+                    risePct, riseLimit, false, anchorIdx, windowStart, index);
             String why = "现价 " + strip(price) + " 较区间最低 " + strip(low) + " 上涨 "
-                    + strip(risePct) + "%（≥ 上涨减仓阈值 " + strip(riseLimit) + "%），" + windowText;
-            sellSide = sell(current, current.subtract(sellShare).max(base), base, full, why);
+                    + strip(risePct) + "%（≥ 上涨减仓阈值 " + strip(riseLimit) + "%），" + windowText
+                    + sized.note();
+            sellSide = sell(current, current.subtract(sized.share()).max(base), base, full, why);
             if (!Signal.HOLD.equals(sellSide.direction())) {
                 return cooldownGate(series, index, lastTradeDate, sellSide);
             }
@@ -339,6 +382,67 @@ public class OscillatingUpStrategy implements Strategy {
     private int barsSince(MarketDataSeries series, LocalDate date, int index) {
         int at = barIndexOnOrAfter(series, date, index);
         return at < 0 ? Integer.MAX_VALUE : index - at;
+    }
+
+    /**
+     * 分档份额（V5.29）：第 n 档份额 = 固定份额 × 倍数，倍数 = 1 + (n−1) × 每档增减%，夹在 [0.1, 单笔最大倍数]；
+     * n = 触发幅度 ÷ 阈值（向下取整，触发成立时 n ≥ 1）。
+     *
+     * <p><b>档位基准</b>由 sizingBase 决定：anchor（默认，用户拍板）=用锚点窗口（随成交重置）的极值算幅度，
+     * 与"触发"口径一致，代价是每次成交后档位重新起算（渐进下跌多为第 1 档，急跌才进第 2、3 档）；
+     * window=用 K线天数窗口（不重置）的极值，渐进下跌能累加档位、放大效应更明显，但与"锚点=实际成交"口径不一致。
+     * 份额最后仍受满仓/底仓夹取（在 buy/sell 里），深档不会超买。
+     *
+     * @param baseShare   固定份额（buyShare / sellShare）
+     * @param pct         本次触发幅度（%）
+     * @param limit       触发阈值（%）
+     * @param buy         true=买入（用跌幅、基准取区间最高），false=卖出（用涨幅、基准取区间最低）
+     * @param anchorIdx   锚点窗口起点下标
+     * @param windowStart K线天数窗口起点下标
+     * @param index       决策 bar 下标
+     * @return 分档后的份额与说明后缀
+     */
+    private Sized sizedShare(JsonNode params, MarketDataSeries series, BigDecimal baseShare, BigDecimal pct,
+                             BigDecimal limit, boolean buy, int anchorIdx, int windowStart, int index) {
+        BigDecimal stepPct = Strategy.dec(params, P_SIZING_STEP_PCT, BigDecimal.ZERO);
+        if (stepPct.compareTo(BigDecimal.ZERO) == 0 || pct == null
+                || limit == null || limit.compareTo(BigDecimal.ZERO) <= 0) {
+            return new Sized(baseShare, "");
+        }
+        String sizingBase = Strategy.strOr(params, P_SIZING_BASE, SIZING_BASE_ANCHOR);
+        int from = SIZING_BASE_WINDOW.equals(sizingBase) ? windowStart : anchorIdx;
+        // 买入看"跌幅"，基准必须取区间**最高**价（extreme 的第 4 个参数是"取最低"，故买入传 false）；
+        // 卖出看"涨幅"，基准取区间最低价（传 true）。写反会算出负的幅度、档位永远是第 1 档（实测踩过）
+        BigDecimal extreme = extreme(series, from, index, !buy);
+        BigDecimal price = series.get(index).close();
+        BigDecimal sizedPct = buy ? pctOf(price, extreme) : pctOf(extreme, price);
+        if (sizedPct == null) {
+            return new Sized(baseShare, "");
+        }
+        int level = Math.max(sizedPct.divide(limit, 0, RoundingMode.DOWN).intValue(), 1);
+        BigDecimal multiple = BigDecimal.ONE.add(stepPct.multiply(BigDecimal.valueOf(level - 1L))
+                .divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP));
+        BigDecimal capped = Strategy.dec(params, P_MAX_SIZING_MULTIPLE, DEFAULT_MAX_MULTIPLE);
+        if (multiple.compareTo(capped) > 0) {
+            multiple = capped;
+        }
+        if (multiple.compareTo(MIN_SIZING_MULTIPLE) < 0) {
+            multiple = MIN_SIZING_MULTIPLE;
+        }
+        BigDecimal share = baseShare.multiply(multiple).setScale(2, RoundingMode.DOWN);
+        String baseText = SIZING_BASE_WINDOW.equals(sizingBase) ? "K线窗口" : "锚点窗口";
+        String note = "；分档：" + (buy ? "跌幅" : "涨幅") + " " + strip(sizedPct) + "% 属第 " + level
+                + " 档，份额 ×" + strip(multiple) + "（档位基准 " + baseText + "）";
+        return new Sized(share, note);
+    }
+
+    /**
+     * 分档结果。
+     *
+     * @param share 本次使用的份额
+     * @param note  追加到建议说明里的分档信息（关闭分档时为空串）
+     */
+    private record Sized(BigDecimal share, String note) {
     }
 
     /** 相对涨跌幅（%），保留 2 位；基准非法返回 null */

@@ -29,6 +29,17 @@ public class StrategyRegistry {
         return strategy;
     }
 
+    /**
+     * 该策略类型是否仍在注册表里（已下线的策略返回 false）。
+     * 供计划任务跳过库里残留的旧配置行，避免每天刷"未知策略类型"的错误。
+     *
+     * @param type 策略类型码
+     * @return true=当前可用
+     */
+    public boolean contains(String type) {
+        return strategyMap.containsKey(type);
+    }
+
     public Map<String, Strategy> all() {
         return strategyMap;
     }

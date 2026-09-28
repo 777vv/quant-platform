@@ -32,12 +32,11 @@ import com.quant.strategy.core.StrategyRegistry;
 import com.quant.strategy.dto.SignalItemVO;
 import com.quant.strategy.entity.SignalRecord;
 import com.quant.strategy.entity.StrategyConfig;
-import com.quant.strategy.grid.GridStrategy;
+import com.quant.strategy.grid.AbstractGridStrategy;
 import com.quant.strategy.oscillation.OscillatingUpStrategy;
 import com.quant.strategy.mapper.SignalRecordMapper;
 import com.quant.strategy.mapper.StrategyConfigMapper;
 import com.quant.strategy.service.SignalService;
-import com.quant.strategy.valuation.ValPercentileStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -59,11 +58,8 @@ public class SignalServiceImpl implements SignalService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SignalServiceImpl.class);
 
-    /** 网格策略实时信号回看天数（锚点已持久化，窗口只需覆盖近段行情） */
-    private static final int GRID_WINDOW_DAYS = 120;
-
-    /** 估值策略单年回看天数（自然日，含节假日冗余） */
-    private static final int VAL_WINDOW_DAYS_PER_YEAR = 370;
+    /** 未识别策略类型的兜底回看天数（自然日）：给足近段行情，不因窗口不足而算不出信号 */
+    private static final int DEFAULT_WINDOW_DAYS = 120;
 
     /** 分页查询单页条数上限（防一次性拉全表） */
     private static final long PAGE_SIZE_LIMIT = 200;
@@ -112,6 +108,13 @@ public class SignalServiceImpl implements SignalService {
         List<SignalRecord> signals = new ArrayList<>(configs.size());
         List<String> errors = new ArrayList<>();
         for (StrategyConfig config : configs) {
+            // 已下线策略（如旧的 GRID/VAL_PERCENTILE）可能还留有计划任务读不到的配置行：
+            // 跳过并只记一条 warn，不写进 sync_log 的失败清单（否则每天都刷一条"未知策略类型"的错误）
+            if (!registry.contains(config.getStrategyType())) {
+                LOGGER.warn("策略类型[{}]已下线，跳过基金[{}]的这条配置（可在【策略配置】里删除）",
+                        config.getStrategyType(), config.getFundCode());
+                continue;
+            }
             try {
                 signals.add(generateOne(config));
             } catch (Exception e) {
@@ -204,12 +207,6 @@ public class SignalServiceImpl implements SignalService {
         if (series.size() == 0) {
             throw new IllegalStateException("基金[" + config.getFundCode() + "]无行情数据");
         }
-        if (GridStrategy.TYPE.equals(config.getStrategyType()) && !params.has("anchorPrice")) {
-            BigDecimal anchor = GridStrategy.defaultAnchor(params, series);
-            ((ObjectNode) params).put("anchorPrice", anchor);
-            config.setParams(JsonUtils.toJson(params));
-            configMapper.updateById(config);
-        }
         LocalDate signalDate = series.get(series.size() - 1).date();
         // 当前仓位与最近一次实际交易：供需持仓状态的策略使用（震荡向上的档位与首次/二次判断）。
         // ⚠️ 锚点是【实际交易流水】而非信号——信号发了没照做（无流水）即不算数，状态机以成交为准（用户口径 V5.9）
@@ -246,16 +243,18 @@ public class SignalServiceImpl implements SignalService {
                 .last("limit 1"));
     }
 
-    /** 窗口天数：估值百分位按 windowYears 回看；震荡向上按 K线天数 换算；网格只需近期行情 */
+    /** 窗口天数：震荡向上按 K线天数；网格族按趋势均线天数；其余策略给兜底窗口 */
     private int windowDays(String strategyType, JsonNode params) {
-        if (ValPercentileStrategy.TYPE.equals(strategyType)) {
-            return Strategy.intOr(params, "windowYears", 10) * VAL_WINDOW_DAYS_PER_YEAR;
-        }
         if (OscillatingUpStrategy.TYPE.equals(strategyType)) {
             // loadRecent 收的是自然日：A 股年约 243 个交易日，按 1.6 倍 + 30 天冗余，保证窗口内至少有 K线天数 根 bar
             return (int) Math.ceil(Strategy.intOr(params, "windowDays", 60) * 1.6) + 30;
         }
-        return GRID_WINDOW_DAYS;
+        if (AbstractGridStrategy.isGridType(strategyType)) {
+            // 网格族：MA 闸门需要约 90 个自然日，与回测预热（warmupDaysOf）保持同一口径
+            int maDays = Math.max(Strategy.intOr(params, "trendMaDays", 60), 60);
+            return (int) Math.ceil(maDays * 1.6) + 30;
+        }
+        return DEFAULT_WINDOW_DAYS;
     }
 
     /** 幂等写入：同 (基金, 策略, 信号日) 已存在则仅更新信号内容，保留已读/已通知标记 */

@@ -49,10 +49,17 @@ public class NotifyController {
         return R.ok();
     }
 
-    /** 发送测试邮件（失败以业务异常返回具体原因） */
+    /**
+     * 发送测试邮件（失败以业务异常返回具体原因）。
+     *
+     * <p>V5.26：请求体可空；带上时按"界面当前填写"测试（改了没保存也能测眼前这套），
+     * 留空/打码字段回退库内已存值，全程不落库。
+     *
+     * @param request 界面当前填写的邮件配置（可为 null）
+     */
     @PostMapping("/test")
-    public R<Void> test() {
-        notifyService.sendTestMail();
+    public R<Void> test(@RequestBody(required = false) MailConfigRequest request) {
+        notifyService.sendTestMail(request);
         return R.ok();
     }
 

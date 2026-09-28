@@ -230,7 +230,7 @@
 
       <el-tab-pane label="策略配置" name="strategies">
         <div class="toolbar">
-          <el-button type="primary" size="small" @click="strategyDialogVisible = true">新增策略</el-button>
+          <el-button type="primary" size="small" @click="openStrategyDialog">新增策略</el-button>
         </div>
         <el-table :data="strategies" border size="small">
           <el-table-column label="策略" min-width="150">
@@ -263,7 +263,7 @@
           <template #header>发起回测</template>
           <el-form inline>
             <el-form-item label="策略">
-              <el-select v-model="backtestForm.strategyType" style="width: 150px">
+              <el-select v-model="backtestForm.strategyType" style="width: 150px" @change="handleBacktestTypeChange">
                 <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
               </el-select>
             </el-form-item>
@@ -277,7 +277,13 @@
               <el-input-number v-model="backtestForm.initialCapital" :min="1000" :controls="false" style="width: 140px" />
             </el-form-item>
           </el-form>
-          <StrategyParamForm v-model="backtestForm.params" :type="backtestForm.strategyType" />
+          <!-- :key 强制重挂载：参数表单只在首次挂载时读 modelValue，不换 key 时外部回填不会显示 -->
+          <StrategyParamForm
+            :key="`bt-${backtestForm.strategyType}-${paramFormKey}`"
+            v-model="backtestForm.params"
+            :type="backtestForm.strategyType"
+          />
+          <div v-if="prefillHint" class="prefill-hint">{{ prefillHint }}</div>
           <el-button type="primary" :loading="backtestRunning" @click="handleBacktest">开始回测</el-button>
         </el-card>
         <!-- 列宽口径：数字列 min-width 均分富余宽度；失败原因等长文本列用省略号 + 悬浮全显 -->
@@ -370,7 +376,12 @@
             <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
           </el-select>
         </el-form-item>
-        <StrategyParamForm v-model="newStrategyParams" :type="newStrategyType" />
+        <StrategyParamForm
+          :key="`new-${newStrategyType}-${paramFormKey}`"
+          v-model="newStrategyParams"
+          :type="newStrategyType"
+        />
+        <div v-if="prefillHint" class="prefill-hint">{{ prefillHint }}</div>
       </el-form>
       <template #footer>
         <el-button @click="strategyDialogVisible = false">取消</el-button>
@@ -1372,18 +1383,56 @@ const strategyDetailItems = ref<{ label: string; value: string }[]>([])
 
 /** 各策略参数的中文名（与 StrategyParamForm 的界面名一致） */
 const PARAM_LABELS: Record<string, Record<string, string>> = {
+  // 已下线策略：仅保留标签让历史回测/旧配置还能读懂（V5.28 从平台移除，不再可选、不可回测）
   GRID: {
-    mode: '网格模式', upper: '网格上沿', lower: '网格下沿', grids: '格数',
-    sharePerGrid: '每格份额', basePosition: '底仓份额', anchorPrice: '锚点价'
+    mode: '网格模式(已下线)', upper: '网格上沿(已下线)', lower: '网格下沿(已下线)', grids: '格数(已下线)',
+    sharePerGrid: '每格份额(已下线)', basePosition: '底仓份额(已下线)', anchorPrice: '锚点价(已下线)'
   },
   VAL_PERCENTILE: {
-    lowPct: '低估阈值%', highPct: '高估阈值%', steps: '分档数',
-    windowYears: '回看窗口(年)', sharePerStep: '每档份额', basePosition: '底仓份额'
+    lowPct: '低估阈值%(已下线)', highPct: '高估阈值%(已下线)', steps: '分档数(已下线)',
+    windowYears: '回看窗口(年)(已下线)', sharePerStep: '每档份额(已下线)', basePosition: '底仓份额(已下线)'
   },
   OSC_UP: {
     initialShare: '初始仓位份额', baseShare: '底仓份额', fullShare: '满仓份额', windowDays: 'K线天数',
     riseReducePct: '上涨减仓%', fallAddPct: '下跌加仓%',
-    buyShare: '买入份额', sellShare: '卖出份额'
+    buyShare: '买入份额', sellShare: '卖出份额',
+    sizingStepPct: '每档份额增减%', sizingBase: '档位基准', maxSizingMultiple: '单笔最大倍数'
+  },
+  DIV_GRID: {
+    mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
+    perGridMode: '每格单位', sharePerGrid: '每格份额', amountPerGrid: '每格金额',
+    baseShare: '底仓份额', fullShare: '满仓份额', initialShare: '初始仓位份额',
+    breakoutMode: '涨破上沿', breakdownMode: '跌破下沿', maxGridsPerBar: '单根最多成交格数',
+    trendMaDays: '趋势均线天数', premiumBuyMaxPct: '溢价率买入上限%',
+    premiumStaleDays: '溢价率容忍滞后(天)', backtestPremiumPct: '回测假设溢价率%',
+    peBuyMax: 'PE 买入上限', peBuyMin: 'PE 买入下限', peBoostMultiplier: '低估买入倍数'
+  },
+  NDX_GRID: {
+    mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
+    perGridMode: '每格单位', sharePerGrid: '每格份额', amountPerGrid: '每格金额',
+    baseShare: '底仓份额', fullShare: '满仓份额', initialShare: '初始仓位份额',
+    breakoutMode: '涨破上沿', breakdownMode: '跌破下沿', maxGridsPerBar: '单根最多成交格数',
+    trendMaDays: '趋势均线天数', premiumBuyMaxPct: '溢价率买入上限%',
+    premiumStaleDays: '溢价率容忍滞后(天)', backtestPremiumPct: '回测假设溢价率%',
+    peBuyMax: 'PE 买入上限', peBuyMin: 'PE 买入下限', peBoostMultiplier: '低估买入倍数'
+  },
+  PYRAMID_GRID: {
+    mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
+    perGridMode: '每格单位', sharePerGrid: '每格份额', amountPerGrid: '每格金额', pyramidStep: '每格增减',
+    baseShare: '底仓份额', fullShare: '满仓份额', initialShare: '初始仓位份额',
+    breakoutMode: '涨破上沿', breakdownMode: '跌破下沿', maxGridsPerBar: '单根最多成交格数',
+    trendMaDays: '趋势均线天数', premiumBuyMaxPct: '溢价率买入上限%',
+    premiumStaleDays: '溢价率容忍滞后(天)', backtestPremiumPct: '回测假设溢价率%',
+    peBuyMax: 'PE 买入上限', peBuyMin: 'PE 买入下限', peBoostMultiplier: '低估买入倍数'
+  },
+  INV_PYRAMID_GRID: {
+    mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
+    perGridMode: '每格单位', sharePerGrid: '每格份额', amountPerGrid: '每格金额', pyramidStep: '每格增减',
+    baseShare: '底仓份额', fullShare: '满仓份额', initialShare: '初始仓位份额',
+    breakoutMode: '涨破上沿', breakdownMode: '跌破下沿', maxGridsPerBar: '单根最多成交格数',
+    trendMaDays: '趋势均线天数', premiumBuyMaxPct: '溢价率买入上限%',
+    premiumStaleDays: '溢价率容忍滞后(天)', backtestPremiumPct: '回测假设溢价率%',
+    peBuyMax: 'PE 买入上限', peBuyMin: 'PE 买入下限', peBoostMultiplier: '低估买入倍数'
   }
 }
 
@@ -1399,6 +1448,21 @@ function orderByLabels(parsed: Record<string, unknown>, labels: Record<string, s
   })
 }
 
+/** 枚举型参数的展示文案（列表摘要与详情弹框共用）：值 → 中文，未命中回退原值 */
+const ENUM_LABELS: Record<string, Record<string, string>> = {
+  mode: { arithmetic: '等差', geometric: '等比' },
+  perGridMode: { share: '按份额', amount: '按金额' },
+  breakoutMode: { shift: '区间上移', hold: '保留底仓不动', clear: '清到只剩底仓' },
+  breakdownMode: { hold: '买 1 格后观望', buy: '区间下方继续按格买入' },
+  sizingBase: { anchor: '锚点窗口', window: 'K线窗口' }
+}
+
+/** 参数值展示：枚举值翻中文，其余原样 */
+function displayValue(key: string, value: unknown): string {
+  const text = String(value)
+  return ENUM_LABELS[key]?.[text] ?? text
+}
+
 /** 参数摘要（策略配置列表用）：中文标签=值 逗号拼接；解析失败回退原始 JSON */
 function paramSummaryOf(row: StrategyConfig): string {
   const labels = PARAM_LABELS[row.strategyType] ?? {}
@@ -1408,10 +1472,7 @@ function paramSummaryOf(row: StrategyConfig): string {
   } catch {
     return row.params
   }
-  const parts = orderByLabels(parsed, labels).map(([key, value]) => {
-    const text = key === 'mode' ? (value === 'geometric' ? '等比' : '等差') : String(value)
-    return `${labels[key] ?? key}=${text}`
-  })
+  const parts = orderByLabels(parsed, labels).map(([key, value]) => `${labels[key] ?? key}=${displayValue(key, value)}`)
   return parts.join('，')
 }
 
@@ -1432,7 +1493,7 @@ function openParamDetail(row: StrategyConfig) {
   }
   strategyDetailItems.value = orderByLabels(parsed, labels).map(([key, value]: [string, unknown]) => ({
     label: labels[key] ?? key,
-    value: key === 'mode' ? (value === 'geometric' ? '等比' : '等差') : String(value)
+    value: displayValue(key, value)
   }))
   strategyDetailVisible.value = true
 }
@@ -1448,13 +1509,10 @@ function openStrategyDetail(row: BacktestRecord) {
     parsed = {}
   }
   strategyDetailItems.value = orderByLabels(parsed, labels)
-    .map(([key, value]: [string, unknown]) => {
-      let valueText = String(value)
-      if (key === 'mode') {
-        valueText = value === 'geometric' ? '等比' : '等差'
-      }
-      return { label: labels[key] ?? key, value: valueText }
-    })
+    .map(([key, value]: [string, unknown]) => ({
+      label: labels[key] ?? key,
+      value: displayValue(key, value)
+    }))
   strategyDetailVisible.value = true
 }
 
@@ -1474,10 +1532,16 @@ function positionClassOf(row: BacktestRecord): string {
   return row.positionReturnPct >= 0 ? 'text-up' : 'text-down'
 }
 const strategyDialogVisible = ref(false)
-const newStrategyType = ref('GRID')
+// 策略类型不再硬编码（旧版写死 'GRID'，该策略 V5.28 已下线、会显示成空）：进页按
+// 「本基金已配置的策略 → 本基金最近一次回测的策略 → 注册表里的第一个策略」依次兜底
+const newStrategyType = ref('')
 const newStrategyParams = ref<Record<string, unknown>>({})
+/** 参数表单的强制重挂载计数：回填参数后 +1，让表单重新挂载并读到新的 modelValue */
+const paramFormKey = ref(0)
+/** 回填提示（如「已回填…上次回测的参数」），没有回填时为空 */
+const prefillHint = ref('')
 const backtestForm = reactive({
-  strategyType: 'GRID',
+  strategyType: '',
   params: {} as Record<string, unknown>,
   startDate: '',
   endDate: '',
@@ -1496,8 +1560,88 @@ async function loadStrategies() {
   }
 }
 
-async function loadStrategyTypes() {
-  strategyTypeList.value = await strategyTypes()
+/**
+ * 取本基金「最近一次该策略的回测参数」（回测列表按 id 倒序，取第一条同类型记录）。
+ * 没有历史返回 null，由参数表单填默认值。
+ */
+async function lastBacktestParams(type: string): Promise<{ params: Record<string, unknown>; date: string } | null> {
+  if (!type) {
+    return null
+  }
+  try {
+    const result = await pageBacktest(code, 1, 20)
+    const hit = result.records.find((r) => r.strategyType === type)
+    if (!hit) {
+      return null
+    }
+    return { params: JSON.parse(hit.params) as Record<string, unknown>, date: hit.endDate }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 按策略回填参数（取不到则清空 → 表单用默认值），强制表单重挂载并给出提示。
+ *
+ * @param type   策略类型
+ * @param target form=发起回测表单，dialog=新增策略弹框
+ */
+async function applyBacktestParams(type: string, target: 'form' | 'dialog') {
+  const hit = await lastBacktestParams(type)
+  if (target === 'form') {
+    backtestForm.params = hit ? { ...hit.params } : {}
+  } else {
+    newStrategyParams.value = hit ? { ...hit.params } : {}
+  }
+  paramFormKey.value += 1
+  prefillHint.value = hit
+    ? `已回填「${strategyNameOf(type)}」上次回测（截至 ${hit.date}）的参数，可直接开始回测或按需修改`
+    : ''
+}
+
+/** 回测表单切换策略：自动回填该策略上次回测的参数 */
+async function handleBacktestTypeChange(type: string) {
+  await applyBacktestParams(type, 'form')
+}
+
+/** 打开新增策略弹框：同样回填该策略上次回测的参数（回测调好的参数可直接建配置） */
+async function openStrategyDialog() {
+  strategyDialogVisible.value = true
+  if (!newStrategyType.value) {
+    newStrategyType.value = defaultStrategyType()
+  }
+  await applyBacktestParams(newStrategyType.value, 'dialog')
+}
+
+/** 默认策略：本基金已配置的 → 最近一次回测的 → 注册表里的第一个 */
+function defaultStrategyType(): string {
+  if (strategies.value.length > 0) {
+    return strategies.value[0].strategyType
+  }
+  const lastType = backtestRecords.value[0]?.strategyType
+  if (lastType) {
+    return lastType
+  }
+  return strategyTypeList.value[0]?.type ?? ''
+}
+
+/**
+ * 进页初始化：先取已配置策略 → 再拉策略类型与回测记录 → 定默认策略（不再硬编码 GRID）→
+ * 该策略没有已保存配置时，回填本基金上次该策略的回测参数。
+ */
+async function initBacktestForm() {
+  await loadStrategies()
+  const [types, records] = await Promise.all([strategyTypes(), pageBacktest(code, 1, 20)])
+  strategyTypeList.value = types
+  backtestRecords.value = records.records
+  if (backtestForm.strategyType) {
+    return
+  }
+  backtestForm.strategyType = defaultStrategyType()
+  const configured = strategies.value.some((s) => s.strategyType === backtestForm.strategyType)
+  if (!configured) {
+    await applyBacktestParams(backtestForm.strategyType, 'form')
+  }
 }
 
 async function handleSaveStrategy() {
@@ -1559,13 +1703,19 @@ onMounted(() => {
   loadDetail().then(() => loadChart())
   loadValuation()
   loadTrades()
-  loadStrategyTypes()
-  loadStrategies()
+  // 策略类型/默认策略/参数回填统一在 initBacktestForm 里按顺序完成（避免默认值落空）
+  initBacktestForm()
   loadBacktests()
 })
 </script>
 
 <style scoped>
+/* 回填提示：一行小字，说明参数来自哪一次回测 */
+.prefill-hint {
+  margin: var(--q-space-1) 0 var(--q-space-2);
+  font-size: var(--q-font-xs);
+  color: var(--q-text-secondary);
+}
 .strategy-name {
   font-weight: 600;
   margin-right: 6px;

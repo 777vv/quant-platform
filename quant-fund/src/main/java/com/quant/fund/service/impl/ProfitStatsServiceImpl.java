@@ -359,7 +359,7 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
             items = eastmoneyClient.fetchEtfKlineFast(BENCH_MARKET, BENCH_CODE, from, LocalDate.now());
         } catch (Exception e) {
             redisTemplate.opsForValue().set(BENCH_DEGRADED_KEY, "1", BENCH_DEGRADED_TTL);
-            LOGGER.warn("沪深300基准行情拉取失败（10 分钟内不再重试），曲线将不含基准线: {}", e.getMessage());
+            LOGGER.error("沪深300基准行情拉取失败（10 分钟内不再重试），曲线将不含基准线", e);
             return new TreeMap<>();
         }
         if (items.isEmpty()) {

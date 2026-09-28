@@ -115,7 +115,8 @@ public class AiModelConfigServiceImpl implements AiModelConfigService {
         boolean configured = hasKey && notBlank(config.getBaseUrl()) && notBlank(config.getModel());
         boolean active = providerEnum.name().equalsIgnoreCase(activeProviderCode());
         String hint = configured ? null
-                : "尚未配置 " + providerEnum.getDisplayName() + "：请填写 Token 并选择模型（或点\"拉取模型列表\"）后保存";
+                // 不带厂商名（V5.26 用户口径）：未配置就是"尚未配置AI模型"，用哪家厂商属于配置页的事
+                : "尚未配置AI模型：请在【平台配置 → AI 模型配置】填写 Token 并选择模型（或点\"拉取模型列表\"）后保存";
         return new AiModelConfigVO(providerEnum.name(), providerEnum.getDisplayName(), config.getBaseUrl(),
                 config.getModel(), hasKey, mask(config.getApiKey()), configured, active,
                 config.getInputPrice(), config.getCacheInputPrice(), config.getOutputPrice(),

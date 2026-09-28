@@ -28,6 +28,7 @@ import com.quant.fund.mapper.FundEtfKlineMapper;
 import com.quant.fund.mapper.FundNavMapper;
 import com.quant.fund.mapper.IndexValuationMapper;
 import com.quant.fund.mapper.SyncLogMapper;
+import com.quant.fund.service.DividendService;
 import com.quant.fund.service.ImportService;
 import com.quant.fund.service.TaskProgressStore;
 import org.slf4j.Logger;
@@ -37,8 +38,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 基金数据导入服务实现（FR3）：校验 -> 异步导入 ETF日K(前复权)/场外净值(含复权净值)/跟踪指数估值。
+ * 基金数据导入服务实现（FR3）：校验 -> 异步导入 ETF日K(前复权+未复权)/场外净值(含复权净值)/分红记录/跟踪指数估值。
  * 说明：delete+批量插入 用 TransactionTemplate 保证原子（@Async 自调用不走代理）。
+ * 覆盖语义（V5.26 用户口径）：导入对已存在的同类数据一律**整段覆盖**——日K/净值/估值按"先删后插"，
+ * 分红由 DividendService.refresh 的"先删后插"覆盖，保证重导一次即与数据源对齐。
  */
 @Service
 public class ImportServiceImpl implements ImportService {
@@ -59,6 +62,9 @@ public class ImportServiceImpl implements ImportService {
 
     private final IndexValuationMapper valuationMapper;
 
+    /** 分红记录（股息率与行情图除息点位 q 标记的数据源；V5.26 起纳入导入） */
+    private final DividendService dividendService;
+
     private final SyncLogMapper syncLogMapper;
 
     private final TaskProgressStore progressStore;
@@ -66,13 +72,15 @@ public class ImportServiceImpl implements ImportService {
     private final TransactionTemplate transactionTemplate;
 
     public ImportServiceImpl(EastmoneyClient client, FundBasicMapper fundBasicMapper, FundEtfKlineMapper klineMapper,
-                             FundNavMapper navMapper, IndexValuationMapper valuationMapper, SyncLogMapper syncLogMapper,
+                             FundNavMapper navMapper, IndexValuationMapper valuationMapper,
+                             DividendService dividendService, SyncLogMapper syncLogMapper,
                              TaskProgressStore progressStore, TransactionTemplate transactionTemplate) {
         this.client = client;
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
         this.navMapper = navMapper;
         this.valuationMapper = valuationMapper;
+        this.dividendService = dividendService;
         this.syncLogMapper = syncLogMapper;
         this.progressStore = progressStore;
         this.transactionTemplate = transactionTemplate;
@@ -137,10 +145,20 @@ public class ImportServiceImpl implements ImportService {
             } else {
                 maxDate = importOtcNav(taskId, code, beg, today);
             }
+            // 分红记录（V5.26 纳入导入）：股息率(TTM/单次)与行情图除息点位 q 标记的数据源。
+            // refresh 自带"先删后插"的覆盖语义；失败只降级不炸导入（装饰性数据，下次同步自动重试）。
+            importDividends(taskId, code);
             if (check.indexCode() != null) {
                 progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.RUNNING,
                         "同步跟踪指数估值: " + check.indexName(), 0, 0, null));
-                importValuation(check.indexCode(), historyBegin(null));
+                // 估值同为装饰性数据：失败/数据源无该指数估值都不应让导入整体失败（V5.26 前会炸掉整个导入）
+                try {
+                    importValuation(check.indexCode(), historyBegin(null));
+                } catch (Exception e) {
+                    LOGGER.error("指数[{}]估值导入失败（不影响本次导入，20:30 任务会自动补）", check.indexCode(), e);
+                    progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.RUNNING,
+                            "指数估值暂不可用（不影响行情数据）", 0, 0, null));
+                }
             }
             upsertFundBasic(check, maxDate);
             writeLog(SyncTypeEnum.HISTORY, code, true, 0, null, startAt);
@@ -150,6 +168,22 @@ public class ImportServiceImpl implements ImportService {
             LOGGER.error("基金[{}]历史导入失败", code, e);
             writeLog(SyncTypeEnum.HISTORY, code, false, 0, e.getMessage(), startAt);
             progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.FAILED, "导入失败", 0, 0, e.getMessage()));
+        }
+    }
+
+    /**
+     * 导入时同步分红记录（V5.26）：股息率与除息点位在导入完成时即可用，不必等下一次档案刷新。
+     * DividendService.refresh 内部为"先删后插"覆盖；抓取失败（无分红/封堵）只记进度与日志。
+     */
+    private void importDividends(String taskId, String code) {
+        progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.RUNNING, "同步分红记录（股息率/除息点位）", 0, 0, null));
+        try {
+            int count = dividendService.refresh(code);
+            LOGGER.info("基金[{}]分红记录导入 {} 条", code, count);
+        } catch (Exception e) {
+            LOGGER.error("基金[{}]分红记录导入失败（不影响行情数据，下次同步自动重试）", code, e);
+            progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.RUNNING,
+                    "分红记录暂不可用（不影响行情数据）", 0, 0, null));
         }
     }
 
@@ -169,6 +203,10 @@ public class ImportServiceImpl implements ImportService {
             row.setAmount(item.amount());
             return row;
         }).toList();
+        // 未复权收盘价（V5.26 纳入导入）：历史股息率的分母。导入时就补齐，股息率立即可看，
+        // 不必等 15:30 全量覆盖任务；拉取失败只降级（前端按"--"处理），不影响日K导入。
+        progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.RUNNING, "补齐未复权收盘价（股息率分母）", 0, 0, null));
+        fillUnadjustedClose(check.code(), market, beg, entities);
         progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.RUNNING, "写入日K",
                 entities.size(), entities.size(), null));
         transactionTemplate.executeWithoutResult(status -> {
@@ -176,6 +214,27 @@ public class ImportServiceImpl implements ImportService {
             Db.saveBatch(entities, 500);
         });
         return entities.isEmpty() ? null : entities.get(entities.size() - 1).getTradeDate();
+    }
+
+    /**
+     * 批量补齐未复权收盘价（与 SyncServiceImpl.fillUnadjustedClose 同口径）：前复权价把分红从价格里抹掉，
+     * 直接当股息率分母会系统性高估历史股息率，故额外拉一次 fqt=0 按交易日对齐写入。
+     * 失败只记日志留空（前端按缺失"--"处理），**绝不能让装饰性数据把导入带崩**。
+     */
+    private void fillUnadjustedClose(String fundCode, int market, LocalDate beg, List<FundEtfKline> entities) {
+        try {
+            java.util.Map<LocalDate, BigDecimal> unadjusted = client
+                    .fetchEtfKlineUnadjusted(market, fundCode, beg, LocalDate.now())
+                    .stream()
+                    .collect(java.util.stream.Collectors.toMap(EastmoneyClient.KlineItem::date,
+                            EastmoneyClient.KlineItem::close, (first, second) -> first));
+            if (unadjusted.isEmpty()) {
+                return;
+            }
+            entities.forEach(entity -> entity.setUnadjClose(unadjusted.get(entity.getTradeDate())));
+        } catch (Exception e) {
+            LOGGER.error("基金[{}]未复权价拉取失败（历史股息率暂不可用，下次同步重试）", fundCode, e);
+        }
     }
 
     private LocalDate importOtcNav(String taskId, String code, LocalDate beg, LocalDate today) {

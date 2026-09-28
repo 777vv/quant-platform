@@ -46,9 +46,12 @@ export function saveMailConfig(data: MailConfigRequest) {
   return put<void>('/notify/mail/config', data)
 }
 
-/** 发送测试邮件（失败在界面提示原因） */
-export function testMail() {
-  return post<void>('/notify/mail/test')
+/**
+ * 发送测试邮件（失败在界面提示原因）。
+ * V5.26：可带界面当前填写的配置——改了没保存也能测眼前这套；留空/打码字段后端自动沿用已存值，不落库。
+ */
+export function testMail(data?: MailConfigRequest) {
+  return post<void>('/notify/mail/test', data)
 }
 
 
@@ -90,7 +93,10 @@ export function saveWecomConfig(data: WecomConfigRequest) {
   return put<WecomConfigVO>('/notify/wecom/config', data)
 }
 
-/** 发送微信测试消息（失败抛业务异常，界面提示原因） */
-export function testWecom() {
-  return post<void>('/notify/wecom/test')
+/**
+ * 发送微信测试消息（失败抛业务异常，界面提示原因）。
+ * V5.26：可带界面当前填写的配置——改了没保存也能测眼前这套；留空/打码字段后端自动沿用已存值，不落库。
+ */
+export function testWecom(data?: WecomConfigRequest) {
+  return post<void>('/notify/wecom/test', data)
 }

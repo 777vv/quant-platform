@@ -58,7 +58,7 @@ public class LockUtils {
         try {
             lock.unlock();
         } catch (Exception e) {
-            LOGGER.warn("释放锁异常（可能已过租约自动释放）: {}", e.getMessage());
+            LOGGER.error("释放锁[{}]异常（可能已过租约自动释放）", lock, e);
         }
     }
 }

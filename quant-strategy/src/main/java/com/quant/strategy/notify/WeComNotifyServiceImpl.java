@@ -117,17 +117,27 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
     }
 
     @Override
-    public void testSend() {
+    public void testSend(WeComConfigRequest request) {
         // 测试发送**不要求开启开关**（与邮件卡同一口径）：关闭状态下也应能先验证凭据是否填对，
         // 否则用户必须先开开关才能测试，容易"开着开关却发不出去"
-        SysWecomConfig row = loadConfig();
+        SysWecomConfig stored = loadConfig();
+        // 按"界面当前填写"测试（V5.26 用户口径：表单改了没保存，测的也应是眼前这套）；
+        // 打码回显（ww***）与留空回退已存值，全程不落库
+        SysWecomConfig row = new SysWecomConfig();
+        row.setId(stored.getId());
+        row.setEnabled(stored.getEnabled());
+        row.setCorpid(keepIfMasked(request == null ? null : request.corpid(), stored.getCorpid()));
+        row.setAgentId(keepIfMasked(request == null ? null : request.agentId(), stored.getAgentId()));
+        row.setSecret(keepIfMasked(request == null ? null : request.secret(), stored.getSecret()));
+        row.setTouser(firstText(request == null ? null : request.touser(),
+                stored.getTouser() == null || stored.getTouser().isBlank() ? "@all" : stored.getTouser()));
         if (!isConfigured(row)) {
             throw new BizException("微信通知配置不完整：请先填写企业 ID、AgentId 与 Secret 再测试");
         }
         String content = "【个人量化投资助手】微信通知测试成功（" + DATE_FMT.format(LocalDate.now()) + "）。"
                 + "后续交易信号将推送到此会话。";
         sendText(row, content);
-        LOGGER.info("微信测试消息发送成功：touser={}", row.getTouser());
+        LOGGER.info("微信测试消息发送成功：touser={}（按界面当前填写测试，未改变已存配置）", row.getTouser());
     }
 
     @Override
@@ -151,7 +161,7 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
             LOGGER.info("微信信号推送成功：{} 条买卖信号", actionable.size());
         } catch (Exception e) {
             // 微信通道失败只记日志：绝不影响邮件通道与信号计算
-            LOGGER.warn("微信信号推送失败（不影响邮件）: {}", e.getMessage());
+            LOGGER.error("微信信号推送失败（不影响邮件）", e);
         }
     }
 
@@ -273,6 +283,16 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    /** 返回第一个非空白的值（全空返回 null）；测试发送合并"界面填写 > 库内已存"时用 */
+    private String firstText(String... candidates) {
+        for (String candidate : candidates) {
+            if (candidate != null && !candidate.isBlank()) {
+                return candidate.trim();
+            }
+        }
+        return null;
     }
 
     /**

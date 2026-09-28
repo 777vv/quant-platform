@@ -351,7 +351,7 @@ public class SyncServiceImpl implements SyncService {
                 succeeded++;
             } catch (Exception e) {
                 failed++;
-                LOGGER.warn("指数[{}]走势采样拉取失败: {}", item.getSecid(), e.getMessage());
+                LOGGER.error("指数[{}]走势采样拉取失败", item.getSecid(), e);
             }
         }
         if (failed > 0) {
@@ -369,7 +369,7 @@ public class SyncServiceImpl implements SyncService {
             try {
                 refreshIndexQuotes();
             } catch (Exception e) {
-                LOGGER.warn("全球指数行情首次拉取失败: {}", e.getMessage());
+                LOGGER.error("全球指数行情首次拉取失败", e);
                 redisTemplate.opsForValue().set(CACHE_INDEX_DEGRADED, "1", Duration.ofMinutes(10));
             }
         }
@@ -466,7 +466,7 @@ public class SyncServiceImpl implements SyncService {
             // 规模历史随每次成功的档案刷新落一行（幂等，同日覆盖），供基金规模走势副图使用
             scaleHistoryService.record(fund.getFundCode(), profile.fundScale(), profile.fundScaleDate());
         } catch (Exception e) {
-            LOGGER.warn("基金[{}]档案（规模/费率）刷新失败: {}", fund.getFundCode(), e.getMessage());
+            LOGGER.error("基金[{}]档案（规模/费率）刷新失败", fund.getFundCode(), e);
         }
     }
 
@@ -492,8 +492,8 @@ public class SyncServiceImpl implements SyncService {
                     .set(FundBasic::getDividendSyncDate, LocalDate.now()));
             fund.setDividendSyncDate(LocalDate.now());
         } catch (Exception e) {
-            LOGGER.warn("基金[{}]分红记录刷新失败（股息率可能缺失/滞后，下次同步自动重试）: {}",
-                    fund.getFundCode(), e.getMessage());
+            LOGGER.error("基金[{}]分红记录刷新失败（股息率可能缺失/滞后，下次同步自动重试）",
+                    fund.getFundCode(), e);
         }
     }
 
@@ -528,7 +528,7 @@ public class SyncServiceImpl implements SyncService {
             fund.setPremiumRate(premium);
             fund.setPremiumDate(latest.date());
         } catch (Exception e) {
-            LOGGER.warn("基金[{}]溢价率计算失败: {}", fund.getFundCode(), e.getMessage());
+            LOGGER.error("基金[{}]溢价率计算失败", fund.getFundCode(), e);
         }
     }
 
@@ -549,11 +549,52 @@ public class SyncServiceImpl implements SyncService {
     private int syncFundData(FundBasic fund, boolean forceProfile) {
         try {
             if (fund.getFundType() != null && fund.getFundType() == FundTypeEnum.ETF.getCode()) {
-                return syncEtfIncremental(fund);
+                int added = syncEtfIncremental(fund);
+                if (forceProfile) {
+                    // 手动同步（V5.26）：顺带回填缺失的未复权收盘价（股息率分母），
+                    // 让本版之前导入、unadj_close 有缺口的老基金在点一次同步后自愈
+                    backfillUnadjustedClose(fund);
+                }
+                return added;
             }
             return syncOtcIncremental(fund);
         } finally {
             refreshBasicData(fund, forceProfile);
+        }
+    }
+
+    /**
+     * 回填缺失的未复权收盘价（只补 unadj_close 为空的行，一次区间请求）。
+     * 失败仅记日志（股息率继续显示"--"，下次同步重试），不影响主同步流程。
+     */
+    private void backfillUnadjustedClose(FundBasic fund) {
+        List<FundEtfKline> missing = klineMapper.selectList(new LambdaQueryWrapper<FundEtfKline>()
+                .eq(FundEtfKline::getFundCode, fund.getFundCode())
+                .isNull(FundEtfKline::getUnadjClose));
+        if (missing.isEmpty()) {
+            return;
+        }
+        try {
+            int market = "SH".equals(fund.getMarket()) ? 1 : 0;
+            Map<LocalDate, BigDecimal> unadjusted = client
+                    .fetchEtfKlineUnadjusted(market, fund.getFundCode(), missing.get(0).getTradeDate(), LocalDate.now())
+                    .stream()
+                    .collect(Collectors.toMap(EastmoneyClient.KlineItem::date, EastmoneyClient.KlineItem::close,
+                            (first, second) -> first));
+            int fixed = 0;
+            for (FundEtfKline row : missing) {
+                BigDecimal close = unadjusted.get(row.getTradeDate());
+                if (close != null) {
+                    row.setUnadjClose(close);
+                    fixed++;
+                }
+            }
+            if (fixed > 0) {
+                transactionTemplate.executeWithoutResult(status -> Db.updateBatchById(missing, 500));
+                LOGGER.info("基金[{}]回填未复权收盘价 {} 行（股息率分母）", fund.getFundCode(), fixed);
+            }
+        } catch (Exception e) {
+            LOGGER.error("基金[{}]未复权价回填失败（下次同步重试）", fund.getFundCode(), e);
         }
     }
 
@@ -590,8 +631,8 @@ public class SyncServiceImpl implements SyncService {
             }
             entities.forEach(entity -> entity.setUnadjClose(unadjusted.get(entity.getTradeDate())));
         } catch (Exception e) {
-            LOGGER.warn("基金[{}]未复权价拉取失败（历史股息率将暂不可用，下次同步重试）: {}",
-                    fund.getFundCode(), e.getMessage());
+            LOGGER.error("基金[{}]未复权价拉取失败（历史股息率将暂不可用，下次同步重试）",
+                    fund.getFundCode(), e);
         }
     }
 
@@ -698,8 +739,8 @@ public class SyncServiceImpl implements SyncService {
     @Override
     public void syncWatchFundsIntraday() {
         LocalTime now = LocalTime.now();
-        boolean morning = !now.isBefore(LocalTime.of(9, 30)) && !now.isAfter(LocalTime.of(11, 30));
-        boolean afternoon = !now.isBefore(LocalTime.of(13, 0)) && !now.isAfter(LocalTime.of(15, 0));
+        boolean morning = !now.isBefore(LocalTime.of(9, 31)) && !now.isAfter(LocalTime.of(11, 35));
+        boolean afternoon = !now.isBefore(LocalTime.of(13, 01)) && !now.isAfter(LocalTime.of(15, 5));
         if (!morning && !afternoon) {
             return;
         }
@@ -717,7 +758,7 @@ public class SyncServiceImpl implements SyncService {
                     syncFundData(fund, false);
                     ok++;
                 } catch (Exception e) {
-                    LOGGER.warn("盘中同步[{}]失败: {}", fund.getFundCode(), e.getMessage());
+                    LOGGER.error("盘中同步[{}]失败", fund.getFundCode(), e);
                     errors.add(fund.getFundCode() + ":" + e.getMessage());
                 }
             }
@@ -803,7 +844,7 @@ public class SyncServiceImpl implements SyncService {
                     refreshPremiumRate(fund);
                     ok++;
                 } catch (Exception e) {
-                    LOGGER.warn("档案刷新[{}]失败: {}", fund.getFundCode(), e.getMessage());
+                    LOGGER.error("档案刷新[{}]失败", fund.getFundCode(), e);
                     errors.add(fund.getFundCode() + ":" + e.getMessage());
                 }
             }

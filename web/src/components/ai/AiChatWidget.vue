@@ -80,7 +80,7 @@
               type="warning"
               :closable="false"
               show-icon
-              :title="config.extras.hint || '尚未配置 API Key'"
+              :title="config.extras.hint || '尚未配置AI模型'"
             />
           </div>
 

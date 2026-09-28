@@ -76,7 +76,7 @@ public class BacktestEngine {
                         pending = action;
                     }
                 } catch (Exception e) {
-                    LOGGER.warn("策略决策异常(index={}): {}", i, e.getMessage());
+                    LOGGER.error("策略决策异常(index={})", i, e);
                 }
             }
             // 3) 收盘估值与基准（起始日收盘全仓买入持有）

@@ -23,7 +23,7 @@ public class SaTokenExceptionHandler {
 
     @ExceptionHandler(NotLoginException.class)
     public R<Void> handleNotLogin(NotLoginException e) {
-        LOGGER.warn("未登录访问: {}", e.getMessage());
+        LOGGER.error("未登录访问: {}", e.getMessage());
         return R.fail(ResultCodeEnum.UNAUTHORIZED);
     }
 

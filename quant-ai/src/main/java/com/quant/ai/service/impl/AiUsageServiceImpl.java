@@ -113,7 +113,7 @@ public class AiUsageServiceImpl implements AiUsageService {
                     row.getCost(), row.getBiz(), row.getModel());
         } catch (Exception e) {
             // 记账是旁路：写失败只记日志，绝不让对话因此失败
-            LOGGER.warn("AI 用量流水写入失败（不影响本次对话）：{}", e.getMessage());
+            LOGGER.error("AI 用量流水写入失败（不影响本次对话）", e);
         }
     }
 

@@ -28,8 +28,13 @@ public interface WeComNotifyService {
 
     /**
      * 发送微信测试消息（平台配置"发送测试"按钮），失败抛业务异常并在界面提示原因。
+     *
+     * <p>V5.26：按"界面当前填写"测试而非只测库内已存配置——表单改了还没保存时，
+     * 测试的也应是用户眼前这套参数；留空或打码的字段回退库内已存值，全程不落库。
+     *
+     * @param request 界面当前填写的配置（可为 null = 纯按已存配置测试）
      */
-    void testSend();
+    void testSend(WeComConfigRequest request);
 
     /**
      * 推送当日交易信号到微信（异步，失败只记日志——微信通道绝不影响邮件通道）：

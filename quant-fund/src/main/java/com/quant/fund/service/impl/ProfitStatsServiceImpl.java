@@ -347,7 +347,7 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         }
         // 已知数据源处于封堵窗口：直接返回空基准，别让每次打开仪表盘都白等一次拉取
         if ("1".equals(redisTemplate.opsForValue().get(BENCH_DEGRADED_KEY))) {
-            LOGGER.debug("基准处于降级窗口，本轮跳过拉取");
+            LOGGER.info("基准处于降级窗口，本轮跳过拉取");
             return new TreeMap<>();
         }
         List<EastmoneyClient.KlineItem> items;

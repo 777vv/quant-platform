@@ -1,11 +1,5 @@
 package com.quant.fund.service.impl;
 
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.quant.fund.entity.MarketHoliday;
 import com.quant.fund.mapper.MarketHolidayMapper;
@@ -14,6 +8,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 交易日判定实现（V5.24）：周末 + 休市名单（market_holiday）→ 非交易日。
@@ -25,17 +25,23 @@ import org.springframework.stereotype.Service;
 @Service
 public class TradingCalendarServiceImpl implements TradingCalendarService {
 
-    /** 名单来源：平台盘面自判（与 schema.sql 注释一致） */
+    /**
+     * 名单来源：平台盘面自判（与 schema.sql 注释一致）
+     */
     private static final String SOURCE_OBSERVED = "observed";
 
-    /** 盘面自判补录时的默认说明 */
+    /**
+     * 盘面自判补录时的默认说明
+     */
     private static final String DEFAULT_OBSERVED_NAME = "盘面自判休市";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(TradingCalendarServiceImpl.class);
 
     private final MarketHolidayMapper holidayMapper;
 
-    /** 已核对过"该年份名单非空"的年份（避免高频任务反复查库；未命中名单的年份才查） */
+    /**
+     * 已核对过"该年份名单非空"的年份（避免高频任务反复查库；未命中名单的年份才查）
+     */
     private final Set<Integer> yearChecked = ConcurrentHashMap.newKeySet();
 
     public TradingCalendarServiceImpl(MarketHolidayMapper holidayMapper) {
@@ -73,7 +79,7 @@ public class TradingCalendarServiceImpl implements TradingCalendarService {
             LOGGER.info("休市名单补录（盘面自判）: {} {}", date, row.getHolidayName());
         } catch (DuplicateKeyException e) {
             // 并发插入同一日期：唯一键拦下即可，语义上等价于"已记录"
-            LOGGER.debug("休市名单已存在（并发补录）: {}", date);
+            LOGGER.error("休市名单已存在（并发补录）: {}", date, e);
         }
     }
 
@@ -85,7 +91,9 @@ public class TradingCalendarServiceImpl implements TradingCalendarService {
                 .orderByAsc(MarketHoliday::getHolidayDate));
     }
 
-    /** 该日期是否在休市名单里 */
+    /**
+     * 该日期是否在休市名单里
+     */
     private boolean exists(LocalDate date) {
         Long count = holidayMapper.selectCount(new LambdaQueryWrapper<MarketHoliday>()
                 .eq(MarketHoliday::getHolidayDate, date));

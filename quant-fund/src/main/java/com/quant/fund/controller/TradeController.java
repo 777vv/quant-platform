@@ -82,7 +82,7 @@ public class TradeController {
             @RequestParam(required = false) Integer tradeType,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
-            @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "20") long size) {
+            @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "10") long size) {
         return R.ok(tradeService.page(fundCode, tradeType, startDate, endDate, page, size));
     }
 

@@ -21,6 +21,7 @@ const router = createRouter({
         { path: 'backtest/:id', name: 'backtestResult', component: () => import('@/views/fund/BacktestResultView.vue'), meta: { title: '回测结果' } },
         { path: 'trades', name: 'trades', component: () => import('@/views/trade/TradeListView.vue'), meta: { title: '交易流水' } },
         { path: 'signals', name: 'signals', component: () => import('@/views/signal/SignalListView.vue'), meta: { title: '信号查询' } },
+        { path: 'market-signals', name: 'marketSignals', component: () => import('@/views/signal/MarketSignalView.vue'), meta: { title: '市场信号' } },
         { path: 'compare', name: 'compare', component: () => import('@/views/compare/FundCompareView.vue'), meta: { title: '基金对比' } },
         { path: 'import', name: 'import', component: () => import('@/views/import/ImportView.vue'), meta: { title: '数据导入' } },
         { path: 'ai-usage', name: 'aiUsage', component: () => import('@/views/ai/AiUsageView.vue'), meta: { title: 'AI用量统计' } },

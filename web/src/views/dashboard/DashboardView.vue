@@ -231,14 +231,14 @@
         <el-card shadow="never" class="board-card">
           <template #header>
             <div class="card-header">
-              <span>最新信号（{{ signalDateLabel }}）</span>
+              <span>最新信号</span>
               <el-button size="small" text :loading="signalsLoading" @click="loadSignals">刷新</el-button>
             </div>
           </template>
-          <el-empty v-if="todaySignals.length === 0" description="暂无信号（每日 21:00 自动计算）" :image-size="60" />
+          <el-empty v-if="latestSignals.length === 0" description="暂无信号（交易日 09:00 自动计算）" :image-size="60" />
           <ul v-else class="signal-list">
             <li
-              v-for="signal in todaySignals"
+              v-for="signal in latestSignals"
               :key="signal.id"
               class="signal-item signal-item--clickable"
               :title="signal.readFlag === 0 ? '点击标记为已读' : '已读'"
@@ -249,8 +249,8 @@
                       size="small" effect="dark">
                 {{ directionName(signal.direction) }}
               </el-tag>
-              <span class="signal-fund">{{ signal.fundCode }}</span>
-              <span class="signal-desc">{{ signal.suggestDesc }}</span>
+              <span class="signal-fund">{{ fundNameOf(signal.fundCode) || signal.fundCode }}</span>
+              <span class="signal-date">{{ signal.signalDate }}</span>
             </li>
           </ul>
         </el-card>
@@ -490,15 +490,8 @@ let timer: number | undefined
 /** 页面隐藏时暂停轮询（FR1：页面隐藏暂停刷新） */
 let paused = false
 
-/** 最新信号日期分组（信号日=行情最后一日，非自然日） */
-const signalDateLabel = computed(() => (signals.value.length ? signals.value[0].signalDate : ''))
-const todaySignals = computed(() => {
-  if (signals.value.length === 0) {
-    return []
-  }
-  const latest = signals.value[0].signalDate
-  return signals.value.filter((signal) => signal.signalDate === latest)
-})
+/** 最新信号（V5.40 用户口径：最近 5 条记录，跨日期取最新；字段只展示 基金/日期/方向） */
+const latestSignals = computed(() => signals.value.slice(0, 5))
 
 /** 每榜最多展示条数（V5.31：5 → 7，两榜合计最多 14 条；自选不足 14 只时按实际数量取） */
 const MOVER_SIZE = 7
@@ -1311,12 +1304,11 @@ onUnmounted(() => {
   text-decoration: underline;
 }
 
-.signal-desc {
-  flex: 1;
-  color: var(--q-text-regular);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.signal-date {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--q-font-xs);
+  color: var(--q-text-muted);
 }
 
 .mover-group-title {

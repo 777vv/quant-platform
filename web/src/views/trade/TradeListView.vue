@@ -122,7 +122,7 @@ const TRADE_TYPES = [
 const records = ref<TradeFlow[]>([])
 const loading = ref(false)
 const page = ref(1)
-const size = ref(20)
+const size = ref(10)
 const total = ref(0)
 
 /** 筛选条件：基金代码 / 交易类型 / 日期区间（yyyy-MM-dd） */

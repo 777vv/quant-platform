@@ -207,7 +207,7 @@ const usageDays = ref<AiUsageDayVO[]>([])
 const usageLogs = ref<AiUsageLogVO[]>([])
 const usageTotal = ref(0)
 const usagePage = ref(1)
-const usageSize = ref(20)
+const usageSize = ref(10)
 const usageDate = ref('')
 const loadingUsage = ref(false)
 

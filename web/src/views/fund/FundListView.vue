@@ -286,7 +286,7 @@ const keyword = ref('')
 const watchPage = ref<WatchItemVO[]>([])
 /** 自选表分页状态 */
 const watchPageNo = ref(1)
-const watchPageSize = ref(20)
+const watchPageSize = ref(10)
 const watchTotal = ref(0)
 /** 自选表实例（分页后清空勾选用） */
 const watchTableRef = ref<{ clearSelection: () => void } | null>(null)

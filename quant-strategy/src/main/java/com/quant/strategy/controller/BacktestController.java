@@ -38,7 +38,7 @@ public class BacktestController {
     /** 回测记录分页（不含曲线大字段） */
     @GetMapping
     public R<PageResult<BacktestRecord>> page(@RequestParam(required = false) String fundCode,
-            @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "20") long size) {
+            @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "10") long size) {
         return R.ok(backtestService.page(fundCode, page, size));
     }
 

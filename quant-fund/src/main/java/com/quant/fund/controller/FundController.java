@@ -68,7 +68,7 @@ public class FundController {
     @GetMapping("/watchlist/page")
     public R<PageResult<WatchItemVO>> watchlistPage(@RequestParam(required = false) String keyword,
             @RequestParam(required = false) String tag,
-            @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "20") long size) {
+            @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "10") long size) {
         return R.ok(fundQueryService.pageWatchlist(keyword, tag, page, size));
     }
 

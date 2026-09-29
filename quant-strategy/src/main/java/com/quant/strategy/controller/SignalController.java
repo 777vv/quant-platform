@@ -49,7 +49,7 @@ public class SignalController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(defaultValue = "1") long page,
-            @RequestParam(defaultValue = "20") long size) {
+            @RequestParam(defaultValue = "10") long size) {
         return R.ok(signalService.page(fundCode, direction, strategyType, startDate, endDate, page, size));
     }
 

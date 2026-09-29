@@ -90,7 +90,8 @@ export function addStrategy(code: string, data: { strategyType: string; params: 
   return post<void>(`/funds/${code}/strategies`, data)
 }
 
-export function updateStrategy(id: number, data: { params?: Record<string, unknown>; enabled?: number; remark?: string; strategyName?: string }) {
+/** 修改策略配置：类型不可改——不传=沿用已存，传了必须与已存一致（后端按已存类型校验 params） */
+export function updateStrategy(id: number, data: { strategyType?: string; params?: Record<string, unknown>; enabled?: number; remark?: string; strategyName?: string }) {
   return put<void>(`/strategies/${id}`, data)
 }
 

@@ -226,6 +226,9 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pager-row">
+          <el-pagination v-model:current-page="tradePage" :page-size="TRADE_SIZE" :total="tradeTotal" layout="total, prev, pager, next" background @current-change="loadTrades" />
+        </div>
       </el-tab-pane>
 
       <el-tab-pane label="策略配置" name="strategies">
@@ -352,6 +355,9 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pager-row">
+          <el-pagination v-model:current-page="btPage" :page-size="BT_SIZE" :total="btTotal" layout="total, prev, pager, next" background @current-change="loadBacktests" />
+        </div>
 
         <!-- 策略配置详情弹框：把 params JSON 解析成带中文标签的键值表 -->
         <el-dialog v-model="strategyDetailVisible" title="策略配置详情" width="520px">
@@ -777,6 +783,16 @@ const valuation = ref<ValuationSeriesVO | null>(null)
 const valuationOption = ref<EChartsOption | null>(null)
 const tradeRecords = ref<TradeFlow[]>([])
 const tradesLoading = ref(false)
+
+/** 交易流水分页状态（每页 10 条） */
+const tradePage = ref(1)
+const tradeTotal = ref(0)
+const TRADE_SIZE = 10
+
+/** 回测记录分页状态（每页 10 条） */
+const btPage = ref(1)
+const btTotal = ref(0)
+const BT_SIZE = 10
 const dialogVisible = ref(false)
 /** 共享录入弹窗（新增流水）可见性 */
 const addVisible = ref(false)
@@ -1314,11 +1330,21 @@ async function loadValuation() {
   }
 }
 
+/** 交易流水（服务端分页，每页 10 条）；删除/新增后若当前页越界自动回退到最后一页 */
 async function loadTrades() {
   tradesLoading.value = true
   try {
-    const page = await pageTrades({ fundCode: code, page: 1, size: 100 })
-    tradeRecords.value = page.records
+    const res = await pageTrades({ fundCode: code, page: tradePage.value, size: TRADE_SIZE })
+    const maxPage = Math.max(1, Math.ceil(res.total / TRADE_SIZE))
+    if (tradePage.value > maxPage) {
+      tradePage.value = maxPage
+      const retry = await pageTrades({ fundCode: code, page: tradePage.value, size: TRADE_SIZE })
+      tradeRecords.value = retry.records
+      tradeTotal.value = retry.total
+      return
+    }
+    tradeRecords.value = res.records
+    tradeTotal.value = res.total
   } finally {
     tradesLoading.value = false
   }
@@ -1630,9 +1656,8 @@ function defaultStrategyType(): string {
  */
 async function initBacktestForm() {
   await loadStrategies()
-  const [types, records] = await Promise.all([strategyTypes(), pageBacktest(code, 1, 20)])
-  strategyTypeList.value = types
-  backtestRecords.value = records.records
+  strategyTypeList.value = await strategyTypes()
+  await loadBacktests()
   if (backtestForm.strategyType) {
     return
   }
@@ -1646,8 +1671,13 @@ async function initBacktestForm() {
 async function handleSaveStrategy() {
   const remark = newStrategyRemark.value.trim() || undefined
   if (editingStrategyId.value) {
-    // 编辑：类型不变（弹框里已禁用），参数/备注可改；enabled 不传 = 保持原值
-    await updateStrategy(editingStrategyId.value, { params: newStrategyParams.value, remark })
+    // 编辑：类型不可改（弹框里已禁用），随提交体带上当前值（与已存一致，后端据此二次确认）；
+    // 参数/备注可改；enabled 不传 = 保持原值
+    await updateStrategy(editingStrategyId.value, {
+      strategyType: newStrategyType.value,
+      params: newStrategyParams.value,
+      remark
+    })
     ElMessage.success('策略已保存')
   } else {
     await addStrategy(code, { strategyType: newStrategyType.value, params: newStrategyParams.value, remark })
@@ -1673,9 +1703,19 @@ async function handleDeleteStrategy(row: StrategyConfig) {
   loadStrategies()
 }
 
+/** 回测记录（服务端分页，每页 10 条）；删除后若当前页越界自动回退到最后一页 */
 async function loadBacktests() {
-  const page = await pageBacktest(code, 1, 20)
+  const page = await pageBacktest(code, btPage.value, BT_SIZE)
+  const maxPage = Math.max(1, Math.ceil(page.total / BT_SIZE))
+  if (btPage.value > maxPage) {
+    btPage.value = maxPage
+    const retry = await pageBacktest(code, btPage.value, BT_SIZE)
+    backtestRecords.value = retry.records
+    btTotal.value = retry.total
+    return
+  }
   backtestRecords.value = page.records
+  btTotal.value = page.total
 }
 
 async function handleBacktest() {
@@ -1709,13 +1749,19 @@ onMounted(() => {
   loadDetail().then(() => loadChart())
   loadValuation()
   loadTrades()
-  // 策略类型/默认策略/参数回填统一在 initBacktestForm 里按顺序完成（避免默认值落空）
+  // 策略类型/默认策略/参数回填统一在 initBacktestForm 里按顺序完成（避免默认值落空；内含回测记录第 1 页）
   initBacktestForm()
-  loadBacktests()
 })
 </script>
 
 <style scoped>
+/* 分页器：右对齐贴表格尾部 */
+.pager-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--q-space-2);
+}
+
 /* 回填提示：一行小字，说明参数来自哪一次回测 */
 .prefill-hint {
   margin: var(--q-space-1) 0 var(--q-space-2);

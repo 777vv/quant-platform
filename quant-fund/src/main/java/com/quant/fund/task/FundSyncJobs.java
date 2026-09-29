@@ -107,13 +107,43 @@ public class FundSyncJobs {
     }
 
     /**
-     * 每 10 分钟：全部自选 ETF 盘中增量同步（V5.3 起自选+持仓全覆盖）。
-     * cron 只能限定到 MON-FRI，交易时段（9:30-11:30 / 13:00-15:00）由服务内自判，
-     * 非时段直接空转返回；节假日由数据源自判（成功请求但无当天 bar），当天剩余时间跳过。
+     * 盘中同步·持仓基金：每 4 分钟一轮（V5.42，用户口径——池子扩到几百只后，
+     * 原"每 5 分钟全量一轮"跑不完，拆成持仓高频、非持仓低频两档）。
+     * 交易时段（9:31-11:35 / 13:01-15:05）在任务层自判，非时段直接返回不产生请求；
+     * 节假日由服务层自判（数据源自判 + 休市名单）。zone 显式钉死防 UTC 机器漂移（铁律 12）。
      */
-    @Scheduled(cron = "0 */5 * * * MON-FRI")
-    public void syncWatchIntraday() {
-        JobLogs.run("sync:watch", syncService::syncWatchFundsIntraday);
+    @Scheduled(cron = "0 */4 * * * MON-FRI", zone = "Asia/Shanghai")
+    public void syncHeldIntraday() {
+        JobLogs.run("sync:held", () -> {
+            if (!inTradingSession()) {
+                LOGGER.info("非交易时段，任务[sync:held]跳过");
+                return;
+            }
+            syncService.syncHeldFundsIntraday();
+        });
+    }
+
+    /**
+     * 盘中同步·自选中的非持仓基金：每 30 分钟一轮（分钟取 3/33，与持仓轮次的 0/4/8...错开，
+     * 避免两轮同时开火挤占数据源）。
+     */
+    @Scheduled(cron = "0 3/30 * * * MON-FRI", zone = "Asia/Shanghai")
+    public void syncOthersIntraday() {
+        JobLogs.run("sync:others", () -> {
+            if (!inTradingSession()) {
+                LOGGER.info("非交易时段，任务[sync:others]跳过");
+                return;
+            }
+            syncService.syncNonHeldFundsIntraday();
+        });
+    }
+
+    /** 交易时段自判（9:30-11:35 / 13:00-15:05）：给到两端各 1 分钟余量，等开盘首根 bar 落地 */
+    private boolean inTradingSession() {
+        java.time.LocalTime now = java.time.LocalTime.now();
+        boolean morning = !now.isBefore(java.time.LocalTime.of(9, 30)) && !now.isAfter(java.time.LocalTime.of(11, 35));
+        boolean afternoon = !now.isBefore(java.time.LocalTime.of(13, 0)) && !now.isAfter(java.time.LocalTime.of(15, 5));
+        return morning || afternoon;
     }
 
     /** 每日 22:00 数据同步状态汇总（刷新仪表盘速览缓存） */

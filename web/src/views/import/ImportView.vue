@@ -1,56 +1,140 @@
 <template>
-  <el-card class="import-card">
-    <template #header><span>基金数据导入（近15年，不足15年自成立起）</span></template>
-    <el-row :gutter="12" align="middle">
-      <el-col :span="8">
-        <el-input v-model="code" placeholder="输入基金代码，如 510300 / 110003" maxlength="12" clearable @keyup.enter="handleCheck">
-          <template #append>
-            <el-button :loading="checking" @click="handleCheck">校验</el-button>
-          </template>
-        </el-input>
-      </el-col>
-    </el-row>
+  <div>
+    <el-card class="import-card">
+      <template #header><span>单只导入（近15年，不足15年自成立起）</span></template>
+      <el-row :gutter="12" align="middle">
+        <el-col :span="8">
+          <el-input v-model="code" placeholder="输入基金代码，如 510300 / 110003" maxlength="12" clearable @keyup.enter="handleCheck">
+            <template #append>
+              <el-button :loading="checking" @click="handleCheck">校验</el-button>
+            </template>
+          </el-input>
+        </el-col>
+      </el-row>
 
-    <el-alert v-if="checkResult && !checkResult.supported" :title="`不支持导入：${checkResult.reason}`" type="error" show-icon class="block" :closable="false" />
+      <el-alert v-if="checkResult && !checkResult.supported" :title="`不支持导入：${checkResult.reason}`" type="error" show-icon class="block" :closable="false" />
 
-    <el-descriptions v-if="checkResult && checkResult.supported" :column="3" border class="block" title="校验通过">
-      <el-descriptions-item label="名称">{{ checkResult.name }}</el-descriptions-item>
-      <el-descriptions-item label="类型">
-        <el-tag :type="checkResult.fundType === 1 ? 'primary' : 'success'">
-          {{ checkResult.fundType === 1 ? '场内ETF' : '场外指数基金' }}
-        </el-tag>
-      </el-descriptions-item>
-      <el-descriptions-item label="基金公司">{{ checkResult.fundCompany || '--' }}</el-descriptions-item>
-      <el-descriptions-item label="跟踪指数">{{ checkResult.indexName || '未识别' }}</el-descriptions-item>
-      <el-descriptions-item label="成立日期">{{ checkResult.estabDate || '--' }}</el-descriptions-item>
-      <el-descriptions-item label="池内状态">
-        <el-tag :type="poolTag.type">{{ poolTag.text }}</el-tag>
-        <span v-if="checkResult.lastSyncDate" class="pool-note">历史数据截至 {{ checkResult.lastSyncDate }}</span>
-      </el-descriptions-item>
-    </el-descriptions>
+      <el-descriptions v-if="checkResult && checkResult.supported" :column="3" border class="block" title="校验通过">
+        <el-descriptions-item label="名称">{{ checkResult.name }}</el-descriptions-item>
+        <el-descriptions-item label="类型">
+          <el-tag :type="checkResult.fundType === 1 ? 'primary' : 'success'">
+            {{ checkResult.fundType === 1 ? '场内ETF' : '场外指数基金' }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="基金公司">{{ checkResult.fundCompany || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="跟踪指数">{{ checkResult.indexName || '未识别' }}</el-descriptions-item>
+        <el-descriptions-item label="成立日期">{{ checkResult.estabDate || '--' }}</el-descriptions-item>
+        <el-descriptions-item label="池内状态">
+          <el-tag :type="poolTag.type">{{ poolTag.text }}</el-tag>
+          <span v-if="checkResult.lastSyncDate" class="pool-note">历史数据截至 {{ checkResult.lastSyncDate }}</span>
+        </el-descriptions-item>
+      </el-descriptions>
 
-    <div v-if="checkResult && checkResult.supported" class="block">
-      <el-button type="primary" :loading="importing" :disabled="progress && progress.status === 'RUNNING'" @click="handleImport">
-        {{ poolTag.button }}
-      </el-button>
-      <span class="import-note">{{ poolTag.note }}</span>
-    </div>
-
-    <el-card v-if="progress" shadow="never" class="block">
-      <el-progress :percentage="progressPercent" :status="progressStatus" />
-      <div class="progress-step">
-        {{ progress.step }}
-        <span v-if="progress.message" class="progress-msg">{{ progress.message }}</span>
+      <div v-if="checkResult && checkResult.supported" class="block">
+        <el-button type="primary" :loading="importing" :disabled="progress && progress.status === 'RUNNING'" @click="handleImport">
+          {{ poolTag.button }}
+        </el-button>
+        <span class="import-note">{{ poolTag.note }}</span>
       </div>
+
+      <el-card v-if="progress" shadow="never" class="block">
+        <el-progress :percentage="progressPercent" :status="progressStatus" />
+        <div class="progress-step">
+          {{ progress.step }}
+          <span v-if="progress.message" class="progress-msg">{{ progress.message }}</span>
+        </div>
+      </el-card>
     </el-card>
-  </el-card>
+
+    <!-- 批量导入（V5.41）：候选筛选给"不知道该导哪些"的场景，粘贴清单给"已有名单"的场景，两路合并 -->
+    <el-card class="import-card block">
+      <template #header><span>批量导入（串行导入，自动避开数据源封堵窗口；单批上限 200 只）</span></template>
+
+      <!-- 第一步：候选筛选（可选） -->
+      <div class="batch-row">
+        <span class="batch-label">候选筛选</span>
+        <span class="batch-field">规模 ≥</span>
+        <el-input-number v-model="minScale" :min="0" :max="10000" :controls="false" style="width: 100px" />
+        <span class="batch-field">亿 且 上市 ≥</span>
+        <el-input-number v-model="minYears" :min="0" :max="30" :controls="false" style="width: 76px" />
+        <span class="batch-field">年</span>
+        <el-button :loading="candidatesLoading" @click="loadCandidates">查询符合条件的 ETF</el-button>
+        <span class="muted">共 {{ candidates.length }} 只，已在池中的不可勾选（结果缓存 10 分钟）</span>
+      </div>
+      <el-table
+        v-if="candidates.length"
+        ref="candidateTableRef"
+        :data="candidates"
+        size="small"
+        height="320"
+        class="block"
+        @selection-change="onSelectionChange"
+      >
+        <el-table-column type="selection" width="46" :selectable="selectableCandidate" />
+        <el-table-column prop="fundCode" label="代码" width="92" />
+        <el-table-column prop="fundName" label="名称" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="scaleYi" label="规模(亿)" min-width="96" align="right">
+          <template #default="{ row }">
+            <span class="num">{{ row.scaleYi }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="listedDate" label="上市日期" min-width="104" align="center" />
+        <el-table-column label="池内状态" min-width="96" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.inPool ? 'info' : 'success'" size="small">{{ row.inPool ? '已在池中' : '未导入' }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- 第二步：粘贴代码清单（可选，与勾选合并去重） -->
+      <div class="batch-row block">
+        <span class="batch-label">代码清单</span>
+        <el-input
+          v-model="pasteText"
+          type="textarea"
+          :rows="2"
+          placeholder="可选：粘贴基金代码（换行/逗号/空格分隔均可，自动提取 6 位数字），如 510310, 510500 159915"
+        />
+      </div>
+      <div class="batch-row">
+        <el-button type="primary" :loading="batchRunning" :disabled="pendingCount === 0 || singleRunning" @click="handleStartBatch">
+          开始批量导入（{{ pendingCount }} 只）
+        </el-button>
+        <span class="muted">
+          勾选 {{ selectedCount }} 只 + 粘贴 {{ parsedCount }} 只，去重后 {{ pendingCount }} 只；
+          串行导入每只间隔 0.5 秒（防数据源封堵），100 只约 8~15 分钟，可离开页面稍后回来看进度
+        </span>
+      </div>
+
+      <!-- 进度与失败清单 -->
+      <el-card v-if="batchProgress" shadow="never" class="block">
+        <el-progress :percentage="batchPercent" :status="batchProgressStatus" />
+        <div class="progress-step">
+          {{ batchProgress.message }}
+          <span v-if="batchProgress.currentCode" class="progress-msg">当前：{{ batchProgress.currentCode }}</span>
+        </div>
+        <div class="batch-stat">
+          已完成 {{ batchProgress.done }}/{{ batchProgress.total }} · 成功 {{ batchProgress.success }} · 失败 {{ batchProgress.failed }}
+        </div>
+        <template v-if="batchProgress.failures.length">
+          <el-table :data="batchProgress.failures" size="small" class="block">
+            <el-table-column prop="code" label="失败代码" width="110" />
+            <el-table-column prop="reason" label="失败原因" min-width="260" show-overflow-tooltip />
+          </el-table>
+          <el-button v-if="batchProgress.status !== 'RUNNING'" size="small" @click="handleRetryFailed">
+            重试失败项（{{ batchProgress.failures.length }} 只）
+          </el-button>
+        </template>
+      </el-card>
+    </el-card>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { checkFund, importFund, importProgress } from '@/api/fund'
-import type { FundCheckVO, TaskProgressVO } from '@/api/fund'
+import { checkFund, etfCandidates, batchImportProgress, importFund, importProgress, startBatchImport } from '@/api/fund'
+import type { BatchImportProgress, EtfCandidate, FundCheckVO, TaskProgressVO } from '@/api/fund'
 
 const code = ref('')
 const checking = ref(false)
@@ -150,11 +234,136 @@ function startPoll(taskId: string) {
     }
   }, 1500)
 }
+
+// ===== 批量导入（V5.41）=====
+
+const minScale = ref(10)
+const minYears = ref(6)
+const candidatesLoading = ref(false)
+const candidates = ref<EtfCandidate[]>([])
+const selectedCandidates = ref<EtfCandidate[]>([])
+const pasteText = ref('')
+const batchRunning = ref(false)
+const batchProgress = ref<BatchImportProgress | null>(null)
+let batchTimer: number | undefined
+
+/** 单只导入进行中时禁止再发起批量（共享东财请求路径，避免自我撞车） */
+const singleRunning = computed(() => importing.value || (!!progress.value && progress.value.status === 'RUNNING'))
+
+async function loadCandidates() {
+  candidatesLoading.value = true
+  try {
+    candidates.value = await etfCandidates(minScale.value, minYears.value)
+    // 新查询结果重置勾选，避免"上一次的勾选"错配到本次清单
+    selectedCandidates.value = []
+  } finally {
+    candidatesLoading.value = false
+  }
+}
+
+/** 已在池中的行不可勾选（服务端也会跳过，这里提前挡掉省额度） */
+function selectableCandidate(row: EtfCandidate): boolean {
+  return !row.inPool
+}
+
+function onSelectionChange(rows: EtfCandidate[]) {
+  selectedCandidates.value = rows
+}
+
+/** 粘贴文本里提取 6 位数字代码（换行/逗号/空格等分隔符都不影响） */
+const parsedCount = computed(() => parsedCodes().length)
+
+function parsedCodes(): string[] {
+  return [...new Set(pasteText.value.match(/\d{6}/g) ?? [])]
+}
+
+const selectedCount = computed(() => selectedCandidates.value.length)
+
+/** 待导入 = 勾选 ∪ 粘贴（去重）；页面上如实展示三个数字，避免"到底导多少只"说不清 */
+const pendingCount = computed(() => {
+  const all = new Set([...selectedCandidates.value.map((c) => c.fundCode), ...parsedCodes()])
+  return all.size
+})
+
+function handleStartBatch() {
+  const codes = [...new Set([...selectedCandidates.value.map((c) => c.fundCode), ...parsedCodes()])]
+  if (codes.length === 0) {
+    ElMessage.warning('请先勾选候选 ETF 或粘贴基金代码')
+    return
+  }
+  launch(codes)
+}
+
+/** 重试失败项：只把失败的代码再跑一轮 */
+function handleRetryFailed() {
+  const codes = batchProgress.value?.failures.map((f) => f.code) ?? []
+  if (codes.length === 0) {
+    return
+  }
+  launch(codes)
+}
+
+function launch(codes: string[]) {
+  batchRunning.value = true
+  startBatchImport(codes)
+    .then((res) => {
+      if (res.skippedExisting.length > 0) {
+        ElMessage.info(`其中 ${res.skippedExisting.length} 只已在自选池，自动跳过`)
+      }
+      startBatchPoll(res.taskId, res.accepted.length)
+    })
+    .finally(() => {
+      batchRunning.value = false
+    })
+}
+
+function startBatchPoll(taskId: string, total: number) {
+  batchProgress.value = {
+    taskId, status: 'RUNNING', message: '任务已排队', total, done: 0, success: 0, failed: 0,
+    currentCode: null, currentName: null, failures: [], startedAt: null, finishedAt: null
+  }
+  stopBatchPoll()
+  batchTimer = window.setInterval(async () => {
+    batchProgress.value = await batchImportProgress(taskId)
+    if (batchProgress.value.status !== 'RUNNING') {
+      stopBatchPoll()
+      if (batchProgress.value.status === 'DONE') {
+        ElMessage.success('批量导入结束，可在基金池查看')
+      } else {
+        ElMessage.error(batchProgress.value.message)
+      }
+    }
+  }, 2000)
+}
+
+function stopBatchPoll() {
+  if (batchTimer) {
+    window.clearInterval(batchTimer)
+    batchTimer = undefined
+  }
+}
+
+onUnmounted(stopBatchPoll)
+
+const batchPercent = computed(() => {
+  if (!batchProgress.value) return 0
+  if (batchProgress.value.status === 'DONE') return 100
+  const { total, done } = batchProgress.value
+  return total > 0 ? Math.min(99, Math.round((done / total) * 100)) : 5
+})
+
+const batchProgressStatus = computed(() => {
+  if (!batchProgress.value) return undefined
+  if (batchProgress.value.status === 'FAILED') return 'exception'
+  if (batchProgress.value.status === 'DONE') return 'success'
+  return undefined
+})
 </script>
 
 <style scoped>
+/* 两张卡与基金池等列表页一致：铺满内容区（此前误限 900px 导致右侧留白） */
 .import-card {
-  max-width: 900px;
+  width: 100%;
 }
 
 .block {
@@ -183,5 +392,38 @@ function startPoll(taskId: string) {
   margin-left: var(--q-space-3);
   font-size: var(--q-font-xs);
   color: var(--q-text-secondary);
+}
+
+/* 批量导入卡：一行一个语义（筛选条件 / 粘贴清单 / 发起按钮），标签固定宽对齐 */
+.batch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  margin-top: 12px;
+}
+
+.batch-label {
+  flex: none;
+  width: 64px;
+  font-weight: 600;
+  color: var(--q-text-primary);
+  font-size: var(--q-font-sm);
+}
+
+.batch-field {
+  flex: none;
+  color: var(--q-text-regular);
+  font-size: var(--q-font-sm);
+}
+
+.muted {
+  font-size: var(--q-font-xs);
+  color: var(--q-text-muted);
+}
+
+.batch-stat {
+  margin-top: 8px;
+  font-size: var(--q-font-sm);
+  color: var(--q-text-regular);
 }
 </style>

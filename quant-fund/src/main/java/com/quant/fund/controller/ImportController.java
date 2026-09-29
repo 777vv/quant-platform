@@ -1,10 +1,13 @@
 package com.quant.fund.controller;
 
 import com.quant.common.result.R;
+import com.quant.fund.dto.BatchImportProgressVO;
+import com.quant.fund.dto.EtfCandidateVO;
 import com.quant.fund.dto.FundCheckVO;
 import com.quant.fund.dto.TaskProgressVO;
 import com.quant.fund.service.ImportService;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 
 import lombok.Data;
@@ -59,6 +64,32 @@ public class ImportController {
     }
 
     /**
+     * 批量导入候选（V5.41）：全市场场内 ETF 按条件筛选（规模=总市值口径，成立时间=上市日期近似）。
+     * 结果缓存 10 分钟；数据源封堵时返回友好错误（"稍后重试"）。
+     */
+    @GetMapping("/import/batch/candidates")
+    public R<List<EtfCandidateVO>> candidates(
+            @RequestParam(defaultValue = "10") BigDecimal minScaleYi,
+            @RequestParam(defaultValue = "6") int minYears) {
+        return R.ok(importService.etfCandidates(minScaleYi, minYears));
+    }
+
+    /**
+     * 发起批量导入（V5.41）：串行逐只导入，与数据同步任务互斥，封堵窗口自动暂停续跑。
+     * 返回 taskId 与接收/跳过清单（已在池中的直接跳过并回显，铁律 11）。
+     */
+    @PostMapping("/import/batch")
+    public R<ImportService.BatchStartResult> startBatch(@Validated @RequestBody BatchImportRequest request) {
+        return R.ok(importService.startBatch(request.getCodes()));
+    }
+
+    /** 批量导入进度轮询（Redis，2小时过期） */
+    @GetMapping("/import/batch/progress")
+    public R<BatchImportProgressVO> batchProgress(@RequestParam String taskId) {
+        return R.ok(importService.batchProgress(taskId));
+    }
+
+    /**
      * 导入请求体
      */
     @Data
@@ -67,5 +98,16 @@ public class ImportController {
         @NotBlank(message = "基金代码不能为空")
         @Size(max = 12, message = "基金代码过长（不超过 12 位）")
         private String code;
+    }
+
+    /**
+     * 批量导入请求体：代码清单（前端负责解析粘贴文本；服务端再做清洗/去重/已在池剔除/上限校验）
+     */
+    @Data
+    public static class BatchImportRequest {
+
+        @NotEmpty(message = "基金代码清单不能为空")
+        @Size(max = 500, message = "单次最多提交 500 个代码（实际导入上限以服务端 200 只为准）")
+        private List<String> codes;
     }
 }

@@ -335,7 +335,7 @@ public class EastmoneyClient {
             return body;
         } catch (Exception e) {
             lastRequestAt = System.currentTimeMillis();
-            LOGGER.debug("探测请求无响应(视为非场内): {}", url, e);
+            LOGGER.error("探测请求无响应(视为非场内): {}", url, e);
             return null;
         }
     }
@@ -529,6 +529,47 @@ public class EastmoneyClient {
         return items;
     }
 
+    /** 场内基金板块行情列表单页（push2 clist 接口，pz 服务端上限 100） */
+    public record EtfBoardItem(String code, String name, long capYuan, int listedDate) {
+    }
+
+    /**
+     * 拉取全市场场内基金（ETF）列表（V5.41 批量导入候选）：按总市值降序，逐页抓全。
+     * 字段：f12=代码 f14=名称 f20=总市值(元) f26=上市日期(YYYYMMDD)。
+     * 规模用总市值近似（份额×市价 ≈ 净资产规模）；"成立时间"用上市日期近似（相差通常数周内）。
+     * 数据源间歇封堵由 getWithRetry + 上层重试兜底；页数上限 30（约 3000 只，防异常死循环）。
+     */
+    public List<EtfBoardItem> fetchEtfBoardList() {
+        List<EtfBoardItem> items = new ArrayList<>();
+        int total = Integer.MAX_VALUE;
+        for (int pn = 1; pn <= 30 && items.size() < total; pn++) {
+            String url = "https://push2.eastmoney.com/api/qt/clist/get?pn=" + pn
+                    + "&pz=100&po=1&np=1&fltt=2&invt=2&fid=f20"
+                    + "&fs=b:MK0021,b:MK0022,b:MK0023,b:MK0024&fields=f12,f14,f20,f26";
+            JsonNode root = getJson(url, "https://quote.eastmoney.com/");
+            JsonNode data = root.path("data");
+            total = data.path("total").asInt(0);
+            JsonNode diff = data.path("diff");
+            int added = 0;
+            if (diff.isArray()) {
+                for (JsonNode node : diff) {
+                    JsonNode cap = node.path("f20");
+                    JsonNode listed = node.path("f26");
+                    if (!cap.canConvertToLong() || !listed.canConvertToInt()) {
+                        continue;
+                    }
+                    items.add(new EtfBoardItem(node.path("f12").asText(), node.path("f14").asText(""),
+                            cap.asLong(), listed.asInt()));
+                    added++;
+                }
+            }
+            if (added == 0) {
+                break;
+            }
+        }
+        return items;
+    }
+
     /** 拉取指数估值历史（中证官网，peg 即 PE；仅覆盖中证/上证系列） */
     public List<ValuationItem> fetchIndexValuation(String indexCode, LocalDate beg, LocalDate end) {
         String url = URL_INDEX_VALUATION.replace("{indexCode}", indexCode)
@@ -602,18 +643,16 @@ public class EastmoneyClient {
         if (!properties.isEnabled()) {
             throw new BizException("数据源已熔断（quant.eastmoney.enabled=false），请稍后再试");
         }
-        RestClientException lastError = null;
         for (int attempt = 1; attempt <= properties.getRetryTimes(); attempt++) {
             try {
                 return throttledGet(url, referer);
             } catch (RestClientException e) {
-                lastError = e;
                 long backoffMs = 1000L * (1L << (attempt - 1));
                 LOGGER.error("数据源请求失败(第{}次): {}，{}ms后重试", attempt, url, backoffMs, e);
                 sleep(backoffMs);
             }
         }
-        throw new BizException("数据源请求失败（已重试" + properties.getRetryTimes() + "次）: " + lastError.getMessage());
+        throw new BizException("数据源请求失败（已重试" + properties.getRetryTimes() + "次）");
     }
 
     /** 串行限频 GET：保证相邻请求间隔 ≥ interval-ms（全局锁） */
@@ -629,7 +668,7 @@ public class EastmoneyClient {
         }
         String body = spec.retrieve().body(String.class);
         lastRequestAt = System.currentTimeMillis();
-        LOGGER.debug("GET {} -> {}ms, {}字节", url, lastRequestAt - start, body == null ? 0 : body.length());
+        LOGGER.info("GET {} -> {}ms, {}字节", url, lastRequestAt - start, body == null ? 0 : body.length());
         return body;
     }
 

@@ -12,6 +12,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -316,7 +317,7 @@ public class SyncServiceImpl implements SyncService {
         // 已知数据源处于封堵窗口：跳过本轮尝试（10 分钟标记过期后自动重试），
         // 避免每次打开看板都白等一次构建预算；用户手动点"刷新"不受此限制
         if (!force && "1".equals(redisTemplate.opsForValue().get(CACHE_TREND_DEGRADED))) {
-            LOGGER.debug("迷你线处于降级窗口，本轮跳过构建");
+            LOGGER.info("迷你线处于降级窗口，本轮跳过构建");
             return;
         }
         long deadline = System.currentTimeMillis() + TREND_BUILD_BUDGET_MS;
@@ -725,41 +726,74 @@ public class SyncServiceImpl implements SyncService {
     /** 交易日自判"待确认"的观察时长（秒）：连续两次观察都无当天 bar 才判节假日 */
     private static final long HOLIDAY_PENDING_SECONDS = 900;
 
+    /** 盘中同步封堵窗口暂停时长（毫秒）：连续 3 只失败后暂停探窗，避免逐只烧重试退避 */
+    private static final long INTRADAY_PAUSE_MILLIS = 90_000;
+
     /**
-     * 自动同步（V5.3）：全部自选 ETF 盘中增量同步（含当日实时未定型数据）。
-     * 交易时段由任务层判断（cron 已限定 MON-FRI），此处再校验 9:30-11:30 / 13:00-15:00，
-     * 非时段直接返回——保证 cron 调粗粒度时不产生多余请求。
-     *
-     * <p>交易日自判（不引入日历依赖，用数据源自身回答"今天开不开市"）：
-     * 同步成功（HTTP 正常）但库里没有今天这根 bar → 今天疑似节假日；
-     * 连续两轮观察（间隔 ≥ 一轮 10 分钟）都没有 → 确认为节假日并写 Redis 标记
-     * （自然日过期），当天剩余时间不再发起任何请求。请求失败（封堵/网络）不做结论，下轮自然重试。
-     * 场外基金净值没有盘中口径，不参加本任务（仍走 20:00 / 次日 07:00 的净值同步）。
+     * 盘中同步·持仓基金（V5.42，用户口径：池子扩到几百只后，5 分钟全量一轮跑不完，拆两档）：
+     * 持仓基金每 4 分钟一轮（调度在 FundSyncJobs，交易时段闸门在任务层）。
+     * 服务层只管"跑哪个范围"：交易日/节假日自判 + 互斥锁 + 范围过滤 + 逐只增量同步。
+     * 手动触发（SyncController cases=held）随时可用，便于补一轮。
      */
     @Override
-    public void syncWatchFundsIntraday() {
-        LocalTime now = LocalTime.now();
-        boolean morning = !now.isBefore(LocalTime.of(9, 31)) && !now.isAfter(LocalTime.of(11, 35));
-        boolean afternoon = !now.isBefore(LocalTime.of(13, 01)) && !now.isAfter(LocalTime.of(15, 5));
-        if (!morning && !afternoon) {
-            return;
-        }
+    public void syncHeldFundsIntraday() {
+        runIntradaySync("job:sync:held", true);
+    }
+
+    /**
+     * 盘中同步·自选中的非持仓基金（V5.42）：每 30 分钟一轮，cron 与持仓轮次错开 3 分钟防重叠。
+     * 场外基金净值没有盘中口径，不参加（仍走 20:00 / 次日 07:00 的净值同步）。
+     */
+    @Override
+    public void syncNonHeldFundsIntraday() {
+        runIntradaySync("job:sync:others", false);
+    }
+
+    /**
+     * 盘中增量同步核心：按 heldOnly 过滤本轮范围（持仓 = fund_position.total_share > 0）。
+     *
+     * <p>交易日自判（数据源自身回答"今天开不开市"）：同步成功（HTTP 正常）但库里没有今天这根 bar
+     * → 今天疑似节假日；连续两轮观察（间隔 ≥ 15 分钟）都没有 → 确认为节假日并写 Redis 标记
+     * （自然日过期），当天剩余时间不再发起任何请求。请求失败（封堵/网络）不做结论，下轮自然重试。
+     */
+    private void runIntradaySync(String lockName, boolean heldOnly) {
         if (isMarketClosedToday()) {
             return;
         }
-        lockUtils.runWithLock("job:sync:watch", 60, () -> {
+        String scope = heldOnly ? "持仓" : "非持仓";
+        lockUtils.runWithLock(lockName, heldOnly ? 30 : 60, () -> {
             LocalDateTime startAt = LocalDateTime.now();
-            List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+            List<FundBasic> all = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
                     .eq(FundBasic::getStatus, 1).eq(FundBasic::getFundType, FundTypeEnum.ETF.getCode()));
+            Set<String> held = holdingCodes();
+            // heldOnly=true 取持仓段，false 取非持仓段（一份全集拆两轮，互不重复）
+            List<FundBasic> funds = all.stream()
+                    .filter(fund -> held.contains(fund.getFundCode()) == heldOnly)
+                    .toList();
             int ok = 0;
             List<String> errors = new ArrayList<>();
+            int consecutiveFailures = 0;
             for (FundBasic fund : funds) {
                 try {
                     syncFundData(fund, false);
                     ok++;
+                    consecutiveFailures = 0;
                 } catch (Exception e) {
-                    LOGGER.error("盘中同步[{}]失败", fund.getFundCode(), e);
+                    consecutiveFailures++;
+                    LOGGER.error("盘中同步[{}][{}]失败", scope, fund.getFundCode(), e);
                     errors.add(fund.getFundCode() + ":" + e.getMessage());
+                    // 封堵自适应（V5.42，与批量导入同款）：连续 3 只失败（每只内部已重试 3 次）判定进入
+                    // 封堵窗口，暂停 90 秒再继续——否则封堵期内每只都要烧完 7 秒退避，几百只时一轮跑不完
+                    if (consecutiveFailures >= 3) {
+                        LOGGER.warn("盘中同步[{}]连续 {} 只失败，判定进入数据源封堵窗口，暂停 {}ms 后继续", scope, consecutiveFailures, INTRADAY_PAUSE_MILLIS);
+                        try {
+                            Thread.sleep(INTRADAY_PAUSE_MILLIS);
+                            consecutiveFailures = 0;
+                        } catch (InterruptedException ie) {
+                            // 中断是信号不是错误（铁律 13 唯一例外）：恢复中断位，继续处理剩余基金
+                            Thread.currentThread().interrupt();
+                        }
+                    }
                 }
             }
             // 交易日自判：全部同步成功但没有任何一只出现今天的 bar → 记一次"疑似节假日"观察
@@ -770,8 +804,16 @@ public class SyncServiceImpl implements SyncService {
                 redisTemplate.delete(HOLIDAY_KEY_PREFIX + LocalDate.now());
             }
             writeLog(SyncTypeEnum.AUTO, null, errors.isEmpty(), ok,
-                    errors.isEmpty() ? null : String.join(" | ", errors), startAt);
+                    errors.isEmpty() ? null : scope + "轮: " + String.join(" | ", errors), startAt);
+            LOGGER.info("盘中同步[{}]完成：{} 只（成功 {}，失败 {}）", scope, funds.size(), ok, errors.size());
         });
+    }
+
+    /** 持仓基金代码集合（fund_position.total_share > 0；与基金池列表的持仓判定同口径） */
+    private Set<String> holdingCodes() {
+        return positionMapper.selectList(new LambdaQueryWrapper<FundPosition>()
+                        .gt(FundPosition::getTotalShare, BigDecimal.ZERO))
+                .stream().map(FundPosition::getFundCode).collect(Collectors.toSet());
     }
 
     /**
@@ -781,11 +823,11 @@ public class SyncServiceImpl implements SyncService {
      */
     private boolean isMarketClosedToday() {
         if (!tradingCalendarService.isTradingDay(LocalDate.now())) {
-            LOGGER.debug("今日非交易日（周末/休市名单），任务跳过");
+            LOGGER.info("今日非交易日（周末/休市名单），任务跳过");
             return true;
         }
         if (isConfirmedHoliday()) {
-            LOGGER.debug("今日判定为节假日（数据源自判），任务跳过");
+            LOGGER.info("今日判定为节假日（数据源自判），任务跳过");
             return true;
         }
         return false;

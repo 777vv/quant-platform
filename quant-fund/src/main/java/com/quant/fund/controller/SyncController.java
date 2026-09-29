@@ -38,6 +38,8 @@ public class SyncController {
             case "valuation" -> syncService.syncValuation();
             case "indices" -> syncService.refreshIndexQuotes();
             case "profiles" -> syncService.refreshAllProfiles();
+            case "held" -> syncService.syncHeldFundsIntraday();
+            case "others" -> syncService.syncNonHeldFundsIntraday();
             default -> throw new com.quant.common.exception.BizException("未知同步类型: " + type);
         }
         return R.ok();

@@ -2,18 +2,26 @@ package com.quant.fund.service.impl;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.quant.common.exception.BizException;
+import com.quant.common.util.JsonUtils;
+import com.quant.common.util.LockUtils;
 import com.quant.fund.client.EastmoneyClient;
+import com.quant.fund.dto.BatchImportProgressVO;
+import com.quant.fund.dto.EtfCandidateVO;
 import com.quant.fund.dto.FundCheckVO;
 import com.quant.fund.dto.TaskProgressVO;
 import com.quant.fund.entity.FundBasic;
@@ -33,7 +41,10 @@ import com.quant.fund.service.ImportService;
 import com.quant.fund.service.TaskProgressStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -42,6 +53,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 说明：delete+批量插入 用 TransactionTemplate 保证原子（@Async 自调用不走代理）。
  * 覆盖语义（V5.26 用户口径）：导入对已存在的同类数据一律**整段覆盖**——日K/净值/估值按"先删后插"，
  * 分红由 DividendService.refresh 的"先删后插"覆盖，保证重导一次即与数据源对齐。
+ *
+ * <p>批量导入（V5.41）：串行复用单基金管线（东财按路径间歇封堵，并发只会更快触发封堵），
+ * 与数据同步任务批量互斥（tryLockAll），封堵窗口自动暂停续跑，单只失败记入失败清单不中断，
+ * 进度存 Redis（2h 过期）供前端轮询。批量任务经 taskExecutor 线程池执行（POST 立即返回）。
  */
 @Service
 public class ImportServiceImpl implements ImportService {
@@ -51,6 +66,19 @@ public class ImportServiceImpl implements ImportService {
     private static final String SOURCE_CSINDEX = "CSINDEX";
 
     private static final int NAV_PAGE_SIZE = 20;
+
+    /** 批量进度 Redis 键前缀（2h 过期） */
+    private static final String BATCH_PROGRESS_KEY = "task:batch:progress:";
+
+    /** 候选清单 Redis 缓存键前缀（10min 过期，避免反复抓东财列表） */
+    private static final String CANDIDATES_CACHE_KEY = "import:batch:candidates:";
+
+    /** 批量导入与数据同步任务互斥的锁清单（持有期间对应定时任务会跳过并留日志） */
+    private static final List<String> BATCH_LOCKS = List.of(
+            "import:batch", "job:etf:daily", "job:nav", "job:valuation", "job:sync:watch");
+
+    /** 单批代码上限：防误操作（粘贴错整份名单/文件）导致任务跑数小时 */
+    private static final int BATCH_MAX_CODES = 200;
 
     private final EastmoneyClient client;
 
@@ -71,10 +99,27 @@ public class ImportServiceImpl implements ImportService {
 
     private final TransactionTemplate transactionTemplate;
 
+    private final LockUtils lockUtils;
+
+    private final StringRedisTemplate redisTemplate;
+
+    /** 批量任务执行线程池（POST 立即返回，任务体不能像单只导入那样占住请求线程） */
+    private final ThreadPoolTaskExecutor taskExecutor;
+
+    /** 批量任务判定封堵后的暂停时长（毫秒）；实测封堵窗口约 5 分钟一轮，默认 90 秒探一次 */
+    @Value("${import.batch.pause-millis:90000}")
+    private long batchPauseMillis;
+
+    /** 批量任务相邻两只基金之间的间隔（毫秒）：串行降速是防封堵的核心手段 */
+    @Value("${import.batch.interval-millis:500}")
+    private long batchIntervalMillis;
+
     public ImportServiceImpl(EastmoneyClient client, FundBasicMapper fundBasicMapper, FundEtfKlineMapper klineMapper,
                              FundNavMapper navMapper, IndexValuationMapper valuationMapper,
                              DividendService dividendService, SyncLogMapper syncLogMapper,
-                             TaskProgressStore progressStore, TransactionTemplate transactionTemplate) {
+                             TaskProgressStore progressStore, TransactionTemplate transactionTemplate,
+                             LockUtils lockUtils, StringRedisTemplate redisTemplate,
+                             @Qualifier("taskExecutor") ThreadPoolTaskExecutor taskExecutor) {
         this.client = client;
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
@@ -84,6 +129,9 @@ public class ImportServiceImpl implements ImportService {
         this.syncLogMapper = syncLogMapper;
         this.progressStore = progressStore;
         this.transactionTemplate = transactionTemplate;
+        this.lockUtils = lockUtils;
+        this.redisTemplate = redisTemplate;
+        this.taskExecutor = taskExecutor;
     }
 
     @Override
@@ -119,7 +167,11 @@ public class ImportServiceImpl implements ImportService {
         }
         String taskId = UUID.randomUUID().toString().replace("-", "");
         progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.RUNNING, "校验通过，开始导入", 0, 0, null));
-        runImport(taskId, check);
+        try {
+            doImport(taskId, check);
+        } catch (BizException e) {
+            // 单只导入沿用原口径：失败不向上抛（前端轮询进度可见 FAILED 与原因）；批量导入才用异常驱动失败清单
+        }
         return taskId;
     }
 
@@ -132,8 +184,237 @@ public class ImportServiceImpl implements ImportService {
         return progress;
     }
 
-    @Async("taskExecutor")
-    protected void runImport(String taskId, FundCheckVO check) {
+    // ===== 批量导入（V5.41）=====
+
+    @Override
+    public List<EtfCandidateVO> etfCandidates(BigDecimal minScaleYi, int minYears) {
+        if (minScaleYi == null || minScaleYi.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BizException("规模下限须 ≥ 0");
+        }
+        if (minYears < 0 || minYears > 30) {
+            throw new BizException("上市年限须在 0~30 之间");
+        }
+        String cacheKey = CANDIDATES_CACHE_KEY + minScaleYi.stripTrailingZeros().toPlainString() + ":" + minYears;
+        String cached = redisTemplate.opsForValue().get(cacheKey);
+        if (cached != null) {
+            try {
+                return JsonUtils.mapper().readValue(cached,
+                        JsonUtils.mapper().getTypeFactory().constructCollectionType(List.class, EtfCandidateVO.class));
+            } catch (RuntimeException e) {
+                // 缓存坏了不值得让页面报错：删掉缓存走一次实时抓取
+                LOGGER.error("候选清单缓存反序列化失败，删除缓存后实时抓取", e);
+                redisTemplate.delete(cacheKey);
+            }
+        }
+        Set<String> poolCodes = poolCodes();
+        LocalDate listedBefore = LocalDate.now().minusYears(minYears);
+        BigDecimal capYuanMin = minScaleYi.multiply(BigDecimal.valueOf(1e8));
+        List<EtfCandidateVO> result = new ArrayList<>();
+        for (EastmoneyClient.EtfBoardItem item : client.fetchEtfBoardList()) {
+            if (BigDecimal.valueOf(item.capYuan()).compareTo(capYuanMin) <= 0) {
+                continue;
+            }
+            LocalDate listed = LocalDate.of(item.listedDate() / 10000, item.listedDate() / 100 % 100, item.listedDate() % 100);
+            if (listed.isAfter(listedBefore)) {
+                continue;
+            }
+            result.add(new EtfCandidateVO(item.code(), item.name(),
+                    BigDecimal.valueOf(item.capYuan()).divide(BigDecimal.valueOf(1e8), 1, RoundingMode.HALF_UP),
+                    listed.toString(), poolCodes.contains(item.code())));
+        }
+        // 结果缓存 10 分钟：候选列表是浏览性质的数据，反复查询没必要每次都抓 17 页
+        redisTemplate.opsForValue().set(cacheKey, JsonUtils.toJson(result), Duration.ofMinutes(10));
+        return result;
+    }
+
+    @Override
+    public BatchStartResult startBatch(List<String> codes) {
+        // 清洗：只留 6 位数字代码、保序去重（ETF 与场外代码都是 6 位）
+        LinkedHashSet<String> distinct = new LinkedHashSet<>();
+        if (codes != null) {
+            for (String raw : codes) {
+                String code = raw == null ? "" : raw.trim();
+                if (code.matches("\\d{6}")) {
+                    distinct.add(code);
+                }
+            }
+        }
+        if (distinct.isEmpty()) {
+            throw new BizException("没有可导入的基金代码（须为 6 位数字）");
+        }
+        if (distinct.size() > BATCH_MAX_CODES) {
+            throw new BizException("单批最多 " + BATCH_MAX_CODES + " 只（当前 " + distinct.size() + " 只），请分批导入");
+        }
+        // 已在池中的直接剔除并回显（铁律 11：让前端拿到真实的接收/跳过状态）
+        Set<String> poolCodes = poolCodes();
+        List<String> skippedExisting = new ArrayList<>();
+        List<String> accepted = new ArrayList<>();
+        for (String code : distinct) {
+            if (poolCodes.contains(code)) {
+                skippedExisting.add(code);
+            } else {
+                accepted.add(code);
+            }
+        }
+        if (accepted.isEmpty()) {
+            throw new BizException("所选基金均已在自选池中，无需导入");
+        }
+        String taskId = UUID.randomUUID().toString().replace("-", "");
+        saveBatch(new BatchImportProgressVO(taskId, BatchImportProgressVO.RUNNING,
+                "已排队（待导入 " + accepted.size() + " 只）", accepted.size(), 0, 0, 0,
+                null, null, List.of(), LocalDateTime.now(), null));
+        // 经线程池执行（POST 立即返回）；任务体内部与同步任务批量互斥
+        taskExecutor.execute(() -> runBatch(taskId, accepted));
+        return new BatchStartResult(taskId, accepted, skippedExisting);
+    }
+
+    @Override
+    public BatchImportProgressVO batchProgress(String taskId) {
+        String json = redisTemplate.opsForValue().get(BATCH_PROGRESS_KEY + taskId);
+        if (json == null) {
+            throw new BizException("批量任务不存在或已过期（进度保留 2 小时）");
+        }
+        return JsonUtils.fromJson(json, BatchImportProgressVO.class);
+    }
+
+    /**
+     * 批量任务体：串行逐只导入。与数据同步任务批量互斥（持有 etf:daily/nav/valuation/sync:watch 四把锁，
+     * 持有期间对应定时任务会自动跳过并留日志）；东财封堵自适应——连续 3 只失败判定进入封堵窗口，
+     * 暂停 batchPauseMillis 后继续；单只失败只记失败清单，不中断批量。
+     */
+    private void runBatch(String taskId, List<String> codes) {
+        LockUtils.MultiLock locks = acquireBatchLocks(taskId);
+        if (locks == null) {
+            return;
+        }
+        try {
+            batchLoop(taskId, codes);
+        } finally {
+            locks.close();
+        }
+    }
+
+    /**
+     * 获取批量互斥锁：盘中每 5 分钟的同步任务会短暂持有 job:sync:watch（几秒），直接 tryLock 很容易撞上，
+     * 故带 6 次 × 10 秒的等待重试（约 1 分钟），仍拿不到才判失败。
+     */
+    private LockUtils.MultiLock acquireBatchLocks(String taskId) {
+        for (int attempt = 1; attempt <= 6; attempt++) {
+            LockUtils.MultiLock locks = lockUtils.tryLockAll(BATCH_LOCKS, 120);
+            if (locks != null) {
+                LOGGER.info("批量导入[{}]获取互斥锁成功（第 {} 次尝试）", taskId, attempt);
+                return locks;
+            }
+            if (attempt < 6) {
+                saveBatch(new BatchImportProgressVO(taskId, BatchImportProgressVO.RUNNING,
+                        "有同步任务正在执行，" + 10 + " 秒后重试获取互斥锁（第 " + attempt + "/6 次）",
+                        0, 0, 0, 0, null, null, List.of(), LocalDateTime.now(), null));
+                try {
+                    Thread.sleep(10_000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            }
+        }
+        saveBatch(new BatchImportProgressVO(taskId, BatchImportProgressVO.FAILED,
+                "有同步/导入任务正在执行（如 15:30 全量同步、盘中同步），已等待约 1 分钟仍未让出，请稍后重新发起",
+                0, 0, 0, 0, null, null, List.of(), LocalDateTime.now(), LocalDateTime.now()));
+        return null;
+    }
+
+    /** 批量任务主循环（调用方持有互斥锁） */
+    private void batchLoop(String taskId, List<String> codes) {
+        LOGGER.info("批量导入[{}]开始：共 {} 只，与数据同步任务互斥", taskId, codes.size());
+        int success = 0;
+        int failed = 0;
+        int consecutiveFailures = 0;
+        List<BatchImportProgressVO.FailItem> failures = new ArrayList<>();
+        LocalDateTime startedAt = LocalDateTime.now();
+        for (int i = 0; i < codes.size(); i++) {
+            String code = codes.get(i);
+            saveBatch(new BatchImportProgressVO(taskId, BatchImportProgressVO.RUNNING,
+                    "正在导入 " + (i + 1) + "/" + codes.size(), codes.size(), i, success, failed,
+                    code, null, List.copyOf(failures), startedAt, null));
+            try {
+                doImport(taskId + ":" + code, check(code));
+                success++;
+                consecutiveFailures = 0;
+            } catch (Exception e) {
+                failed++;
+                consecutiveFailures++;
+                String reason = e.getMessage() == null ? "导入失败" : e.getMessage();
+                failures.add(new BatchImportProgressVO.FailItem(code, null, reason));
+                LOGGER.error("批量导入[{}]基金[{}]失败（{}/{}）", taskId, code, i + 1, codes.size(), e);
+            }
+            saveBatch(new BatchImportProgressVO(taskId, BatchImportProgressVO.RUNNING,
+                    "已处理 " + (i + 1) + "/" + codes.size(), codes.size(), i + 1, success, failed,
+                    null, null, List.copyOf(failures), startedAt, null));
+            // 封堵自适应：连续 3 只失败（每只内部已重试 3 次）大概率进入封堵窗口，暂停探窗
+            if (consecutiveFailures >= 3 && i < codes.size() - 1) {
+                LOGGER.warn("批量导入[{}]连续 {} 只失败，判定进入数据源封堵窗口，暂停 {}ms 后继续", taskId, consecutiveFailures, batchPauseMillis);
+                saveBatch(new BatchImportProgressVO(taskId, BatchImportProgressVO.RUNNING,
+                        "疑似数据源封堵窗口，暂停 " + (batchPauseMillis / 1000) + " 秒后自动继续",
+                        codes.size(), i + 1, success, failed, null, null, List.copyOf(failures), startedAt, null));
+                if (!sleepQuietly(batchPauseMillis)) {
+                    interrupted(taskId, codes.size(), i + 1, success, failed, failures);
+                    return;
+                }
+                consecutiveFailures = 0;
+            } else if (i < codes.size() - 1) {
+                if (!sleepQuietly(batchIntervalMillis)) {
+                    interrupted(taskId, codes.size(), i + 1, success, failed, failures);
+                    return;
+                }
+            }
+        }
+        String summary = "批量导入完成：成功 " + success + " 只" + (failed > 0 ? "，失败 " + failed + " 只（见失败清单）" : "");
+        LOGGER.info("批量导入[{}]结束：{}", taskId, summary);
+        saveBatch(new BatchImportProgressVO(taskId, BatchImportProgressVO.DONE, summary,
+                codes.size(), codes.size(), success, failed, null, null, List.copyOf(failures), startedAt, LocalDateTime.now()));
+    }
+
+    /** 可中断的等待：正常睡完返回 true；被中断时恢复中断位、记"人工终止"进度并返回 false */
+    private boolean sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+            return true;
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private void interrupted(String taskId, int total, int done, int success, int failed,
+                             List<BatchImportProgressVO.FailItem> failures) {
+        saveBatch(new BatchImportProgressVO(taskId, BatchImportProgressVO.DONE,
+                "任务被中断（已完成 " + success + " 只，失败 " + failed + " 只）",
+                total, done, success, failed, null, null, List.copyOf(failures), LocalDateTime.now(), LocalDateTime.now()));
+    }
+
+    private void saveBatch(BatchImportProgressVO progress) {
+        redisTemplate.opsForValue().set(BATCH_PROGRESS_KEY + progress.taskId(), JsonUtils.toJson(progress),
+                Duration.ofHours(2));
+    }
+
+    /** 当前自选池内全部基金代码（status=1） */
+    private Set<String> poolCodes() {
+        Set<String> codes = new HashSet<>();
+        fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>().eq(FundBasic::getStatus, 1))
+                .forEach(fund -> codes.add(fund.getFundCode()));
+        return codes;
+    }
+
+    /**
+     * 单基金导入管线（同步执行）。历史上标过 @Async("taskExecutor")，但 self-invocation 不走代理、
+     * 实际一直在请求线程内同步执行，故 V5.41 起去掉该注解如实标注；批量导入按只调用本方法。
+     * 失败抛异常（含原因）由调用方决定降级/记失败清单；进度仍按 taskId 写 Redis（无人轮询亦无副作用）。
+     */
+    private void doImport(String taskId, FundCheckVO check) {
+        // 防御：调用方（批量循环）可能未先判 supported，货币型/非指数基金此处 fundType 为 null，必须先拦
+        if (!check.supported()) {
+            throw new BizException(check.reason());
+        }
         LocalDateTime startAt = LocalDateTime.now();
         String code = check.code();
         try {
@@ -168,6 +449,9 @@ public class ImportServiceImpl implements ImportService {
             LOGGER.error("基金[{}]历史导入失败", code, e);
             writeLog(SyncTypeEnum.HISTORY, code, false, 0, e.getMessage(), startAt);
             progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.FAILED, "导入失败", 0, 0, e.getMessage()));
+            // 批量导入按只捕获此异常记入失败清单；单只导入由 importFund 透出给前端
+            throw e instanceof BizException biz ? biz
+                    : new BizException(e.getMessage() == null ? "导入失败" : e.getMessage());
         }
     }
 

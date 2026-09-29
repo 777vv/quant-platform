@@ -41,6 +41,58 @@ export interface TaskProgressVO {
   message: string | null
 }
 
+/** 批量导入候选（ETF，按规模/上市年限筛选；V5.41） */
+export interface EtfCandidate {
+  /** 基金代码 */
+  fundCode: string
+  /** 基金名称 */
+  fundName: string
+  /** 规模（亿元，总市值口径） */
+  scaleYi: number
+  /** 上市日期（近似成立日期） */
+  listedDate: string
+  /** 是否已在自选池中（在池中的不可勾选） */
+  inPool: boolean
+}
+
+/** 批量导入失败项（只级失败不中断批量，结束后可一键重试） */
+export interface BatchFailItem {
+  /** 基金代码 */
+  code: string
+  /** 基金名称（校验失败可能取不到） */
+  name: string
+  /** 失败原因 */
+  reason: string
+}
+
+/** 批量导入任务进度（Redis 2h 过期，前端轮询渲染） */
+export interface BatchImportProgress {
+  taskId: string
+  status: 'RUNNING' | 'DONE' | 'FAILED'
+  /** 当前状态描述（含封堵暂停提示） */
+  message: string
+  total: number
+  done: number
+  success: number
+  failed: number
+  /** 正在导入的基金代码 */
+  currentCode: string | null
+  /** 正在导入的基金名称 */
+  currentName: string | null
+  failures: BatchFailItem[]
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+/** 批量导入发起结果（铁律 11：回显真实的接收/跳过状态） */
+export interface BatchStartResult {
+  taskId: string
+  /** 实际排队导入的代码 */
+  accepted: string[]
+  /** 已在自选池被跳过的代码 */
+  skippedExisting: string[]
+}
+
 export interface WatchItemVO {
   /** 基金代码 */
   fundCode: string
@@ -189,6 +241,21 @@ export function importFund(code: string) {
 
 export function importProgress(taskId: string) {
   return get<TaskProgressVO>('/funds/import/progress', { taskId })
+}
+
+/** 批量导入候选：全市场场内 ETF 按规模（亿）/上市年限筛选（V5.41，结果服务端缓存 10 分钟） */
+export function etfCandidates(minScaleYi: number, minYears: number) {
+  return get<EtfCandidate[]>('/funds/import/batch/candidates', { minScaleYi, minYears })
+}
+
+/** 发起批量导入：返回 taskId 与接收/跳过清单（已在池中的自动跳过） */
+export function startBatchImport(codes: string[]) {
+  return post<BatchStartResult>('/funds/import/batch', { codes })
+}
+
+/** 批量导入进度轮询 */
+export function batchImportProgress(taskId: string) {
+  return get<BatchImportProgress>('/funds/import/batch/progress', { taskId })
 }
 
 export function watchlist() {

@@ -52,9 +52,13 @@ public interface SyncService {
     void refreshAllProfiles();
 
     /**
-     * 自动同步（V5.3）：全部自选 ETF 盘中每 10 分钟增量同步
-     * （仅交易日交易时段 9:30-11:30 / 13:00-15:00，任务内自判；节假日由数据源自判并全天跳过）。
-     * 场外基金净值没有盘中口径，仍走 20:00 / 次日 07:00 的净值同步。
+     * 盘中同步·持仓基金（V5.42）：每 4 分钟一轮（调度与交易时段闸门在 FundSyncJobs）。
+     * 范围 = 自选中 fund_position.total_share > 0 的 ETF；场外无盘中口径不参加。
      */
-    void syncWatchFundsIntraday();
+    void syncHeldFundsIntraday();
+
+    /**
+     * 盘中同步·自选中的非持仓基金（V5.42）：每 30 分钟一轮，cron 与持仓轮次错开 3 分钟防重叠。
+     */
+    void syncNonHeldFundsIntraday();
 }

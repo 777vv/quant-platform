@@ -76,3 +76,31 @@ export interface MarketSignalOverview {
 export function marketSignalOverview(peWindow: PeWindow) {
   return get<MarketSignalOverview>('/market-signals/overview', { peWindow })
 }
+
+/**
+ * 带 5 分钟缓存的总览（V5.44 用户口径：菜单往返 5 分钟内不重复加载）。
+ *
+ * 缓存必须放在**这个 .ts 模块**里而不是页面的 `<script setup>`：SFC 的 script setup 是 setup 函数体，
+ * 每次组件实例化都会重新求值，放在那里的"模块级变量"其实每次都被重置（实测踩过：
+ * 切菜单回来仍重新请求）。ES 模块在同一个页面生命周期内只求值一次，才是真正的单例；
+ * 浏览器 F5 重建模块 → 视为主动要新数据，自然重新拉取。
+ */
+const CACHE_TTL_MS = 5 * 60 * 1000
+let cache: { key: PeWindow; at: number; data: MarketSignalOverview } | null = null
+
+/**
+ * 取总览（默认走缓存，force=true 强制拉取）。
+ *
+ * @param peWindow PE 分位窗口（作为缓存键，切窗口各自复用）
+ * @param force    是否强制刷新（页面「刷新」按钮用）
+ * @returns data=数据；at=取数时间戳（缓存命中时仍是首次取数时间）
+ */
+export async function marketSignalOverviewCached(peWindow: PeWindow, force = false)
+    : Promise<{ data: MarketSignalOverview; at: number }> {
+  if (!force && cache && cache.key === peWindow && Date.now() - cache.at < CACHE_TTL_MS) {
+    return { data: cache.data, at: cache.at }
+  }
+  const data = await marketSignalOverview(peWindow)
+  cache = { key: peWindow, at: Date.now(), data }
+  return { data, at: cache.at }
+}

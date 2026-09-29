@@ -912,8 +912,6 @@ onMounted(() => {
   loadIndices()
   loadCurve()
   loadWeekCurve()
-  loadFundNames()
-  loadRecentTrades()
   loadSignals()
   document.addEventListener('visibilitychange', onVisibilityChange)
   timer = window.setInterval(() => {

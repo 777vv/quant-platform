@@ -444,7 +444,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
@@ -1557,6 +1557,14 @@ const backtestForm = reactive({
 })
 const backtestRecords = ref<BacktestRecord[]>([])
 const backtestRunning = ref(false)
+/** 回测状态轮询句柄：组件卸载时必须清理，否则离开页面后仍每 1.5 秒轮询直到回测结束 */
+let backtestTimer: number | undefined
+onUnmounted(() => {
+  if (backtestTimer) {
+    window.clearInterval(backtestTimer)
+    backtestTimer = undefined
+  }
+})
 
 async function loadStrategies() {
   strategies.value = await fundStrategies(code)
@@ -1727,10 +1735,11 @@ async function handleBacktest() {
   try {
     const res = await createBacktest({ fundCode: code, ...backtestForm })
     ElMessage.success('回测任务已提交，稍候刷新查看结果')
-    const timer = window.setInterval(async () => {
+    backtestTimer = window.setInterval(async () => {
       const record = await backtestDetail(res.id)
       if (record.status !== 0) {
-        window.clearInterval(timer)
+        window.clearInterval(backtestTimer)
+        backtestTimer = undefined
         loadBacktests()
         if (record.status === 1) {
           ElMessage.success('回测完成，点击"结果"查看')

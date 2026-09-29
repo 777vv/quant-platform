@@ -41,7 +41,7 @@ public class FundSyncJobs {
      * 每交易日 15:30 ETF 日K全量覆盖（修正前复权口径）——当天的收盘价由这轮定稿。
      * 交易日闸门（V5.33）：节假日数据源没有新 bar，跑了只会空转甚至撞限流（2026-09-25 中秋实测失败）。
      */
-    @Scheduled(cron = "0 30 15 * * MON-FRI")
+    @Scheduled(cron = "0 30 15 * * MON-FRI", zone = "Asia/Shanghai")
     public void syncEtfDaily() {
         JobLogs.run("etf:daily", () -> {
             if (!isClosedToday("etf:daily")) {
@@ -54,7 +54,7 @@ public class FundSyncJobs {
      * 每交易日 15:05 档案（规模/费率）强制刷新（用户口径：收盘后立即再刷一次最新规模），
      * 并把当日规模快照落进 fund_scale_history（行情图「基金规模」副图数据源）。
      */
-    @Scheduled(cron = "0 5 15 * * MON-FRI")
+    @Scheduled(cron = "0 5 15 * * MON-FRI", zone = "Asia/Shanghai")
     public void refreshProfiles() {
         JobLogs.run("profile:refresh", syncService::refreshAllProfiles);
     }
@@ -64,7 +64,7 @@ public class FundSyncJobs {
      * 交易日闸门（V5.33）：节假日净值源无新数据，空转无意义。注意闸门加在**本任务**而不是
      * 共用的 syncAllOtcNav 上——07:00 的补拉是每天（含周末节假日）的兜底，必须照常跑。
      */
-    @Scheduled(cron = "0 0 20 * * MON-FRI")
+    @Scheduled(cron = "0 0 20 * * MON-FRI", zone = "Asia/Shanghai")
     public void syncNav() {
         JobLogs.run("nav", () -> {
             if (!isClosedToday("nav")) {
@@ -74,13 +74,13 @@ public class FundSyncJobs {
     }
 
     /** 次日 07:00 净值补拉（幂等，未公布的此处补齐）——**每天跑，不加交易日闸门**（兜底性质） */
-    @Scheduled(cron = "0 0 7 * * *")
+    @Scheduled(cron = "0 0 7 * * *", zone = "Asia/Shanghai")
     public void compensateNav() {
         JobLogs.run("nav:compensate", syncService::syncAllOtcNav);
     }
 
     /** 每交易日 20:30 指数估值增量同步。交易日闸门（V5.33）：节假日估值源无新数据，空转无意义。 */
-    @Scheduled(cron = "0 30 20 * * MON-FRI")
+    @Scheduled(cron = "0 30 20 * * MON-FRI", zone = "Asia/Shanghai")
     public void syncValuation() {
         JobLogs.run("valuation", () -> {
             if (!isClosedToday("valuation")) {
@@ -94,7 +94,7 @@ public class FundSyncJobs {
      * 周末跳过（V5.33）：全球休市，刷新只拿陈旧缓存；境内法定节假日**不跳**——美股等海外市场照常交易，
      * 本任务的时间跨度（到 23:59）就是为覆盖海外时段而设。
      */
-    @Scheduled(cron = "0 */5 9-23 * * *")
+    @Scheduled(cron = "0 */5 9-23 * * *", zone = "Asia/Shanghai")
     public void refreshIndexQuotes() {
         JobLogs.run("index:quotes", () -> {
             DayOfWeek week = LocalDate.now().getDayOfWeek();
@@ -147,7 +147,7 @@ public class FundSyncJobs {
     }
 
     /** 每日 22:00 数据同步状态汇总（刷新仪表盘速览缓存） */
-    @Scheduled(cron = "0 0 22 * * *")
+    @Scheduled(cron = "0 0 22 * * *", zone = "Asia/Shanghai")
     public void syncSummary() {
         JobLogs.run("sync:summary", syncSummaryService::computeSummary);
     }

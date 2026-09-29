@@ -34,7 +34,7 @@ public class SyncAlertJob {
      * 每日 22:05 检查同步状态并对滞后基金告警。
      * 统一走 {@link JobLogs#run}：打印「开始执行 / 执行结束（耗时）」+ 任务级 traceId 串联本轮日志。
      */
-    @Scheduled(cron = "0 5 22 * * *")
+    @Scheduled(cron = "0 5 22 * * *", zone = "Asia/Shanghai")
     public void alertLagging() {
         JobLogs.run("sync:alert", () -> {
             List<DashboardOverviewVO.SyncStatusItem> lagging = syncSummaryService.summary().stream()

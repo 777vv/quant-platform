@@ -25,6 +25,8 @@
             <el-option v-for="f in fundOptions" :key="f.fundCode" :value="f.fundCode" :label="`${f.fundName} ${f.fundCode}`" />
           </el-select>
           <span class="muted">全部指标由库内数据计算，只作参考不构成投资建议；各列数据截至日不同，见对应列</span>
+          <el-button size="small" text :loading="loading" @click="load(true)">刷新</el-button>
+          <span v-if="loadedAt" class="muted">数据时间 {{ loadedAt }}</span>
         </div>
       </template>
 
@@ -240,7 +242,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { changeColorClass, formatAmount, formatPercent } from '@/utils/format'
-import { marketSignalOverview, type MarketSignalRow, type PeWindow } from '@/api/marketSignals'
+import { marketSignalOverviewCached, type MarketSignalRow, type PeWindow } from '@/api/marketSignals'
 
 const loading = ref(false)
 const activeTab = ref('chg')
@@ -350,15 +352,30 @@ watch(selectedTags, () => {
   page.value = 1
 })
 
-async function load() {
+/** 本次展示数据的取数时间（缓存命中时保持首次取数时间，便于判断新鲜度） */
+const loadedAt = ref('')
+
+/**
+ * 取数：默认走 5 分钟缓存（缓存实体在 api 模块里，见 marketSignalOverviewCached 注释），
+ * force=true（「刷新」按钮）强制拉取。
+ */
+async function load(force = false) {
   loading.value = true
   try {
-    const data = await marketSignalOverview(peWindow.value)
+    const { data, at } = await marketSignalOverviewCached(peWindow.value, force)
     rows.value = data.rows
+    loadedAt.value = formatTime(at)
     page.value = 1
   } finally {
     loading.value = false
   }
+}
+
+/** 取数时间显示为 HH:mm:ss */
+function formatTime(timestamp: number): string {
+  const d = new Date(timestamp)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 /** 估值灯色：<30 低估 / 30~70 正常 / >70 高估 / 无数据 */
@@ -392,7 +409,8 @@ function isPremiumWarn(row: MarketSignalRow): boolean {
   return row.premiumPct != null && row.premiumPct > premiumThreshold.value
 }
 
-onMounted(load)
+// 显式箭头调用：避免 Hook 回调参数被当成 force 传进 load（那会让缓存永远失效）
+onMounted(() => load())
 </script>
 
 <style scoped>

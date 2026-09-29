@@ -4,14 +4,17 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.quant.common.exception.BizException;
 import com.quant.common.util.JsonUtils;
 import com.quant.fund.client.EastmoneyClient;
@@ -115,8 +118,20 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         this.redisTemplate = redisTemplate;
     }
 
+    /** 汇总备忘有效期：仪表盘 /assets 与 /overview 两次相邻调用共享一次计算（数据只在同步时点变化） */
+    private static final Duration SUMMARY_CACHE_TTL = Duration.ofSeconds(30);
+
+    /** 汇总 30 秒备忘：仪表盘 /assets 与 /overview 两次相邻调用共享一次计算（数据只在同步时点变化，30 秒内视为新鲜） */
+    private volatile AssetSummaryVO summaryCache;
+    private volatile LocalDateTime summaryCachedAt;
+
     @Override
     public AssetSummaryVO summary() {
+        AssetSummaryVO cached = summaryCache;
+        if (cached != null && summaryCachedAt != null
+                && Duration.between(summaryCachedAt, LocalDateTime.now()).compareTo(SUMMARY_CACHE_TTL) < 0) {
+            return cached;
+        }
         List<HoldingVO> holdings = tradeService.holdings();
         int watchCount = Math.toIntExact(fundBasicMapper.selectCount(
                 new LambdaQueryWrapper<FundBasic>().eq(FundBasic::getStatus, 1)));
@@ -141,25 +156,47 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
                 ? totalPnl.multiply(BigDecimal.valueOf(100)).divide(netInvested, 2, RoundingMode.HALF_UP) : null;
         BigDecimal floatingPct = totalCost.compareTo(BigDecimal.ZERO) > 0
                 ? floating.multiply(BigDecimal.valueOf(100)).divide(totalCost, 2, RoundingMode.HALF_UP) : null;
-        PeriodPnl month = periodPnl(LocalDate.now().withDayOfMonth(1));
-        PeriodPnl year = periodPnl(LocalDate.of(LocalDate.now().getYear(), 1, 1));
-        return new AssetSummaryVO(money(totalAssets), money(cash), money(marketValue), money(totalCost), money(dayPnl),
-                money(floating), floatingPct, money(realized), money(totalPnl), totalPnlPct, weekPnl(),
+        // 月/年/周三个周期原本各算一遍全量日序列（每次对每只基金查流水+价格，N+1），
+        // 现只算一次"本年口径向前多看 3 个月"的最长序列，三个周期各自切片（V5.43 性能修正）
+        List<FundBasic> funds = tradedFunds();
+        LocalDate yearStart = LocalDate.of(LocalDate.now().getYear(), 1, 1);
+        SeriesData longSeries = funds.isEmpty()
+                ? new SeriesData(List.of(), List.of(), List.of())
+                : computeSeries(yearStart.minusMonths(FIRST_PERIOD_LOOKBACK_MONTHS), funds);
+        PeriodPnl month = periodPnlOf(LocalDate.now().withDayOfMonth(1),
+                sliceFrom(longSeries, LocalDate.now().withDayOfMonth(1).minusMonths(FIRST_PERIOD_LOOKBACK_MONTHS)));
+        PeriodPnl year = periodPnlOf(yearStart, sliceFrom(longSeries, yearStart.minusMonths(FIRST_PERIOD_LOOKBACK_MONTHS)));
+        AssetSummaryVO result = new AssetSummaryVO(money(totalAssets), money(cash), money(marketValue), money(totalCost), money(dayPnl),
+                money(floating), floatingPct, money(realized), money(totalPnl), totalPnlPct, weekPnlOf(
+                        sliceFrom(longSeries, LocalDate.now().minusDays(14))),
                 month.pnl(), month.pct(), year.pnl(), year.pct(),
                 holdings.size(), watchCount);
+        summaryCache = result;
+        summaryCachedAt = LocalDateTime.now();
+        return result;
+    }
+
+    /** 取序列中日期 ≥ from 的切片（pn/mv 同索引切），供月/年/周三个周期共享同一次序列计算 */
+    private SeriesData sliceFrom(SeriesData series, LocalDate from) {
+        List<String> dates = new ArrayList<>();
+        List<BigDecimal> pnl = new ArrayList<>();
+        List<BigDecimal> marketValues = new ArrayList<>();
+        for (int i = 0; i < series.dates().size(); i++) {
+            if (LocalDate.parse(series.dates().get(i)).isBefore(from)) {
+                continue;
+            }
+            dates.add(series.dates().get(i));
+            pnl.add(series.pnl().get(i));
+            marketValues.add(series.marketValues().get(i));
+        }
+        return new SeriesData(dates, pnl, marketValues);
     }
 
     /**
      * 区间收益（本月/本年）：以区间起始日之前最后一个数据日为基准，
      * 收益率分母取基准日的持仓市值（而非净投入），更贴近"这段时间资产涨了多少"的直觉。
      */
-    private PeriodPnl periodPnl(LocalDate periodStart) {
-        List<FundBasic> funds = tradedFunds();
-        if (funds.isEmpty()) {
-            return new PeriodPnl(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), null);
-        }
-        LocalDate seriesStart = periodStart.minusMonths(FIRST_PERIOD_LOOKBACK_MONTHS);
-        SeriesData series = computeSeries(seriesStart, funds);
+    private PeriodPnl periodPnlOf(LocalDate periodStart, SeriesData series) {
         if (series.dates().isEmpty()) {
             return new PeriodPnl(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), null);
         }
@@ -207,19 +244,97 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         List<FundBasic> funds = fundBasicMapper.selectList(
                 new LambdaQueryWrapper<FundBasic>().eq(FundBasic::getStatus, 1));
         LocalDate target = LocalDate.now().minusDays(7);
+        // 批量取价（V5.43 性能修正）：原逐基金 2 次点查（N+1），现 ETF/场外各 2 条 group-by 回捞，共 4 次
+        Map<String, BigDecimal> lastPrices = latestPricesOnOrBefore(funds, LocalDate.now());
+        Map<String, BigDecimal> pastPrices = latestPricesOnOrBefore(funds, target);
         List<DashboardOverviewVO.MoverItem> movers = new ArrayList<>();
         for (FundBasic fund : funds) {
-            LastQuote quote = fundQueryService.lastQuote(fund);
-            BigDecimal past = priceOnOrBefore(fund, target);
-            if (quote == null || quote.price() == null || past == null || past.compareTo(BigDecimal.ZERO) <= 0) {
+            BigDecimal quote = lastPrices.get(fund.getFundCode());
+            BigDecimal past = pastPrices.get(fund.getFundCode());
+            if (quote == null || past == null || past.compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
             }
             movers.add(new DashboardOverviewVO.MoverItem(fund.getFundCode(), fund.getFundName(),
-                    quote.price().subtract(past).multiply(BigDecimal.valueOf(100))
+                    quote.subtract(past).multiply(BigDecimal.valueOf(100))
                             .divide(past, 2, RoundingMode.HALF_UP)));
         }
         movers.sort(Comparator.comparing(DashboardOverviewVO.MoverItem::changePct7d).reversed());
         return movers;
+    }
+
+    /**
+     * 批量取"每只基金在 onOrBefore（含）之前最近一根的价格"（ETF→收盘价 / 场外→单位净值）。
+     * 两步法：① group-by 拿每只基金的最近日期；② 按"代码 ∈ 范围 且 日期 ∈ 候选日期集合"回捞，
+     * 内存里只保留各自最大日期那根（第二步会带回少量其它基金同日行，属预期）。
+     */
+    private Map<String, BigDecimal> latestPricesOnOrBefore(List<FundBasic> funds, LocalDate onOrBefore) {
+        List<String> etfCodes = new ArrayList<>();
+        List<String> otcCodes = new ArrayList<>();
+        for (FundBasic fund : funds) {
+            if (FundTypeEnum.ETF.getCode() == fund.getFundType()) {
+                etfCodes.add(fund.getFundCode());
+            } else {
+                otcCodes.add(fund.getFundCode());
+            }
+        }
+        Map<String, BigDecimal> result = new HashMap<>();
+        latestEtfPricesOnOrBefore(etfCodes, onOrBefore, result);
+        latestOtcPricesOnOrBefore(otcCodes, onOrBefore, result);
+        return result;
+    }
+
+    /** ETF：两步回捞最新收盘价 */
+    private void latestEtfPricesOnOrBefore(List<String> codes, LocalDate onOrBefore, Map<String, BigDecimal> out) {
+        if (codes.isEmpty()) {
+            return;
+        }
+        List<FundEtfKline> maxRows = klineMapper.selectList(new QueryWrapper<FundEtfKline>()
+                .select("fund_code", "MAX(trade_date) AS trade_date")
+                .in("fund_code", codes)
+                .le("trade_date", onOrBefore)
+                .groupBy("fund_code"));
+        Map<String, LocalDate> maxDates = new HashMap<>();
+        for (FundEtfKline row : maxRows) {
+            maxDates.put(row.getFundCode(), row.getTradeDate());
+        }
+        if (maxDates.isEmpty()) {
+            return;
+        }
+        List<FundEtfKline> rows = klineMapper.selectList(new LambdaQueryWrapper<FundEtfKline>()
+                .in(FundEtfKline::getFundCode, codes)
+                .in(FundEtfKline::getTradeDate, maxDates.values()));
+        for (FundEtfKline row : rows) {
+            if (row.getTradeDate().equals(maxDates.get(row.getFundCode())) && row.getClose() != null) {
+                out.put(row.getFundCode(), row.getClose());
+            }
+        }
+    }
+
+    /** 场外：两步回捞最新单位净值 */
+    private void latestOtcPricesOnOrBefore(List<String> codes, LocalDate onOrBefore, Map<String, BigDecimal> out) {
+        if (codes.isEmpty()) {
+            return;
+        }
+        List<FundNav> maxRows = navMapper.selectList(new QueryWrapper<FundNav>()
+                .select("fund_code", "MAX(nav_date) AS nav_date")
+                .in("fund_code", codes)
+                .le("nav_date", onOrBefore)
+                .groupBy("fund_code"));
+        Map<String, LocalDate> maxDates = new HashMap<>();
+        for (FundNav row : maxRows) {
+            maxDates.put(row.getFundCode(), row.getNavDate());
+        }
+        if (maxDates.isEmpty()) {
+            return;
+        }
+        List<FundNav> rows = navMapper.selectList(new LambdaQueryWrapper<FundNav>()
+                .in(FundNav::getFundCode, codes)
+                .in(FundNav::getNavDate, maxDates.values()));
+        for (FundNav row : rows) {
+            if (row.getNavDate().equals(maxDates.get(row.getFundCode())) && row.getUnitNav() != null) {
+                out.put(row.getFundCode(), row.getUnitNav());
+            }
+        }
     }
 
     /**
@@ -271,12 +386,7 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
     }
 
     /** 近 7 日收益 = 今日累计收益 - 7 个自然日前（或其后首个数据日）累计收益 */
-    private BigDecimal weekPnl() {
-        List<FundBasic> funds = tradedFunds();
-        if (funds.isEmpty()) {
-            return BigDecimal.ZERO;
-        }
-        SeriesData series = computeSeries(LocalDate.now().minusDays(14), funds);
+    private BigDecimal weekPnlOf(SeriesData series) {
         if (series.dates().isEmpty()) {
             return BigDecimal.ZERO;
         }

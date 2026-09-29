@@ -35,14 +35,10 @@
     </el-row>
     <el-tabs v-model="activeTab">
       <el-tab-pane label="自选基金" name="watch">
-        <el-row class="toolbar" justify="space-between">
-          <el-col :span="8">
-            <span class="muted">关键词与标签筛选均为服务端筛选，作用于全部分页</span>
-          </el-col>
-          <el-col :span="3" style="text-align: right">
-            <el-button type="primary" @click="$router.push('/import')">导入基金</el-button>
-          </el-col>
-        </el-row>
+        <!-- 导入入口统一走侧栏【数据导入】菜单，此处不再重复放按钮（V5.44 用户口径） -->
+        <div class="toolbar">
+          <span class="muted">关键词与标签筛选均为服务端筛选，作用于全部分页</span>
+        </div>
         <!-- row-key 必填：筛选/增删后行会被复用，缺 row-key 时单元格内 v-for 的标签会残留上一行的标签 -->
         <el-table
           ref="watchTableRef"

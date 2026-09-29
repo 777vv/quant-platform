@@ -152,6 +152,23 @@ description: 本项目（个人量化投资助手）前端 UI 开发与样式改
 | `npm run build` | 构建并把产物拷入后端 static（后端打包前必须执行） |
 | `npm run lint` / `npm run format` | ESLint / Prettier |
 
+### 3.7.1 跨组件实例的缓存必须放独立 `.ts` 模块 ⚠️ 易踩（V5.44 实测）
+
+想在"切菜单离开页面、回来时不重新请求"（如列表 5 分钟缓存）时，缓存变量**不能写在页面 `<script setup>` 顶层**：
+
+```ts
+// ✗ 页面 <script setup> 顶层 —— 看着像模块级，其实每次组件实例化都重新执行 setup 函数体，缓存每次被重置
+let cache: Row[] | null = null
+
+// ✓ 放在独立 .ts 模块（如 src/api/xxx.ts）—— ES 模块在同一页面生命周期内只求值一次，才是真单例
+//   src/api/marketSignals.ts
+const CACHE_TTL_MS = 5 * 60 * 1000
+let cache: { key: string; at: number; data: T } | null = null
+export async function fetchCached(key: string, force = false): Promise<{ data: T; at: number }> { ... }
+```
+
+要点：① 缓存按查询参数（如 PE 窗口）分键，切换参数时各自复用；② 给一个 `force` 入口（页面放「刷新」按钮），否则缓存期内想立刻看新数据没辙；③ 界面上显示「数据时间」，让用户知道这批数据是几点取的；④ 浏览器 F5 会重建模块 = 视为主动要新数据，无需额外处理。
+
 ## 6. 常见反例（不要这样做）
 
 ```vue

@@ -60,9 +60,9 @@ router
             <el-icon><ArrowDown /></el-icon>
           </span>
           <template #dropdown>
+            <!-- V5.45 用户口径：只保留退出登录；平台配置走侧栏菜单，此处不再重复入口 -->
             <el-dropdown-menu>
-              <el-dropdown-item command="user">平台配置</el-dropdown-item>
-              <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -96,12 +96,11 @@ onMounted(() => {
   }
 })
 
+/** 用户下拉菜单（当前只有退出登录；平台配置已收归侧栏菜单） */
 async function handleCommand(command: string) {
   if (command === 'logout') {
     await userStore.logout()
     await router.push('/login')
-  } else if (command === 'user') {
-    await router.push('/user')
   }
 }
 </script>

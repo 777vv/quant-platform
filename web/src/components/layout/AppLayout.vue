@@ -48,6 +48,10 @@ router
           <el-icon><UserFilled /></el-icon>
           <span>平台配置</span>
         </el-menu-item>
+        <el-menu-item index="/login-logs">
+          <el-icon><Clock /></el-icon>
+          <span>登录日志</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

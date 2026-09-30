@@ -26,7 +26,8 @@ const router = createRouter({
         { path: 'import', name: 'import', component: () => import('@/views/import/ImportView.vue'), meta: { title: '数据导入' } },
         { path: 'ai-usage', name: 'aiUsage', component: () => import('@/views/ai/AiUsageView.vue'), meta: { title: 'AI用量统计' } },
         { path: 'manual', name: 'manual', component: () => import('@/views/ai/ManualView.vue'), meta: { title: '使用手册' } },
-        { path: 'user', name: 'user', component: () => import('@/views/user/UserCenterView.vue'), meta: { title: '平台配置' } }
+        { path: 'user', name: 'user', component: () => import('@/views/user/UserCenterView.vue'), meta: { title: '平台配置' } },
+        { path: 'login-logs', name: 'loginLogs', component: () => import('@/views/user/LoginLogView.vue'), meta: { title: '登录日志' } }
       ]
     },
     { path: '/:pathMatch(.*)*', redirect: '/' }

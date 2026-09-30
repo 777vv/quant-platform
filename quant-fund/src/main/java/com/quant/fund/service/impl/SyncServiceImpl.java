@@ -909,10 +909,13 @@ public class SyncServiceImpl implements SyncService {
     }
 
     private void updateLastSync(FundBasic fund, LocalDate maxDate) {
+        // last_sync_at 与数据日期解耦（V5.49）：每次同步动作成功即刷新，盘中数据日期不变也照刷，
+        // 前端"最后同步"列的时分秒才是"最近一次同步发生在几点"
+        fund.setLastSyncAt(LocalDateTime.now());
         if (maxDate != null && (fund.getLastSyncDate() == null || maxDate.isAfter(fund.getLastSyncDate()))) {
             fund.setLastSyncDate(maxDate);
-            fundBasicMapper.updateById(fund);
         }
+        fundBasicMapper.updateById(fund);
     }
 
     private void writeLog(SyncTypeEnum type, String fundCode, boolean ok, int count, String error) {

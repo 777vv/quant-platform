@@ -92,7 +92,7 @@
             </el-table-column>
           </el-table>
           <div class="pager-row">
-            <el-pagination v-model:current-page="page" :page-size="PAGE_SIZE" :total="filteredRows.length" layout="total, prev, pager, next" background />
+            <el-pagination v-model:current-page="chgPage" v-model:page-size="chgSize" :page-sizes="PAGE_SIZES" :total="filteredRows.length" layout="total, sizes, prev, pager, next" background />
           </div>
         </el-tab-pane>
 
@@ -156,7 +156,7 @@
             </el-table-column>
           </el-table>
           <div class="pager-row">
-            <el-pagination v-model:current-page="page" :page-size="PAGE_SIZE" :total="filteredRows.length" layout="total, prev, pager, next" background />
+            <el-pagination v-model:current-page="valPage" v-model:page-size="valSize" :page-sizes="PAGE_SIZES" :total="filteredRows.length" layout="total, sizes, prev, pager, next" background />
           </div>
         </el-tab-pane>
 
@@ -231,7 +231,7 @@
             </el-table-column>
           </el-table>
           <div class="pager-row">
-            <el-pagination v-model:current-page="page" :page-size="PAGE_SIZE" :total="filteredRows.length" layout="total, prev, pager, next" background />
+            <el-pagination v-model:current-page="premiumPage" v-model:page-size="premiumSize" :page-sizes="PAGE_SIZES" :total="filteredRows.length" layout="total, sizes, prev, pager, next" background />
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -297,14 +297,18 @@ const fundOptions = computed(() =>
 
 const selectedFund = ref<string | null>(null)
 
-// 换基金/清空后页码回位，防越界空页
-watch(selectedFund, () => {
-  page.value = 1
-})
+// 筛选/换基金/换数据后所有页签页码回位，防越界空页（V5.36 持仓列表同款处理）
+watch(selectedFund, resetPages)
+watch(selectedTags, resetPages)
 
-// ===== 分页（每页 10 条，与持仓列表同模式）：数据量小、三个页签共用一份计算结果，故前端分页 =====
-const PAGE_SIZE = 10
-const page = ref(1)
+// ===== 分页（V5.51 用户口径：每页条数可自选；三个页签的页码与条数各自独立，互不影响）=====
+const PAGE_SIZES = [10, 20, 50, 100]
+const chgPage = ref(1)
+const chgSize = ref(10)
+const valPage = ref(1)
+const valSize = ref(10)
+const premiumPage = ref(1)
+const premiumSize = ref(10)
 
 // 各页签的排序状态：必须对**全量**排序后再切页，否则点列头只排当前页、跨页排序会错
 const chgSort = ref<{ prop: string; order: string | null }>({ prop: 'chg7d', order: 'descending' })
@@ -336,24 +340,30 @@ function sortByState(list: MarketSignalRow[], state: { prop: string; order: stri
   return sorted
 }
 
-function paged(list: MarketSignalRow[]): MarketSignalRow[] {
-  return list.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE)
+function paged(list: MarketSignalRow[], pageNumber: number, sizeNumber: number): MarketSignalRow[] {
+  return list.slice((pageNumber - 1) * sizeNumber, pageNumber * sizeNumber)
 }
 
 /** 涨跌榜：全量排序 → 切当前页 */
-const chgRows = computed(() => paged(sortByState(filteredRows.value, chgSort.value)))
+const chgRows = computed(() => paged(sortByState(filteredRows.value, chgSort.value), chgPage.value, chgSize.value))
 /** 估值红绿灯：无排序列，直接切当前页 */
-const valRows = computed(() => paged(filteredRows.value))
+const valRows = computed(() => paged(filteredRows.value, valPage.value, valSize.value))
 /** 技术面与溢价：全量排序 → 切当前页 */
-const premiumRows = computed(() => paged(sortByState(filteredRows.value, premiumSortState.value)))
+const premiumRows = computed(() => paged(sortByState(filteredRows.value, premiumSortState.value), premiumPage.value, premiumSize.value))
 
-// 筛选/换数据后页码回位，防越界空页（V5.36 持仓列表同款处理）
-watch(selectedTags, () => {
-  page.value = 1
-})
+// 筛选/换基金/换数据后所有页签页码回位，防越界空页（V5.36 持仓列表同款处理）
+watch(selectedFund, resetPages)
+watch(selectedTags, resetPages)
 
 /** 本次展示数据的取数时间（缓存命中时保持首次取数时间，便于判断新鲜度） */
 const loadedAt = ref('')
+
+/** 筛选/换数据后所有页签页码回位，防越界空页 */
+function resetPages() {
+  chgPage.value = 1
+  valPage.value = 1
+  premiumPage.value = 1
+}
 
 /**
  * 取数：默认走 5 分钟缓存（缓存实体在 api 模块里，见 marketSignalOverviewCached 注释），
@@ -365,7 +375,7 @@ async function load(force = false) {
     const { data, at } = await marketSignalOverviewCached(peWindow.value, force)
     rows.value = data.rows
     loadedAt.value = formatTime(at)
-    page.value = 1
+    resetPages()
   } finally {
     loading.value = false
   }

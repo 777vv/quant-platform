@@ -170,7 +170,7 @@ public class FundQueryServiceImpl implements FundQueryService {
                 fund.getIndexName(), fund.getIndexCode(),
                 quote == null ? null : quote.price(),
                 quote == null ? null : quote.changePct(),
-                percentile, fund.getLastSyncDate(),
+                percentile, fund.getLastSyncDate(), fund.getLastSyncAt(),
                 fund.getFundScale(), fund.getFundScaleDate(),
                 opFeeRateOf(fund), fund.getMgmtFeeRate(), fund.getCustFeeRate(), fund.getSalesFeeRate(),
                 fund.getPremiumRate(), fund.getPremiumDate(),

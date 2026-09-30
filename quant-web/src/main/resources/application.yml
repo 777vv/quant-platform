@@ -148,3 +148,8 @@ quant:
       max-total-tool-calls: 12    # 一次对话里全部工具合计调用上限
       on-limit-exceeded: RETURN_ERROR_RESPONSE
 
+
+# 登录日志公网归属地的在线解析开关（V5.46）：第三方免费接口（百度开放数据 → ip-api 依次降级），
+# 解析在异步线程执行、单次 3 秒超时，失败自动保留「待解析」，绝不影响登录主流程
+login-log:
+  ip-location-enabled: true

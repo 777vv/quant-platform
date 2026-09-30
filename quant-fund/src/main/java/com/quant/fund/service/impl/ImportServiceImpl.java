@@ -626,6 +626,8 @@ public class ImportServiceImpl implements ImportService {
         if (maxDate != null) {
             fund.setLastSyncDate(maxDate);
         }
+        // 导入也是一次同步动作：刷新动作时间（含时分秒，V5.49）
+        fund.setLastSyncAt(LocalDateTime.now());
         if (fund.getId() == null) {
             fundBasicMapper.insert(fund);
         } else {

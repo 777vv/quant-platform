@@ -36,9 +36,9 @@
     <el-tabs v-model="activeTab">
       <el-tab-pane label="自选基金" name="watch">
         <!-- 导入入口统一走侧栏【数据导入】菜单，此处不再重复放按钮（V5.44 用户口径） -->
-        <div class="toolbar">
-          <span class="muted">关键词与标签筛选均为服务端筛选，作用于全部分页</span>
-        </div>
+        <!-- <div class="toolbar">
+                <span class="muted">关键词与标签筛选均为服务端筛选，作用于全部分页</span>
+             </div> -->
         <!-- row-key 必填：筛选/增删后行会被复用，缺 row-key 时单元格内 v-for 的标签会残留上一行的标签 -->
         <el-table
           ref="watchTableRef"
@@ -158,8 +158,12 @@
               <span v-else class="muted">未配置</span>
             </template>
           </el-table-column>
-          <el-table-column prop="lastSyncDate" label="最后同步" min-width="96">
-            <template #default="{ row }">{{ row.lastSyncDate || '--' }}</template>
+          <el-table-column label="最后同步" min-width="104">
+            <template #default="{ row }">
+              <!-- 日期与时分秒分两行（V5.49 用户口径）；lastSyncAt 为空=老数据尚未经新同步刷新 -->
+              <div>{{ row.lastSyncDate || '--' }}</div>
+              <div class="sync-time">{{ formatSyncTime(row.lastSyncAt) }}</div>
+            </template>
           </el-table-column>
           <!-- 操作列 fixed：必须用确定宽度（min-width 与固定列定位不兼容），故这里保留 width。
                三按钮收进「更多」下拉（V5.3）：整列 168→80px，按钮不再换行，省出的宽度让给数据列 -->
@@ -455,6 +459,14 @@ function reloadWatch(targetPage: number) {
 }
 
 /** 关键词输入防抖（300ms）后回到第 1 页查询，避免每敲一个字都打接口 */
+/** 最后同步动作时间：取时分秒部分（后端 LocalDateTime 序列化为 yyyy-MM-ddTHH:mm:ss） */
+function formatSyncTime(time: string | null): string {
+  if (!time) {
+    return '—'
+  }
+  return time.replace('T', ' ').substring(11, 19)
+}
+
 function onKeywordInput() {
   if (keywordTimer) {
     window.clearTimeout(keywordTimer)
@@ -585,6 +597,12 @@ onUnmounted(() => {
 .toolbar {
   margin-bottom: var(--q-space-3);
 }
+/* 最后同步列的第二行（时分秒）：小字弱化，日期为主信息 */
+.sync-time {
+  font-size: var(--q-font-xs);
+  color: var(--q-text-muted);
+}
+
 .muted {
   font-size: var(--q-font-xs);
   color: var(--q-text-muted);

@@ -69,7 +69,7 @@ public class SignalJob {
      * 统一走 {@link JobLogs#run}：打印「开始执行 / 执行结束（耗时）」+ 任务级 traceId 串联本轮日志，
      * 失败由模板按铁律 13 记 error + 完整堆栈。
      */
-    @Scheduled(cron = "0 0 9 * * MON-FRI", zone = "Asia/Shanghai")
+    @Scheduled(cron = "0 0 10,14 * * MON-FRI", zone = "Asia/Shanghai")
     public void generateSignals() {
         JobLogs.run("signal", () -> {
             if (!tradingCalendarService.isTradingDay(LocalDate.now())) {

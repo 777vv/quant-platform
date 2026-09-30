@@ -19,6 +19,21 @@ CREATE TABLE IF NOT EXISTS sys_user (
   UNIQUE KEY uk_username (username)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户表';
 
+-- 1.1 登录日志（V5.46）：记录每次登录尝试（成功/失败），用于安全审计与异常排查
+CREATE TABLE IF NOT EXISTS login_log (
+  id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+  username    VARCHAR(64)  NOT NULL COMMENT '登录用户名（失败时也记，便于发现撞库/误输）',
+  success     TINYINT      NOT NULL COMMENT '1=登录成功 0=登录失败',
+  fail_reason VARCHAR(128) DEFAULT NULL COMMENT '失败原因（用户名或密码错误/账号已锁定等）',
+  ip          VARCHAR(64)  DEFAULT NULL COMMENT '客户端IP（已按反向代理链取真实来源）',
+  ip_location VARCHAR(128) DEFAULT NULL COMMENT 'IP归属地（内网/本机；公网解析方案见文档）',
+  user_agent  VARCHAR(512) DEFAULT NULL COMMENT '客户端UA（截断保存）',
+  trace_id    VARCHAR(64)  DEFAULT NULL COMMENT 'traceId（可与该次请求的全部日志串联）',
+  created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '登录时间',
+  KEY idx_login_created (created_at),
+  KEY idx_login_username (username)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '登录日志表';
+
 -- 2.（已移除）邮件配置表：SMTP 参数走配置文件，不建表【V1.1 变更】
 
 -- 3. 基金档案
@@ -43,6 +58,7 @@ CREATE TABLE IF NOT EXISTS fund_basic (
   dividend_sync_date DATE     DEFAULT NULL COMMENT '分红记录最近成功刷新日；失败不更新、下次同步自动重试',
   status         TINYINT      DEFAULT 1 COMMENT '1正常 0已删除(自选移除)',
   last_sync_date DATE         DEFAULT NULL COMMENT '行情/净值最后同步日期',
+  last_sync_at   DATETIME     DEFAULT NULL COMMENT '最后同步动作时间（含时分秒，每次成功同步刷新；V5.49）',
   created_at     DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at     DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   UNIQUE KEY uk_fund_code (fund_code),
@@ -162,6 +178,10 @@ SET @sql := IF(@c = 0, 'ALTER TABLE fund_basic ADD COLUMN fund_scale DECIMAL(18,
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_basic' AND COLUMN_NAME = 'fund_scale_date');
 SET @sql := IF(@c = 0, 'ALTER TABLE fund_basic ADD COLUMN fund_scale_date DATE DEFAULT NULL COMMENT ''规模数据截止日''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- 迁移：fund_basic 补最后同步动作时间（V5.49；老数据不回填伪造时间，下次成功同步自动补上）
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_basic' AND COLUMN_NAME = 'last_sync_at');
+SET @sql := IF(@c = 0, 'ALTER TABLE fund_basic ADD COLUMN last_sync_at DATETIME DEFAULT NULL COMMENT ''最后同步动作时间（含时分秒）''', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_basic' AND COLUMN_NAME = 'mgmt_fee_rate');
 SET @sql := IF(@c = 0, 'ALTER TABLE fund_basic ADD COLUMN mgmt_fee_rate DECIMAL(8,4) DEFAULT NULL COMMENT ''管理费率（%/年）''', 'SELECT 1');

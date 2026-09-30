@@ -2,6 +2,7 @@ package com.quant.fund.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * 自选基金列表条目
@@ -27,6 +28,8 @@ public record WatchItemVO(
         BigDecimal valuationPercentile,
         /** 本地最新数据日期 */
         LocalDate lastSyncDate,
+        /** 最后同步动作时间（含时分秒，V5.49；老数据无此值时为 null） */
+        LocalDateTime lastSyncAt,
         /** 净资产规模（亿元），未取到为 null */
         BigDecimal fundScale,
         /** 规模数据截止日 */

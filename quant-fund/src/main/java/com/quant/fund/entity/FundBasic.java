@@ -78,6 +78,9 @@ public class FundBasic {
     /** 本地最新行情/净值日期（增量同步起点=该日+1） */
     private LocalDate lastSyncDate;
 
+    /** 最后同步动作时间（含时分秒，每次成功同步刷新；与数据日期解耦，V5.49） */
+    private LocalDateTime lastSyncAt;
+
     /** 创建时间（库默认值） */
     private LocalDateTime createdAt;
 

@@ -538,6 +538,10 @@ public class EastmoneyClient {
      * 字段：f12=代码 f14=名称 f20=总市值(元) f26=上市日期(YYYYMMDD)。
      * 规模用总市值近似（份额×市价 ≈ 净资产规模）；"成立时间"用上市日期近似（相差通常数周内）。
      * 数据源间歇封堵由 getWithRetry + 上层重试兜底；页数上限 30（约 3000 只，防异常死循环）。
+     *
+     * <p>V5.47：排除货币基金板块 b:MK0022（实测 27 只货币 ETF 全部在此板块，如华宝添益/银华日利；
+     * 主力股票 ETF 在 MK0021、跨境在 MK0023、商品等在 MK0024，均无货币基金）——
+     * 平台仅支持指数基金，货币型在导入时必然失败，从源头剔除。
      */
     public List<EtfBoardItem> fetchEtfBoardList() {
         List<EtfBoardItem> items = new ArrayList<>();
@@ -545,26 +549,35 @@ public class EastmoneyClient {
         for (int pn = 1; pn <= 30 && items.size() < total; pn++) {
             String url = "https://push2.eastmoney.com/api/qt/clist/get?pn=" + pn
                     + "&pz=100&po=1&np=1&fltt=2&invt=2&fid=f20"
-                    + "&fs=b:MK0021,b:MK0022,b:MK0023,b:MK0024&fields=f12,f14,f20,f26";
-            JsonNode root = getJson(url, "https://quote.eastmoney.com/");
-            JsonNode data = root.path("data");
-            total = data.path("total").asInt(0);
-            JsonNode diff = data.path("diff");
+                    + "&fs=b:MK0021,b:MK0023,b:MK0024&fields=f12,f14,f20,f26";
+            // 空页重试：分页中途出现空 diff 多为数据源抖动，静默当"数据末尾"会截断清单
+            // （实测 1628 只只抓到 122 只），必须重试；仍空则显式报错走降级，绝不静默少数据
             int added = 0;
-            if (diff.isArray()) {
-                for (JsonNode node : diff) {
-                    JsonNode cap = node.path("f20");
-                    JsonNode listed = node.path("f26");
-                    if (!cap.canConvertToLong() || !listed.canConvertToInt()) {
-                        continue;
+            for (int attempt = 1; attempt <= 3 && added == 0; attempt++) {
+                JsonNode root = getJson(url, "https://quote.eastmoney.com/");
+                JsonNode data = root.path("data");
+                total = data.path("total").asInt(0);
+                JsonNode diff = data.path("diff");
+                added = 0;
+                if (diff.isArray()) {
+                    for (JsonNode node : diff) {
+                        JsonNode cap = node.path("f20");
+                        JsonNode listed = node.path("f26");
+                        if (!cap.canConvertToLong() || !listed.canConvertToInt()) {
+                            continue;
+                        }
+                        items.add(new EtfBoardItem(node.path("f12").asText(), node.path("f14").asText(""),
+                                cap.asLong(), listed.asInt()));
+                        added++;
                     }
-                    items.add(new EtfBoardItem(node.path("f12").asText(), node.path("f14").asText(""),
-                            cap.asLong(), listed.asInt()));
-                    added++;
+                }
+                if (added == 0 && items.size() < total) {
+                    LOGGER.warn("行情列表第{}页为空（已取 {}/{}），重试 {}/3", pn, items.size(), total, attempt);
+                    sleep(1500);
                 }
             }
-            if (added == 0) {
-                break;
+            if (added == 0 && items.size() < total) {
+                throw new BizException("数据源返回不完整（第 " + pn + " 页为空），请稍后重试");
             }
         }
         return items;

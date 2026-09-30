@@ -14,6 +14,7 @@ import com.quant.system.dto.UserVO;
 import com.quant.system.entity.SysUser;
 import com.quant.system.mapper.SysUserMapper;
 import com.quant.system.service.AuthService;
+import com.quant.system.service.LoginLogService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -34,8 +35,12 @@ public class AuthServiceImpl implements AuthService {
 
     private final SysUserMapper sysUserMapper;
 
-    public AuthServiceImpl(SysUserMapper sysUserMapper) {
+    /** 登录日志（V5.46）：四条路径（用户不存在/账号锁定/密码错误/成功）各记一行 */
+    private final LoginLogService loginLogService;
+
+    public AuthServiceImpl(SysUserMapper sysUserMapper, LoginLogService loginLogService) {
         this.sysUserMapper = sysUserMapper;
+        this.loginLogService = loginLogService;
     }
 
     @Override
@@ -43,15 +48,20 @@ public class AuthServiceImpl implements AuthService {
         SysUser user = sysUserMapper.selectOne(
                 new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, request.getUsername()));
         if (user == null) {
+            // 用户不存在也记一行：便于识别撞库尝试与自己输错用户名的场景
+            loginLogService.record(request.getUsername(), false, DEFAULT_MSG);
             throw new BizException(DEFAULT_MSG);
         }
         checkLocked(user);
         if (!BCrypt.checkpw(request.getPassword(), user.getPassword())) {
             recordLoginFail(user);
+            loginLogService.record(request.getUsername(), false, DEFAULT_MSG);
             throw new BizException(DEFAULT_MSG);
         }
         recordLoginSuccess(user.getId());
         StpUtil.login(user.getId());
+        // 成功日志放在 StpUtil.login 之后：至此才算真正登录成功
+        loginLogService.record(request.getUsername(), true, null);
 
         LoginResult result = new LoginResult();
         result.setToken(StpUtil.getTokenValue());
@@ -94,6 +104,8 @@ public class AuthServiceImpl implements AuthService {
     private void checkLocked(SysUser user) {
         if (user.getLockedUntil() != null && user.getLockedUntil().isAfter(LocalDateTime.now())) {
             long minutes = java.time.Duration.between(LocalDateTime.now(), user.getLockedUntil()).toMinutes() + 1;
+            String reason = "账号已锁定（约 " + minutes + " 分钟后可重试）";
+            loginLogService.record(user.getUsername(), false, reason);
             throw new BizException("失败次数过多，账号已锁定，请约 " + minutes + " 分钟后重试");
         }
     }

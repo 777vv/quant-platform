@@ -27,6 +27,7 @@
         <el-button type="primary" @click="reload(1)">查询</el-button>
         <el-button @click="resetFilter">重置</el-button>
         <span class="muted">共 {{ total }} 笔</span>
+        <el-button type="primary" class="entry-btn" @click="entryVisible = true">记一笔（交易流水）</el-button>
       </div>
     </el-card>
 
@@ -98,12 +99,15 @@
       </div>
     </el-card>
   </div>
+    <!-- 记一笔（V5.52）：录入入口从基金池页挪到本页，保存后回到第 1 页展示新流水 -->
+    <TradeEntryDialog v-model="entryVisible" @saved="onSaved" />
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { pageTrades, watchlist, type TradeFlow } from '@/api/fund'
 import { formatAmount } from '@/utils/format'
+import TradeEntryDialog from '@/components/trade/TradeEntryDialog.vue'
 
 /**
  * 交易流水总览（FR2）：把全部流水集中列出，支持按基金/类型/日期区间筛选 + 服务端分页。
@@ -195,6 +199,14 @@ function resetFilter() {
   reload(1)
 }
 
+/** 记一笔对话框（V5.52：录入入口从基金池页挪到本页） */
+const entryVisible = ref(false)
+
+/** 保存成功后回到第 1 页：新流水按交易日期倒序排在最前，直接可见 */
+function onSaved() {
+  reload(1)
+}
+
 onMounted(async () => {
   // 基金名称映射：自选池（含已移出但仍有流水的基金取不到名称，属预期）
   const funds = await watchlist().catch(() => [])
@@ -210,6 +222,10 @@ onMounted(async () => {
 <style scoped>
 .filter-card :deep(.el-card__body) {
   padding: var(--q-space-3) var(--q-space-4);
+}
+
+.entry-btn {
+  margin-left: auto;
 }
 
 .filter-bar {

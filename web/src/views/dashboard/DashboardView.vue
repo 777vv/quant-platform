@@ -294,13 +294,13 @@
     </el-row>
 
     <!-- 数据类速览：引导态（未开始使用）下只在确实有数据时渲染，避免成排灰空态 -->
-    <el-row v-if="showMovers || showTradesCard" :gutter="12">
+    <el-row v-if="showMovers || showTradesCard" class="data-row" :gutter="12">
       <el-col v-if="showMovers" :span="8" :xs="24">
         <el-card shadow="never" class="board-card">
           <template #header><span>自选 7 日涨跌榜</span></template>
           <el-empty v-if="overview && overview.movers.length === 0" description="暂无数据" :image-size="60" />
           <template v-else>
-            <!-- 领涨与领跌并排：两榜合起来最多 14 条，竖排会让本卡比同排卡片高出一倍 -->
+            <!-- 领涨与领跌并排：两榜合起来最多 12 条，竖排会让本卡比同排卡片高出一倍 -->
             <div class="mover-columns">
               <div class="mover-column">
                 <div class="mover-group-title">领涨</div>
@@ -341,7 +341,7 @@
         <el-card shadow="never" class="board-card">
           <template #header><span>资产配置</span></template>
           <el-empty v-if="overview && overview.allocation.length === 0" description="暂无持仓" :image-size="60" />
-          <ChartPanel v-else :option="pieOption" :height="pieHeight" />
+          <ChartPanel v-else :option="pieOption" height="100%" />
         </el-card>
       </el-col>
       <el-col v-if="showTradesCard" :span="8" :xs="24">
@@ -493,8 +493,8 @@ let paused = false
 /** 最新信号（V5.40 用户口径：最近 5 条记录，跨日期取最新；字段只展示 基金/日期/方向） */
 const latestSignals = computed(() => signals.value.slice(0, 5))
 
-/** 每榜最多展示条数（V5.31：5 → 7，两榜合计最多 14 条；自选不足 14 只时按实际数量取） */
-const MOVER_SIZE = 7
+/** 每榜最多展示条数（V5.31：5 → 7；V5.54 用户口径：7 → 6，两榜合计最多 12 条；自选不足 12 只时按实际数量取） */
+const MOVER_SIZE = 6
 
 const topMovers = computed(() => (overview.value?.movers ?? []).slice(0, MOVER_SIZE))
 
@@ -720,17 +720,17 @@ const curveOption = computed<EChartsOption>(() => ({
  * 资产配置饼图。
  * 图例（V5.38 用户要求）：用默认的 plain 类型**换行铺开**，不再用 type:'scroll'——滚动分页一次只显示
  * 一行、还要点箭头翻页，看不出整体配置；换行后一眼看全。图例占的行数随基金数增加，
- * 因此画布高度按估算行数加高（见 pieHeight），否则图例会被挤出画布或压住饼图。
+ * 画布高度由卡片等高布局决定（height="100%" 填充卡身剩余空间，见 .data-row 样式）。
  */
 const pieOption = computed<EChartsOption>(() => ({
   tooltip: { trigger: 'item', formatter: '{b}<br/>市值 {c} 元（{d}%）' },
-  legend: { bottom: 0, type: 'plain', left: 'center', itemGap: 8, itemWidth: 12, itemHeight: 8 },
+  legend: { bottom: 0, type: 'plain', left: 'center', itemGap: 8, itemWidth: 12, itemHeight: 8, textStyle: { fontSize: 12 } },
   series: [
     {
       type: 'pie',
       radius: ['32%', '52%'],
       center: ['50%', '40%'],
-      label: { formatter: '{b} {d}%' },
+      label: { formatter: '{b} {d}%', fontSize: 12 },
       data: (overview.value?.allocation ?? []).map((item) => ({
         name: item.fundName || item.fundCode,
         value: item.marketValue
@@ -738,22 +738,6 @@ const pieOption = computed<EChartsOption>(() => ({
     }
   ]
 }))
-
-/**
- * 饼图画布高度：图例换行后占的行数随基金数增长，按"每项的估算像素宽度 ÷ 可用宽度"推算行数
- * （中文按 12px/字、其余按 7px/字，加图标与间隙 20px），每多一行加 20px。
- * 可用宽度取保守值 300px（卡片只占 1/3 行宽，窄窗口下会更小）——宁可画布略高，也不要图例被裁掉。
- */
-const pieHeight = computed(() => {
-  const items = overview.value?.allocation ?? []
-  const totalWidth = items.reduce((sum, item) => {
-    const name = item.fundName || item.fundCode
-    const textWidth = [...name].reduce((w, ch) => w + (/[\u4e00-\u9fa5]/.test(ch) ? 12 : 7), 0)
-    return sum + textWidth + 28
-  }, 0)
-  const lines = Math.max(1, Math.ceil(totalWidth / 300))
-  return `${216 + (lines - 1) * 20}px`
-})
 
 async function loadAssets() {
   assets.value = await dashboardAssets()
@@ -1149,6 +1133,56 @@ onUnmounted(() => {
 
 .board-card :deep(.el-card__body) {
   padding: var(--q-space-3) var(--q-space-4);
+}
+
+/* 涨跌榜/资产配置/交易流水同排卡片等高（V5.53 用户要求）：
+   el-col 拉伸为 flex，卡片撑满列高；资产配置的饼图填充卡身剩余空间，
+   高度随左右卡片走而不是自己撑开（与 .stat-row 的 KPI 行同一手法） */
+.data-row :deep(.el-col) {
+  display: flex;
+}
+
+.data-row :deep(.board-card) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.data-row :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.data-row :deep(.el-card__body > .chart-panel) {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 涨跌榜：两列列表随卡片等高拉伸，每行均分高度填满卡身（消除底部空白，V5.55 用户要求）；
+   与右侧交易流水表格的行距视觉对齐 */
+.data-row :deep(.mover-columns) {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 列本身纵向 flex：标题占自身高度，列表取剩余空间——不能用 height:100%（会把标题高度算漏，
+   总高超出卡身而出滚动条，实测踩过） */
+.data-row :deep(.mover-column) {
+  display: flex;
+  flex-direction: column;
+}
+
+.data-row :deep(.mover-column ul) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.data-row :deep(.mover-column ul li) {
+  flex: 1;
 }
 
 /* 卡片标题：品牌色短竖条，与指数看板分组标题同一视觉母题，形成页面节奏 */

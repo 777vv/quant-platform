@@ -37,7 +37,6 @@
       <template #header>
         <div class="card-header">
           <span>信号记录</span>
-          <span class="muted">按信号日期倒序；每日 21:00 由定时任务生成，点击行可标记已读并进入基金详情</span>
         </div>
       </template>
       <el-table v-loading="loading" row-key="id" :data="records" size="small" @row-click="openSignal">

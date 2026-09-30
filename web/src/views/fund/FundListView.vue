@@ -30,7 +30,6 @@
       <div class="toolbar-right">
         <span class="muted">已选 {{ selectedFunds.length }}/3</span>
         <el-button size="small" :disabled="selectedFunds.length < 2" @click="gotoCompare">对比走势</el-button>
-        <el-button type="primary" @click="openEntry()">记一笔（交易流水）</el-button>
       </div>
     </el-row>
     <el-tabs v-model="activeTab">
@@ -258,7 +257,6 @@
         </div>
       </el-tab-pane>
     </el-tabs>
-    <TradeEntryDialog v-model="entryVisible" :preset-fund="entryFund" :preset-type="entryType" @saved="onSaved" />
     <TagManageDialog v-model="tagManageVisible" @changed="loadTags" />
     <FundTagEditDialog v-model="tagEditVisible" :fund-code="tagEditFund" @saved="loadTags" />
   </div>
@@ -271,7 +269,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { allFundTags, holdings, removeFund, syncFund, syncProgress, tagLibrary, watchlistPage } from '@/api/fund'
 import type { FundTagVO, HoldingVO, WatchItemVO } from '@/api/fund'
 import { allStrategyConfigs } from '@/api/strategy'
-import TradeEntryDialog from '@/components/trade/TradeEntryDialog.vue'
 import TagManageDialog from '@/components/fund/TagManageDialog.vue'
 import FundTagEditDialog from '@/components/fund/FundTagEditDialog.vue'
 
@@ -402,17 +399,6 @@ async function loadTags() {
   fundTagMap.value = await allFundTags()
 }
 
-/** 快捷记账对话框状态（preset 为空 = 页头"记一笔"，不带预选） */
-const entryVisible = ref(false)
-const entryFund = ref('')
-const entryType = ref(1)
-
-function openEntry(fundCode?: string, tradeType?: number) {
-  entryFund.value = fundCode ?? ''
-  entryType.value = tradeType ?? 1
-  entryVisible.value = true
-}
-
 /** 标签筛选或数据刷新后回到第一页（防止停留在超出范围的空页） */
 watch([filteredHolding, holdingItems], () => {
   const max = Math.max(1, Math.ceil(filteredHolding.value.length / holdingPageSize))
@@ -420,12 +406,6 @@ watch([filteredHolding, holdingItems], () => {
     holdingPage.value = 1
   }
 })
-
-/** 记账成功后刷新持仓与自选（份额/市值可能变化） */
-function onSaved() {
-  loadWatch()
-  loadHoldings()
-}
 
 /**
  * 加载自选表当前页（服务端分页 + 服务端筛选）。

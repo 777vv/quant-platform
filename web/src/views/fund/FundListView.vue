@@ -25,7 +25,7 @@
           <el-option v-for="tag in tagLibraryList" :key="tag.id" :value="tag.name" :label="tag.name" />
         </el-select>
         <el-button size="small" @click="reloadWatch(1)">查询</el-button>
-        <el-button size="small" @click="tagManageVisible = true">标签管理</el-button>
+        <el-button v-if="userStore.can(PERM.ACTION_TAG)" size="small" @click="tagManageVisible = true">标签管理</el-button>
       </div>
       <div class="toolbar-right">
         <span class="muted">已选 {{ selectedFunds.length }}/3</span>
@@ -50,29 +50,31 @@
         >
           <!-- reserve-selection：翻页/换筛选后保留已勾选（最多 3 只用于走势对比） -->
           <el-table-column type="selection" width="40" reserve-selection :selectable="selectableFund" />
-          <el-table-column prop="fundCode" label="代码" min-width="76" />
-          <el-table-column prop="fundName" label="名称" min-width="170" show-overflow-tooltip>
+          <el-table-column prop="fundName" label="名称" min-width="170">
             <template #default="{ row }">
-              <!-- 名称即详情入口（点击进基金详情），无需再放独立的"详情"按钮 -->
-              <span
-                class="fund-link"
-                :class="{ 'name-holding': row.holding }"
-                :title="`查看 ${row.fundName} 详情`"
-                @click="$router.push(`/funds/${row.fundCode}`)"
-              >{{ row.fundName }}</span>
-              <el-tag v-if="row.holding" size="small" type="primary" class="name-flag">持仓</el-tag>
-              <el-tag size="small" type="info" effect="plain" class="name-flag">
-                {{ row.fundType === 1 ? 'ETF' : '场外' }}
-              </el-tag>
+              <!-- 名称与代码并成一列：名称在上一行（详情入口），代码在下一行小字弱化（V5.56 用户口径） -->
+              <div class="fund-cell">
+                <div class="fund-line">
+                  <span
+                    class="fund-link"
+                    :class="{ 'name-holding': row.holding }"
+                    :title="`查看 ${row.fundName} 详情`"
+                    @click="$router.push(`/funds/${row.fundCode}`)"
+                  >{{ row.fundName }}</span>
+                  <el-tag v-if="row.holding" size="small" type="primary" class="name-flag">持仓</el-tag>
+                  <el-tag size="small" type="info" effect="plain" class="name-flag">
+                    {{ row.fundType === 1 ? 'ETF' : '场外' }}
+                  </el-tag>
+                </div>
+                <div class="fund-code">{{ row.fundCode }}</div>
+              </div>
             </template>
           </el-table-column>
-          <el-table-column label="跟踪指数" min-width="118">
+          <el-table-column label="最后同步" min-width="104">
             <template #default="{ row }">
-              <div v-if="row.indexName" class="index-cell">
-                <span class="index-cell-name">{{ row.indexName }}</span>
-                <span v-if="row.indexCode" class="index-cell-code">{{ row.indexCode }}</span>
-              </div>
-              <span v-else class="muted">--</span>
+              <!-- 日期与时分秒分两行（V5.49 用户口径）；lastSyncAt 为空=老数据尚未经新同步刷新 -->
+              <div>{{ row.lastSyncDate || '--' }}</div>
+              <div class="sync-time">{{ formatSyncTime(row.lastSyncAt) }}</div>
             </template>
           </el-table-column>
           <el-table-column label="标签" min-width="100">
@@ -106,18 +108,6 @@
               <span v-else class="num">--</span>
             </template>
           </el-table-column>
-          <el-table-column label="溢价率" min-width="88" align="right">
-            <template #default="{ row }">
-              <el-tooltip
-                v-if="row.premiumRate != null"
-                :content="`按净值日 ${row.premiumDate} 的收盘价与单位净值计算`"
-                placement="top"
-              >
-                <span class="num">{{ signedPct(row.premiumRate) }}</span>
-              </el-tooltip>
-              <span v-else class="num">--</span>
-            </template>
-          </el-table-column>
           <el-table-column label="运作费率" min-width="88" align="right">
             <template #default="{ row }">
               <el-tooltip v-if="row.opFeeRate != null" :content="feeBreakdown(row)" placement="top">
@@ -141,42 +131,24 @@
           <el-table-column label="估值百分位%" min-width="104" align="right">
             <template #default="{ row }">{{ row.valuationPercentile == null ? '--' : row.valuationPercentile }}</template>
           </el-table-column>
-          <el-table-column label="已配策略" min-width="108">
-            <template #default="{ row }">
-              <template v-if="strategyTags(row.fundCode).length">
-                <el-tag
-                  v-for="tag in strategyTags(row.fundCode)"
-                  :key="`${row.fundCode}-${tag}`"
-                  size="small"
-                  :type="tag === '网格交易' ? 'primary' : 'success'"
-                  class="strategy-tag"
-                >
-                  {{ tag }}
-                </el-tag>
-              </template>
-              <span v-else class="muted">未配置</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="最后同步" min-width="104">
-            <template #default="{ row }">
-              <!-- 日期与时分秒分两行（V5.49 用户口径）；lastSyncAt 为空=老数据尚未经新同步刷新 -->
-              <div>{{ row.lastSyncDate || '--' }}</div>
-              <div class="sync-time">{{ formatSyncTime(row.lastSyncAt) }}</div>
-            </template>
-          </el-table-column>
           <!-- 操作列 fixed：必须用确定宽度（min-width 与固定列定位不兼容），故这里保留 width。
                三按钮收进「更多」下拉（V5.3）：整列 168→80px，按钮不再换行，省出的宽度让给数据列 -->
           <el-table-column label="操作" width="80" fixed="right">
             <template #default="{ row }">
-              <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
+              <!-- V5.58：三个操作项都无权限时整个「更多」隐藏，避免空壳下拉 -->
+              <el-dropdown
+                v-if="userStore.can(PERM.ACTION_SYNC) || userStore.can(PERM.ACTION_TAG) || userStore.can(PERM.ACTION_IMPORT_FUND)"
+                trigger="click"
+                @command="(cmd: string) => onRowCommand(cmd, row)"
+              >
                 <el-button size="small" :loading="syncingCode === row.fundCode">
                   更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item command="sync">同步</el-dropdown-item>
-                    <el-dropdown-item command="tag">标签</el-dropdown-item>
-                    <el-dropdown-item command="remove" divided>删除</el-dropdown-item>
+                    <el-dropdown-item v-if="userStore.can(PERM.ACTION_SYNC)" command="sync">同步</el-dropdown-item>
+                    <el-dropdown-item v-if="userStore.can(PERM.ACTION_TAG)" command="tag">标签</el-dropdown-item>
+                    <el-dropdown-item v-if="userStore.can(PERM.ACTION_IMPORT_FUND)" command="remove" divided>删除</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -263,18 +235,20 @@
 </template>
 
 <script setup lang="ts">
+import { useUserStore } from '@/stores/user'
+import { PERM } from '@/utils/permissions'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { allFundTags, holdings, removeFund, syncFund, syncProgress, tagLibrary, watchlistPage } from '@/api/fund'
 import type { FundTagVO, HoldingVO, WatchItemVO } from '@/api/fund'
-import { allStrategyConfigs } from '@/api/strategy'
 import TagManageDialog from '@/components/fund/TagManageDialog.vue'
 import FundTagEditDialog from '@/components/fund/FundTagEditDialog.vue'
 
+const userStore = useUserStore()
+
 /** 走势对比最多选择数 */
 const MAX_COMPARE = 3
-import type { StrategyConfig } from '@/api/strategy'
 
 const activeTab = ref('watch')
 /** 关键词筛选（服务端 like 匹配代码/名称） */
@@ -319,14 +293,6 @@ const pagedHolding = computed(() => {
   return sortedHolding.value.slice(start, start + holdingPageSize)
 })
 
-/** 带符号百分比（溢价率用：正为溢价、负为折价） */
-function signedPct(value: number | null | undefined): string {
-  if (value === null || value === undefined) {
-    return '--'
-  }
-  return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
-}
-
 /**
  * 运作费率明细（悬浮提示用）：管理费 + 托管费 + 销售服务费。
  * 后端保证 opFeeRate 非空时至少有一项有值，缺项按 0 展示便于对账。
@@ -344,9 +310,7 @@ function changeClass(value: number | null | undefined): string {
   return value > 0 ? 'text-up' : 'text-down'
 }
 
-/** 全量策略配置（按基金代码分组，供"已配策略"列展示） */
 const router = useRouter()
-const strategyMap = ref<Record<string, string[]>>({})
 
 /** 标签：库列表 + 各基金标签映射 + 筛选值 + 两个弹窗状态 */
 const tagLibraryList = ref<FundTagVO[]>([])
@@ -454,22 +418,6 @@ function onKeywordInput() {
   keywordTimer = window.setTimeout(() => reloadWatch(1), 300)
 }
 
-/** 拉取全部策略配置并按基金代码归类为展示名列表 */
-async function loadStrategies() {
-  const configs: StrategyConfig[] = await allStrategyConfigs()
-  const grouped: Record<string, string[]> = {}
-  configs.forEach((config) => {
-    const name = config.strategyName || config.strategyType
-    grouped[config.fundCode] = [...(grouped[config.fundCode] ?? []), name]
-  })
-  strategyMap.value = grouped
-}
-
-/** 某基金已配置的策略展示名（未配置返回空数组） */
-function strategyTags(fundCode: string): string[] {
-  return strategyMap.value[fundCode] ?? []
-}
-
 async function loadHoldings() {
   holdingLoading.value = true
   try {
@@ -514,10 +462,9 @@ async function handleRemove(row: WatchItemVO) {
 }
 
 onMounted(() => {
-  // 自选表由服务端分页查询；策略列与标签映射与分页无关，单独拉一次
+  // 自选表由服务端分页查询；标签映射与分页无关，单独拉一次
   loadWatch()
   loadHoldings()
-  loadStrategies()
   loadTags()
 })
 
@@ -530,17 +477,29 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.index-cell {
+/* 名称列两行式：第一行名称+状态标签，第二行代码小字弱化（与"最后同步"列的两行式一致） */
+.fund-cell {
+  min-width: 0;
+}
+
+.fund-line {
   display: flex;
-  flex-direction: column;
-  line-height: 1.35;
+  align-items: center;
+  min-width: 0;
 }
 
-.index-cell-name {
-  color: var(--q-text-regular);
+/* 名称超长时省略号截断，完整名称靠 title 悬浮提示；后面的标签不参与压缩 */
+.fund-line .fund-link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.index-cell-code {
+.fund-line .name-flag {
+  flex-shrink: 0;
+}
+
+.fund-code {
   font-size: var(--q-font-xs);
   color: var(--q-text-muted);
   font-variant-numeric: tabular-nums;
@@ -586,10 +545,6 @@ onUnmounted(() => {
 .muted {
   font-size: var(--q-font-xs);
   color: var(--q-text-muted);
-}
-
-.strategy-tag {
-  margin-right: 4px;
 }
 
 /* 持仓分页条：右对齐，与表格留出间距 */

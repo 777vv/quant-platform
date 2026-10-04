@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 
 import lombok.Data;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 数据导入接口（FR3）
@@ -51,6 +53,7 @@ public class ImportController {
     }
 
     /** 发起历史导入（异步任务），返回进度 taskId */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_IMPORT_FUND)
     @PostMapping("/import")
     public R<Map<String, String>> importFund(@Validated @RequestBody ImportRequest request) {
         String taskId = importService.importFund(request.getCode());
@@ -78,6 +81,7 @@ public class ImportController {
      * 发起批量导入（V5.41）：串行逐只导入，与数据同步任务互斥，封堵窗口自动暂停续跑。
      * 返回 taskId 与接收/跳过清单（已在池中的直接跳过并回显，铁律 11）。
      */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_IMPORT_FUND)
     @PostMapping("/import/batch")
     public R<ImportService.BatchStartResult> startBatch(@Validated @RequestBody BatchImportRequest request) {
         return R.ok(importService.startBatch(request.getCodes()));

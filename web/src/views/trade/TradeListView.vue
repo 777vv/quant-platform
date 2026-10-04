@@ -27,7 +27,7 @@
         <el-button type="primary" @click="reload(1)">查询</el-button>
         <el-button @click="resetFilter">重置</el-button>
         <span class="muted">共 {{ total }} 笔</span>
-        <el-button type="primary" class="entry-btn" @click="entryVisible = true">记一笔（交易流水）</el-button>
+        <el-button v-if="userStore.can(PERM.ACTION_TRADE)" type="primary" class="entry-btn" @click="entryVisible = true">记一笔（交易流水）</el-button>
       </div>
     </el-card>
 
@@ -104,10 +104,14 @@
 </template>
 
 <script setup lang="ts">
+import { useUserStore } from '@/stores/user'
+import { PERM } from '@/utils/permissions'
 import { onMounted, ref } from 'vue'
 import { pageTrades, watchlist, type TradeFlow } from '@/api/fund'
 import { formatAmount } from '@/utils/format'
 import TradeEntryDialog from '@/components/trade/TradeEntryDialog.vue'
+
+const userStore = useUserStore()
 
 /**
  * 交易流水总览（FR2）：把全部流水集中列出，支持按基金/类型/日期区间筛选 + 服务端分页。

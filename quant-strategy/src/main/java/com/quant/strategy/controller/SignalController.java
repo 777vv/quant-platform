@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 策略信号接口（FR1/FR5，M4-03）：仪表盘今日信号与历史信号查询、手动触发计算
@@ -54,6 +56,7 @@ public class SignalController {
     }
 
     /** 手动触发一轮信号计算（调试/补算用；与定时任务共用 Redisson 锁） */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PostMapping("/signals/run")
     public R<Integer> run() {
         return R.ok(signalService.generateAll().size());

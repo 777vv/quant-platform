@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 认证接口（FR4）：登录/登出/当前用户/修改密码/登录日志查询
@@ -47,6 +49,7 @@ public class AuthController {
      * @param username 用户名关键字（模糊，可空）
      * @param success  结果筛选：1=只看成功 0=只看失败，不传=全部
      */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.MENU_LOGIN_LOGS)
     @GetMapping("/login-logs")
     public R<PageResult<LoginLogVO>> loginLogs(
             @RequestParam(required = false) String username,

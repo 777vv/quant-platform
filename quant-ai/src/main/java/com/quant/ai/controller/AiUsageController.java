@@ -18,6 +18,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * AI 用量与费用接口（V3.9 起，界面在 AI 浮窗顶部用量条与【AI用量统计】页）。
@@ -37,6 +40,7 @@ public class AiUsageController {
     }
 
     /** 今日用量概览（token/费用/次数 + 上限 + 已用比例 + 是否超限） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.MENU_AI_USAGE)
     @GetMapping("/today")
     public R<AiUsageTodayVO> today() {
         return R.ok(usageService.today());
@@ -47,6 +51,7 @@ public class AiUsageController {
      *
      * @param days 天数（1~90，默认 7）
      */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.MENU_AI_USAGE)
     @GetMapping("/summary")
     public R<List<AiUsageDayVO>> summary(@RequestParam(defaultValue = "7") int days) {
         return R.ok(usageService.summary(days));
@@ -59,6 +64,7 @@ public class AiUsageController {
      * @param size 每页条数（上限 100）
      * @param date 指定日期（不传 = 不限日期）
      */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.MENU_AI_USAGE)
     @GetMapping("/logs")
     public R<PageResult<AiUsageLogVO>> logs(@RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "20") long size,
@@ -67,6 +73,7 @@ public class AiUsageController {
     }
 
     /** 每日额度（全局一份：token 上限 / 费用上限 / 预警百分比） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.MENU_AI_USAGE)
     @GetMapping("/quota")
     public R<AiQuotaVO> quota() {
         return R.ok(usageService.quota());
@@ -77,6 +84,7 @@ public class AiUsageController {
      *
      * @param request 额度请求：字段为 null 表示保持原值，0 表示该维度不限制
      */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PutMapping("/quota")
     public R<Void> saveQuota(@RequestBody AiQuotaRequest request) {
         usageService.saveQuota(request);

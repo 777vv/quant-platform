@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 基金池查询接口（FR2）
@@ -130,6 +132,7 @@ public class FundController {
     }
 
     /** 移出自选（软删，历史数据保留，重新导入可恢复） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_IMPORT_FUND)
     @DeleteMapping("/{code}")
     public R<Void> remove(@PathVariable String code) {
         fundQueryService.removeFromWatchlist(code);

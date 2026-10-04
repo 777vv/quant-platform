@@ -7,7 +7,7 @@
         <el-card shadow="never" class="stat-card stat-card--hero">
           <div class="hero-top">
             <span class="hero-label">总资产（元）</span>
-            <el-button link class="q-on-hero" @click="openEntry(4)">转入/转出</el-button>
+            <el-button v-if="userStore.can(PERM.ACTION_TRADE)" link class="q-on-hero" @click="openEntry(4)">转入/转出</el-button>
           </div>
           <div class="hero-value num">{{ formatAmount(assets?.totalAssets) }}</div>
           <div class="hero-sub">
@@ -387,6 +387,8 @@
 </template>
 
 <script setup lang="ts">
+import { useUserStore } from '@/stores/user'
+import { PERM } from '@/utils/permissions'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { EChartsOption } from 'echarts'
@@ -408,6 +410,8 @@ import TradeEntryDialog from '@/components/trade/TradeEntryDialog.vue'
 import { pageTrades, watchlist, type TradeFlow } from '@/api/fund'
 import { changeColorClass, formatAmount, formatPercent } from '@/utils/format'
 import { changeColor, UP, DOWN } from '@/utils/palette'
+
+const userStore = useUserStore()
 
 /** 基准线是否可用：基准数据源被封堵时后端返回全 null，此处用于给出说明文案 */
 const benchmarkAvailable = computed(() => (curve.value?.benchmarkPct ?? []).some((value) => value !== null))
@@ -546,7 +550,8 @@ const guideSteps = computed(() => [
     desc: '支持场内 ETF 与场外指数基金，自动拉取近 15 年（或自成立以来）历史数据',
     button: '去数据导入',
     done: (assets.value?.watchCount ?? 0) > 0,
-    action: () => router.push('/import')
+    action: () => router.push('/import'),
+    perm: PERM.ACTION_IMPORT_FUND
   },
   {
     no: 2,
@@ -554,7 +559,8 @@ const guideSteps = computed(() => [
     desc: '从银行卡转入的资金计入现金余额，与持仓市值一起构成总资产',
     button: '转入资金',
     done: (assets.value?.cashBalance ?? 0) > 0,
-    action: () => openEntry(4)
+    action: () => openEntry(4),
+    perm: PERM.ACTION_TRADE
   },
   {
     no: 3,
@@ -562,9 +568,10 @@ const guideSteps = computed(() => [
     desc: '录入后自动重算份额与摊薄成本，并生成收益曲线和各项收益指标',
     button: '记一笔',
     done: (assets.value?.holdingCount ?? 0) > 0,
-    action: () => openEntry(1)
+    action: () => openEntry(1),
+    perm: PERM.ACTION_TRADE
   }
-])
+].filter((step: { perm?: string }) => !step.perm || userStore.can(step.perm)))
 
 /** 涨跌榜是否有内容可展示（引导态下无数据则整卡不渲染） */
 const showMovers = computed(() => !needGuide.value || (overview.value?.movers.length ?? 0) > 0)
@@ -983,7 +990,8 @@ onUnmounted(() => {
   flex-direction: column;
   /* EP 的卡片体是 overflow:auto，KPI 卡内容高度固定，改为裁切以免出现内部滚动条 */
   overflow: hidden;
-  padding: var(--q-space-3) var(--q-space-4);
+  /* V5.63 用户反馈整排卡过高：上下内边距 12→8、左右 16→12 */
+  padding: var(--q-space-2) var(--q-space-3);
 }
 
 .hero-top {
@@ -998,8 +1006,8 @@ onUnmounted(() => {
 }
 
 .hero-value {
-  margin-top: var(--q-space-2);
-  font-size: var(--q-font-3xl);
+  margin-top: var(--q-space-1);
+  font-size: var(--q-font-2xl);
   font-weight: 600;
   line-height: 1.2;
   color: var(--q-text-on-hero);
@@ -1008,7 +1016,7 @@ onUnmounted(() => {
 }
 
 .hero-sub {
-  margin-top: var(--q-space-2);
+  margin-top: var(--q-space-1);
   font-size: var(--q-font-xs);
   color: var(--q-text-on-hero-sub);
 }
@@ -1018,7 +1026,7 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--q-space-1);
   margin-top: auto;
-  padding-top: var(--q-space-2);
+  padding-top: var(--q-space-1);
   font-size: var(--q-font-xs);
   color: var(--q-text-on-hero-sub);
 }
@@ -1033,12 +1041,12 @@ onUnmounted(() => {
 }
 
 .stat-value {
-  margin-top: var(--q-space-2);
+  margin-top: var(--q-space-1);
   /* 副卡宽度随栅格变化（窄屏 119px 时 24px 数字会挤出卡片），
-     故用 clamp 在 --q-font-lg 与 --q-font-2xl 之间按视口宽度自适应 */
-  font-size: clamp(var(--q-font-lg), 1.5vw, var(--q-font-2xl));
+     故用 clamp 在 --q-font-lg 与 --q-font-xl 之间按视口宽度自适应；V5.63 上限 24→20 压高度 */
+  font-size: clamp(var(--q-font-lg), 1.5vw, var(--q-font-xl));
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.2;
   color: var(--q-text-primary);
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
@@ -1061,7 +1069,7 @@ onUnmounted(() => {
 }
 
 .stat-sub {
-  margin-top: var(--q-space-2);
+  margin-top: var(--q-space-1);
   font-size: var(--q-font-xs);
   color: var(--q-text-muted);
   line-height: 1.5;
@@ -1070,7 +1078,7 @@ onUnmounted(() => {
 /* 迷你走势槽位：贴底对齐（高度由 30px 的走势线撑开，不再写死高度） */
 .stat-spark {
   margin-top: auto;
-  padding-top: var(--q-space-2);
+  padding-top: var(--q-space-1);
 }
 
 /* ---------- 空账户引导卡 ---------- */

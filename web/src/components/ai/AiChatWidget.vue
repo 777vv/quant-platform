@@ -24,7 +24,6 @@
         <div class="ai-title">
           <el-icon><ChatDotRound /></el-icon>
           <span>AI 投资助手</span>
-          <el-tag v-if="config?.model" size="small" type="info" effect="plain">{{ config.model }}</el-tag>
         </div>
         <div class="ai-header-actions" @mousedown.stop>
           <el-button link size="small" title="历史会话" @click="toggleSidebar">
@@ -171,6 +170,10 @@ import {
   type AiUsageTodayVO
 } from '@/api/ai'
 import { formatCost, formatTokens } from '@/utils/format'
+import { useUserStore } from '@/stores/user'
+import { PERM } from '@/utils/permissions'
+
+const userStore = useUserStore()
 
 /** 首屏引导问题 */
 const SUGGESTIONS = ['我的持仓现在怎么样？', '510300 现在什么价位？', '最近有什么买卖信号？', '沪深300 估值贵不贵？']
@@ -333,6 +336,10 @@ function showCost(cost: string): boolean {
 
 /** 拉取今日用量（失败静默：发送时服务端仍会拦额度，不因此打断对话） */
 async function loadUsage() {
+  // V5.60：用量接口需要「AI用量统计」菜单权限，无权限就不发起请求（拦截器会对 403 弹错误提示）
+  if (!userStore.can(PERM.MENU_AI_USAGE)) {
+    return
+  }
   try {
     usage.value = await aiUsageToday()
   } catch {

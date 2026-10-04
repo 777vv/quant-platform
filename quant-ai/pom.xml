@@ -15,6 +15,11 @@
     <description>AI 股票助手</description>
 
     <dependencies>
+
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot4-starter</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.quant</groupId>
             <artifactId>quant-common</artifactId>

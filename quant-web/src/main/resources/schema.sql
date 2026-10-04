@@ -4,13 +4,18 @@
 -- 变更说明：position 为 MySQL 关键字，表名调整为 fund_position
 -- =====================================================
 
--- 1. 用户（单用户）
+-- 1. 用户（V5.58 起支持临时账号：ADMIN=管理员全权限，GUEST=按 permissions 授权的只读/受限账号）
 CREATE TABLE IF NOT EXISTS sys_user (
   id            BIGINT PRIMARY KEY AUTO_INCREMENT,
   username      VARCHAR(64)  NOT NULL COMMENT '用户名',
   password      VARCHAR(100) NOT NULL COMMENT 'BCrypt哈希',
   nickname      VARCHAR(64)  DEFAULT '' COMMENT '昵称',
   email         VARCHAR(128) DEFAULT '' COMMENT '通知收件邮箱',
+  role          VARCHAR(16)  DEFAULT 'ADMIN' COMMENT '角色：ADMIN=管理员(全权限) GUEST=临时账号(按 permissions 授权)',
+  permissions   VARCHAR(1024) DEFAULT '' COMMENT '权限码逗号分隔（如 menu:funds,action:sync；仅 GUEST 生效）',
+  enabled       TINYINT      DEFAULT 1 COMMENT '是否启用：1=启用 0=停用（停用立即踢下线）',
+  expires_at    DATETIME     DEFAULT NULL COMMENT '过期时间（null=永久；过期后拒绝登录且在线会话失效）',
+  remark        VARCHAR(255) DEFAULT '' COMMENT '备注（给谁用的、为什么开）',
   locked_until  DATETIME     DEFAULT NULL COMMENT '防爆破锁定截止时间',
   fail_count    INT          DEFAULT 0 COMMENT '连续登录失败次数',
   last_login_at DATETIME     DEFAULT NULL COMMENT '最后登录时间',
@@ -566,3 +571,20 @@ CREATE TABLE IF NOT EXISTS allocation_config (
 
 INSERT IGNORE INTO allocation_config (id, enabled)
 SELECT 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM allocation_config WHERE id = 1);
+
+-- V5.58 迁移：sys_user 增加角色/权限/启用/过期/备注列（老库幂等补列；存量行 role 默认 ADMIN，管理员不受影响）
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' AND COLUMN_NAME = 'role');
+SET @sql := IF(@c = 0, 'ALTER TABLE sys_user ADD COLUMN role VARCHAR(16) DEFAULT ''ADMIN'' COMMENT ''角色：ADMIN=管理员(全权限) GUEST=临时账号(按 permissions 授权)''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' AND COLUMN_NAME = 'permissions');
+SET @sql := IF(@c = 0, 'ALTER TABLE sys_user ADD COLUMN permissions VARCHAR(1024) DEFAULT '''' COMMENT ''权限码逗号分隔（仅 GUEST 生效）''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' AND COLUMN_NAME = 'enabled');
+SET @sql := IF(@c = 0, 'ALTER TABLE sys_user ADD COLUMN enabled TINYINT DEFAULT 1 COMMENT ''是否启用：1=启用 0=停用''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' AND COLUMN_NAME = 'expires_at');
+SET @sql := IF(@c = 0, 'ALTER TABLE sys_user ADD COLUMN expires_at DATETIME DEFAULT NULL COMMENT ''过期时间（null=永久）''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' AND COLUMN_NAME = 'remark');
+SET @sql := IF(@c = 0, 'ALTER TABLE sys_user ADD COLUMN remark VARCHAR(255) DEFAULT '''' COMMENT ''备注''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

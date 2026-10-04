@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 邮件通知接口（FR4，M4-04；V4.9 配置入库）：平台配置邮件卡（查看/保存 SMTP 配置 + 测试发送）
@@ -43,6 +45,7 @@ public class NotifyController {
      *
      * @param request 配置请求；password 留空或回传打码值表示不修改已存授权码
      */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PutMapping("/config")
     public R<Void> save(@Valid @RequestBody MailConfigRequest request) {
         notifyService.saveMailConfig(request);
@@ -57,6 +60,7 @@ public class NotifyController {
      *
      * @param request 界面当前填写的邮件配置（可为 null）
      */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PostMapping("/test")
     public R<Void> test(@RequestBody(required = false) MailConfigRequest request) {
         notifyService.sendTestMail(request);
@@ -64,6 +68,7 @@ public class NotifyController {
     }
 
     /** 立即补发未通知的买卖信号摘要（返回纳入邮件的条数；重复点击不会重复发信） */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PostMapping("/digest")
     public R<Integer> digest() {
         return R.ok(notifyService.sendPendingDigest());
@@ -73,6 +78,7 @@ public class NotifyController {
      * 立即检查数据同步状态并对滞后基金发送告警邮件（返回滞后基金清单）。
      * 与每日 22:05 任务同一判定口径，供演练与故障排查使用。
      */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PostMapping("/sync-check")
     public R<List<DashboardOverviewVO.SyncStatusItem>> syncCheck() {
         List<DashboardOverviewVO.SyncStatusItem> lagging = syncSummaryService.computeSummary().stream()

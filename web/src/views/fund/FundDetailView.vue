@@ -13,7 +13,7 @@
             <el-tag v-for="tag in tags" :key="tag.id" size="small" type="info" class="name-tag">
               {{ tag.name }}
             </el-tag>
-            <el-button link type="primary" size="small" @click="tagEditVisible = true">
+            <el-button v-if="userStore.can(PERM.ACTION_TAG)" link type="primary" size="small" @click="tagEditVisible = true">
               {{ tags.length ? '编辑标签' : '添加标签' }}
             </el-button>
             <span v-if="detail.lastPrice != null" class="price">
@@ -101,6 +101,7 @@
           <el-checkbox v-model="showMacd" size="small" @change="loadChart">MACD 副图</el-checkbox>
           <el-checkbox v-model="showYield" size="small" @change="loadChart">股息率副图</el-checkbox>
           <el-checkbox v-model="showScale" size="small" @change="loadChart">规模副图</el-checkbox>
+          <el-checkbox v-model="showValuation" size="small" @change="onValuationToggle">估值副图</el-checkbox>
           <span v-if="showScale && scaleData && scaleData.length === 0" class="muted">
             规模历史自 V5.3 上线日起逐日积累（数据源只披露当前规模，无法回补）
           </span>
@@ -109,6 +110,14 @@
           </span>
           <span v-if="showYield && yieldData && !yieldData.priceAvailable" class="muted">
             历史股息率待补齐：需要未复权价（已排入下次同步）
+          </span>
+          <!-- 估值副图提示：有数据给「指数 + 当前 PE + 分位」摘要（原「指数估值」页签的告警条内容），无数据说明原因 -->
+          <span v-if="showValuation && valuationSummary" class="muted">
+            {{ valuationSummary }}
+            <el-tag :type="valuationTagType" size="small" class="name-tag">{{ valuationTagText }}</el-tag>
+          </span>
+          <span v-else-if="showValuation && valuationData !== null && !valuationSummary" class="muted">
+            {{ valuationEmptyText }}
           </span>
           <span class="muted">
             双击全屏 · 图上拖动可框选区间 · 标记：<b class="mark-b">b</b> 买入
@@ -144,6 +153,13 @@
                 </span>
               </template>
             </el-table-column>
+            <el-table-column label="年化收益率" min-width="130" align="right">
+              <template #default="{ row }">
+                <span class="num" :class="changeColorClass(row.annualizedReturnPct)">
+                  {{ row.annualizedReturnPct === null ? '--' : (row.annualizedReturnPct > 0 ? '+' : '') + row.annualizedReturnPct.toFixed(2) + '%' }}
+                </span>
+              </template>
+            </el-table-column>
             <el-table-column label="最大回撤" min-width="130" align="right">
               <template #default="{ row }">
                 <span class="num text-down">{{ row.maxDrawdownPct === null ? '--' : row.maxDrawdownPct.toFixed(2) + '%' }}</span>
@@ -176,22 +192,13 @@
         </Teleport>
       </el-tab-pane>
 
-      <el-tab-pane label="指数估值" name="valuation">
-        <template v-if="valuation && valuation.hasData">
-          <el-alert type="info" :closable="false" class="block">
-            跟踪指数 {{ valuation.indexName }}，当前 PE {{ valuation.latestPe?.toFixed(2) }}，
-            处于近10年 <b>{{ valuation.currentPercentile }}%</b> 分位
-            <el-tag :type="valuationTagType" size="small" class="name-tag">{{ valuationTagText }}</el-tag>
-          </el-alert>
-          <ChartPanel v-if="valuationOption" :option="valuationOption as EChartsOption" height="360px" />
-        </template>
-        <el-empty v-else :description="valuationEmptyText" />
-      </el-tab-pane>
+      <!-- 「指数估值」页签已并入行情走势的「估值副图」（V5.57）：PE 走势与行情同一横轴对照查看，
+           当前 PE 与分位摘要移到副图开关旁的工具栏提示；未识别跟踪指数/债券指数不适用 PE 的空态文案保留在提示位 -->
 
       <el-tab-pane label="交易流水" name="trades">
         <div class="toolbar">
           <!-- 新增走共享弹窗（与基金池「记一笔」同一套录入规则）；行内「编辑」仍用本页弹窗做更正 -->
-          <el-button type="primary" size="small" @click="addVisible = true">新增流水</el-button>
+          <el-button v-if="userStore.can(PERM.ACTION_TRADE)" type="primary" size="small" @click="addVisible = true">新增流水</el-button>
         </div>
         <el-table v-loading="tradesLoading" :data="tradeRecords" border size="small">
           <el-table-column prop="tradeDate" label="日期" min-width="120" />
@@ -221,8 +228,8 @@
                若让"备注"当弹性列，它会吃掉全部剩余宽度（实测 298px，用户反馈占太宽） -->
           <el-table-column label="操作" min-width="150" align="right">
             <template #default="{ row }">
-              <el-button size="small" @click="openDialog(row)">编辑</el-button>
-              <el-button size="small" type="danger" plain @click="handleDeleteTrade(row)">删除</el-button>
+              <el-button v-if="userStore.can(PERM.ACTION_TRADE)" size="small" @click="openDialog(row)">编辑</el-button>
+              <el-button v-if="userStore.can(PERM.ACTION_TRADE)" size="small" type="danger" plain @click="handleDeleteTrade(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -233,7 +240,7 @@
 
       <el-tab-pane label="策略配置" name="strategies">
         <div class="toolbar">
-          <el-button type="primary" size="small" @click="openStrategyDialog">新增策略</el-button>
+          <el-button v-if="userStore.can(PERM.ACTION_STRATEGY)" type="primary" size="small" @click="openStrategyDialog">新增策略</el-button>
         </div>
         <el-table :data="strategies" border size="small">
           <el-table-column label="策略" min-width="150">
@@ -248,14 +255,14 @@
           </el-table-column>
           <el-table-column label="启用" width="96">
             <template #default="{ row }">
-              <el-switch v-model="row.enabled" :active-value="1" :inactive-value="0" active-text="启用"
+              <el-switch v-if="userStore.can(PERM.ACTION_STRATEGY)" v-model="row.enabled" :active-value="1" :inactive-value="0" active-text="启用"
                          inline-prompt @change="toggleStrategy(row)" />
             </template>
           </el-table-column>
           <el-table-column label="操作" width="150">
             <template #default="{ row }">
-              <el-button size="small" link type="primary" @click="openEditStrategy(row)">编辑</el-button>
-              <el-button size="small" type="danger" plain @click="handleDeleteStrategy(row)">删除</el-button>
+              <el-button v-if="userStore.can(PERM.ACTION_STRATEGY)" size="small" link type="primary" @click="openEditStrategy(row)">编辑</el-button>
+              <el-button v-if="userStore.can(PERM.ACTION_STRATEGY)" size="small" type="danger" plain @click="handleDeleteStrategy(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -287,7 +294,7 @@
             :type="backtestForm.strategyType"
           />
           <div v-if="prefillHint" class="prefill-hint">{{ prefillHint }}</div>
-          <el-button type="primary" :loading="backtestRunning" @click="handleBacktest">开始回测</el-button>
+          <el-button v-if="userStore.can(PERM.ACTION_STRATEGY)" type="primary" :loading="backtestRunning" @click="handleBacktest">开始回测</el-button>
         </el-card>
         <!-- 列宽口径：数字列 min-width 均分富余宽度；失败原因等长文本列用省略号 + 悬浮全显 -->
         <el-table :data="backtestRecords" border size="small">
@@ -444,6 +451,8 @@
 </template>
 
 <script setup lang="ts">
+import { useUserStore } from '@/stores/user'
+import { PERM } from '@/utils/permissions'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -455,6 +464,7 @@ import {
   VOLUME,
   PE_LINE,
   PRIMARY,
+  BENCHMARK,
   MA_COLORS,
   BOLL_MID,
   BOLL_BAND,
@@ -463,7 +473,7 @@ import {
 } from '@/utils/palette'
 import { ma, boll, macd } from '@/utils/indicators'
 import { changeColorClass } from '@/utils/format'
-import { annualizedVolatilityPct, maxDrawdownPct, rangeReturnPct } from '@/utils/metrics'
+import { annualizedReturnPct, annualizedVolatilityPct, maxDrawdownPct, rangeReturnPct } from '@/utils/metrics'
 import { TEXT_INVERSE, TRADE_BUY, TRADE_DIVIDEND, TRADE_SELL } from '@/utils/palette'
 import { useEscToClose } from '@/utils/escClose'
 
@@ -513,6 +523,8 @@ import type {
   ValuationSeriesVO
 } from '@/api/fund'
 
+const userStore = useUserStore()
+
 const route = useRoute()
 const code = route.params.code as string
 
@@ -553,6 +565,7 @@ const rangeStats = computed(() => {
     to: dates[endIndex],
     days: slice.length,
     returnPct: rangeReturnPct(slice),
+    annualizedReturnPct: annualizedReturnPct(slice, dates[startIndex], dates[endIndex]),
     maxDrawdownPct: maxDrawdownPct(slice),
     volatilityPct: annualizedVolatilityPct(slice)
   }
@@ -596,28 +609,37 @@ const fullscreen = ref(false)
 /** 图表高度随副图数量自适应 */
 const chartHeight = computed(() => `${420 + subChartCount.value * 100}px`)
 
-/** 除成交量外的副图数量（MACD / 股息率 / 规模），用于图表高度与网格划分 */
-const subChartCount = computed(() => (showMacd.value ? 1 : 0) + (showYield.value ? 1 : 0) + (showScale.value ? 1 : 0))
+/** 除成交量外的副图数量（MACD / 股息率 / 规模 / 估值），用于图表高度与网格划分 */
+const subChartCount = computed(
+  () => (showMacd.value ? 1 : 0) + (showYield.value ? 1 : 0) + (showScale.value ? 1 : 0) + (valuationOn.value ? 1 : 0)
+)
+
+/** 估值副图是否实际渲染：开关打开且该指数确有 PE 数据（无数据时不占网格，只在工具栏出提示文案） */
+const valuationOn = computed(() => showValuation.value && !!valuationData.value?.hasData)
 
 /**
- * 副图纵向布局：主图 + 成交量 +（MACD）+（股息率）。
+ * 副图纵向布局：主图 +（成交量）+（MACD）+（股息率）+（规模）+（估值）。
  * 图表数量随开关变化，写死百分比会在开关组合下互相重叠，故按数量算：
  * 每张副图占固定高度，主图吃掉剩余空间，副图之间留 gap，底部预留 dataZoom 滑块的位置。
  *
- * @returns grids 每张图的 [top%, height%]（顺序：主图, 成交量, MACD?, 股息率?, 规模?）
+ * @param includeVolume 是否包含成交量网格（净值图没有成交量，传 false 时其余网格从主图下方直接排起）
+ * @returns grids 每张图的 [top%, height%]（顺序：主图, 成交量?, MACD?, 股息率?, 规模?, 估值?）
  */
-function subChartGrids(): { top: number; height: number }[] {
+function subChartGrids(includeVolume = true): { top: number; height: number }[] {
   const extra = subChartCount.value
-  const volHeight = extra === 0 ? 15 : 12
+  const volHeight = includeVolume ? (extra === 0 ? 15 : 12) : 0
   const extraHeight = extra <= 1 ? 14 : 11
   const gap = 3
   const topStart = 9
   const bottomReserve = 12
   const total = topStart + bottomReserve + volHeight + extra * extraHeight + (1 + extra) * gap
   const mainHeight = Math.max(24, 100 - total)
-  const grids = [{ top: topStart, height: mainHeight }, { top: 0, height: volHeight }]
-  grids[1].top = topStart + mainHeight + gap
-  let cursor = grids[1].top + volHeight + gap
+  const grids = [{ top: topStart, height: mainHeight }]
+  let cursor = topStart + mainHeight + gap
+  if (includeVolume) {
+    grids.push({ top: cursor, height: volHeight })
+    cursor += volHeight + gap
+  }
   for (let i = 0; i < extra; i++) {
     grids.push({ top: cursor, height: extraHeight })
     cursor += extraHeight + gap
@@ -649,7 +671,10 @@ function appendYieldSubChart(
     axisLabel: { formatter: '{value}%', show: true },
     splitLine: { show: false }
   })
-  const ttm = expandTtm(dates, yieldData.value?.ttm ?? [])
+  const ttm = fillLatestByDate(
+    dates,
+    (yieldData.value?.ttm ?? []).map((p) => ({ date: p.date, value: p.yieldPct }))
+  )
   const indexByDate = new Map(dates.map((date, i) => [date, i]))
   const events = (yieldData.value?.events ?? [])
     .filter((event) => event.yieldPct != null && indexByDate.has(event.date))
@@ -663,8 +688,9 @@ function appendYieldSubChart(
     step: 'end',
     connectNulls: false,
     showSymbol: false,
-    lineStyle: { width: 1.6, color: PE_LINE },
-    itemStyle: { color: PE_LINE }
+    // 灰色基准线：紫色 PE_LINE 留给「估值副图」的 PE 线，避免同屏两个紫色序列在图例里混淆（V5.57）
+    lineStyle: { width: 1.6, color: BENCHMARK },
+    itemStyle: { color: BENCHMARK }
   })
   if (events.length > 0) {
     series.push({
@@ -709,7 +735,10 @@ function appendScaleSubChart(
     name: '基金规模',
     xAxisIndex: gridIndex,
     yAxisIndex: gridIndex,
-    data: expandScale(dates),
+    data: fillLatestByDate(
+      dates,
+      (scaleData.value ?? []).map((p) => ({ date: p.date, value: Number(p.scale) }))
+    ),
     step: 'end',
     connectNulls: false,
     // 数据点本身显示圆标：积累初期只有少数几天，仅画细线几乎看不见（V5.18 用户反馈"副图没加载出来"实为此因）
@@ -721,17 +750,58 @@ function appendScaleSubChart(
   })
 }
 
-/** 把稀疏的规模快照铺满主图日期轴：每个交易日取"该日之前最近一次快照"的规模（首个快照之前为空） */
-function expandScale(dates: string[]): (number | null)[] {
-  const sorted = (scaleData.value ?? []).slice().sort((a, b) => a.date.localeCompare(b.date))
+/**
+ * 把稀疏的 {date, value} 点铺到主图日期轴：每个交易日取"该日之前最近一点"的值（首点之前为空）。
+ * 规模快照 / 股息率 TTM / 指数 PE 都是各自独立的日期序列，与行情图日期轴对齐都用这一把刷子
+ * （三处逻辑原本各写一份，V5.57 收敛为一个函数，避免走散）。
+ */
+function fillLatestByDate(dates: string[], points: { date: string; value: number | null }[]): (number | null)[] {
+  const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date))
   let cursor = 0
   let current: number | null = null
   return dates.map((date) => {
     while (cursor < sorted.length && sorted[cursor].date <= date) {
-      current = Number(sorted[cursor].scale)
+      current = sorted[cursor].value
       cursor += 1
     }
     return current
+  })
+}
+
+/**
+ * 追加「估值副图」（独立坐标轴）：跟踪指数 PE 走势。
+ * 指数 PE 与基金收盘价/净值是两套序列，按"该交易日之前最近的 PE"对齐到行情图日期轴，
+ * 与主图共用同一横轴，估值与行情的相对高低、拐点先后一目了然（V5.57，原「指数估值」页签并入）。
+ *
+ * @param series    图表 series 数组（就地追加）
+ * @param xAxes     x 轴数组（就地追加）
+ * @param yAxes     y 轴数组（就地追加）
+ * @param dates     主图日期轴
+ * @param gridIndex 该副图所在的网格下标
+ */
+function appendValuationSubChart(
+  series: Record<string, unknown>[],
+  xAxes: Record<string, unknown>[],
+  yAxes: Record<string, unknown>[],
+  dates: string[],
+  gridIndex: number
+) {
+  xAxes.push({ type: 'category', gridIndex, data: dates, axisLabel: { show: false } })
+  yAxes.push({ gridIndex, scale: true, splitLine: { show: false } })
+  series.push({
+    type: 'line',
+    name: 'PE',
+    xAxisIndex: gridIndex,
+    yAxisIndex: gridIndex,
+    data: fillLatestByDate(
+      dates,
+      (valuationData.value?.series ?? []).map((p) => ({ date: p.date, value: p.pe ?? null }))
+    ),
+    connectNulls: false,
+    showSymbol: false,
+    lineStyle: { width: 1.6, color: PE_LINE },
+    itemStyle: { color: PE_LINE },
+    areaStyle: { opacity: 0.08, color: PE_LINE }
   })
 }
 
@@ -743,23 +813,6 @@ function toGridOption(bands: { top: number; height: number }[]): Record<string, 
     top: `${band.top.toFixed(1)}%`,
     height: `${band.height.toFixed(1)}%`
   }))
-}
-
-/**
- * 把稀疏的 TTM 阶跃点铺到图表的日期轴上（每根 K 线一个值，取值 = 之前最近一个阶跃点）。
- * 稀疏点直接画线只会连出几段折线、两头还断空，铺开后才是一条完整的阶梯。
- */
-function expandTtm(dates: string[], ttm: { date: string; yieldPct: number | null }[]): (number | null)[] {
-  const sorted = [...ttm].sort((a, b) => (a.date < b.date ? -1 : 1))
-  let cursor = 0
-  let current: number | null = null
-  return dates.map((date) => {
-    while (cursor < sorted.length && sorted[cursor].date <= date) {
-      current = sorted[cursor].yieldPct
-      cursor++
-    }
-    return current
-  })
 }
 
 /** 双击图表进入全屏查看 */
@@ -779,8 +832,17 @@ async function loadTags() {
   const result = await fundTags(code)
   tags.value = result.tags
 }
-const valuation = ref<ValuationSeriesVO | null>(null)
-const valuationOption = ref<EChartsOption | null>(null)
+/** 估值副图开关与数据：跟踪指数 PE 全历史一次拉取后缓存，区间切换/缩放只做本地按日期对齐，不再重复请求 */
+const showValuation = ref(false)
+const valuationData = ref<ValuationSeriesVO | null>(null)
+
+/** 开/关估值副图：首次打开时拉一次指数 PE 全历史，再按当前区间重建图表 */
+async function onValuationToggle() {
+  if (showValuation.value && valuationData.value === null) {
+    valuationData.value = await fundValuation(code).catch(() => null)
+  }
+  loadChart()
+}
 const tradeRecords = ref<TradeFlow[]>([])
 const tradesLoading = ref(false)
 
@@ -832,7 +894,7 @@ const valuationEmptyText = computed(() => {
 })
 
 const valuationTagType = computed(() => {
-  const p = valuation.value?.currentPercentile
+  const p = valuationData.value?.currentPercentile
   if (p === null || p === undefined) return 'info'
   if (p <= 20) return 'success'
   if (p >= 80) return 'danger'
@@ -840,11 +902,19 @@ const valuationTagType = computed(() => {
 })
 
 const valuationTagText = computed(() => {
-  const p = valuation.value?.currentPercentile
+  const p = valuationData.value?.currentPercentile
   if (p === null || p === undefined) return ''
   if (p <= 20) return '低估'
   if (p >= 80) return '高估'
   return '合理'
+})
+
+/** 估值副图工具栏摘要（原「指数估值」页签告警条的内容）：跟踪指数 + 当前 PE + 近10年分位 */
+const valuationSummary = computed(() => {
+  const v = valuationData.value
+  if (!v?.hasData) return ''
+  const pct = v.currentPercentile === null || v.currentPercentile === undefined ? '--' : `${v.currentPercentile}%`
+  return `跟踪指数 ${v.indexName} · 当前 PE ${v.latestPe?.toFixed(2) ?? '--'} · 近10年 ${pct} 分位`
 })
 
 function tradeTypeText(type: number): string {
@@ -1142,6 +1212,9 @@ function klineOption(points: SeriesPoint[]): EChartsOption {
   if (scaleOn) {
     appendScaleSubChart(series, xAxes, yAxes, dates, (macdOn ? 1 : 0) + (yieldOn ? 1 : 0) + 2)
   }
+  if (valuationOn.value) {
+    appendValuationSubChart(series, xAxes, yAxes, dates, (macdOn ? 1 : 0) + (yieldOn ? 1 : 0) + (scaleOn ? 1 : 0) + 2)
+  }
 
   const axisIndexes = Array.from({ length: 2 + subChartCount.value }, (_, i) => i)
   return {
@@ -1169,7 +1242,8 @@ function navOption(points: SeriesPoint[], mode: 'unitNav' | 'accNav' | 'adjNav')
   const macdOn = showMacd.value
   const yieldOn = showYield.value
   const scaleOn = showScale.value
-  const grids: Record<string, unknown>[] = toGridOption(subChartGrids())
+  // 净值图没有成交量副图：网格直接从主图下方排起（MACD 打开时网格 1 归 MACD）
+  const grids: Record<string, unknown>[] = toGridOption(subChartGrids(false))
   const xAxes: Record<string, unknown>[] = [
     { type: 'category', data: dates },
     { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false } }
@@ -1235,7 +1309,8 @@ function navOption(points: SeriesPoint[], mode: 'unitNav' | 'accNav' | 'adjNav')
     )
   }
 
-  // MACD 副图
+  // MACD 副图（与 K 线图不同：净值图没有成交量，网格 1 直接给 MACD 用；关闭时移除该占位网格）
+  let nextGrid = 1
   if (macdOn) {
     const result = macd(values)
     series.push(
@@ -1270,22 +1345,25 @@ function navOption(points: SeriesPoint[], mode: 'unitNav' | 'accNav' | 'adjNav')
         itemStyle: { color: MACD_DEA }
       }
     )
-  } else {
-    // 未开 MACD 时副图仅作为留白占位，避免主图被拉满导致刻度拥挤
-    grids.pop()
-    xAxes.pop()
-    yAxes.pop()
+    nextGrid = 2
   }
 
+  // 其余副图用游标依次分配网格：写死下标在开关组合下会空格或越界（V5.57 随估值副图一并修正）
   if (yieldOn) {
-    appendYieldSubChart(series, xAxes, yAxes, dates, macdOn ? 3 : 2)
+    appendYieldSubChart(series, xAxes, yAxes, dates, nextGrid)
+    nextGrid += 1
   }
   if (scaleOn) {
-    appendScaleSubChart(series, xAxes, yAxes, dates, (macdOn ? 1 : 0) + (yieldOn ? 1 : 0) + 2)
+    appendScaleSubChart(series, xAxes, yAxes, dates, nextGrid)
+    nextGrid += 1
+  }
+  if (valuationOn.value) {
+    appendValuationSubChart(series, xAxes, yAxes, dates, nextGrid)
+    nextGrid += 1
   }
 
-  // 原来没有 MACD 时只驱动轴 0，成交量副图不会跟着缩放；这里按实际网格数量生成
-  const axisIndexes = Array.from({ length: 2 + subChartCount.value }, (_, i) => i)
+  // 轴数随开关组合变化：MACD 关闭时网格 1 不存在，轴从 1 根起算（K 线图恒为 2 + 副图数）
+  const axisIndexes = Array.from({ length: (macdOn ? 2 : 1) + subChartCount.value }, (_, i) => i)
   return {
     animation: false,
     tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
@@ -1304,30 +1382,6 @@ function navOption(points: SeriesPoint[], mode: 'unitNav' | 'accNav' | 'adjNav')
 /** 净值口径的中文名（图例展示） */
 function navModeLabel(mode: 'unitNav' | 'accNav' | 'adjNav'): string {
   return mode === 'unitNav' ? '单位净值' : mode === 'accNav' ? '累计净值' : '复权净值'
-}
-
-async function loadValuation() {
-  valuation.value = await fundValuation(code)
-  if (valuation.value.hasData) {
-    valuationOption.value = {
-      tooltip: { trigger: 'axis' },
-      grid: { left: '8%', right: '3%', top: '8%', bottom: '12%' },
-      xAxis: { type: 'category', data: valuation.value.series.map((p) => p.date) },
-      yAxis: { type: 'value', scale: true },
-      dataZoom: [{ type: 'inside', start: 60, end: 100 }],
-      series: [
-        {
-          type: 'line',
-          name: 'PE',
-          data: valuation.value.series.map((p) => p.pe),
-          showSymbol: false,
-          itemStyle: { color: PE_LINE },
-          lineStyle: { color: PE_LINE, width: 1.6 },
-          areaStyle: { opacity: 0.08, color: PE_LINE }
-        }
-      ]
-    }
-  }
 }
 
 /** 交易流水（服务端分页，每页 10 条）；删除/新增后若当前页越界自动回退到最后一页 */
@@ -1756,7 +1810,6 @@ async function handleBacktest() {
 onMounted(() => {
   loadMarks()
   loadDetail().then(() => loadChart())
-  loadValuation()
   loadTrades()
   // 策略类型/默认策略/参数回填统一在 initBacktestForm 里按顺序完成（避免默认值落空；内含回测记录第 1 页）
   initBacktestForm()

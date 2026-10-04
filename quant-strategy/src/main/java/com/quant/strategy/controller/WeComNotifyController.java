@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 微信通知接口（V5.20，企业微信自建应用 + 微信插件 → 消息直达个人微信；与邮件通道并行、互不影响）
@@ -34,6 +36,7 @@ public class WeComNotifyController {
      * 保存微信通知配置（保存即生效；secret 留空/打码 = 保持原值）。
      * 返回**保存后的配置视图**：前端据此判断是否已配置齐全（防止漏传字段却提示"保存成功"）。
      */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PutMapping("/config")
     public R<WeComConfigVO> saveConfig(@RequestBody WeComConfigRequest request) {
         wecomNotifyService.saveConfig(request);
@@ -48,6 +51,7 @@ public class WeComNotifyController {
      *
      * @param request 界面当前填写的微信配置（可为 null）
      */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PostMapping("/test")
     public R<Void> test(@RequestBody(required = false) WeComConfigRequest request) {
         wecomNotifyService.testSend(request);

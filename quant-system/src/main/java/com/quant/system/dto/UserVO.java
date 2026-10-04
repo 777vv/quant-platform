@@ -1,6 +1,7 @@
 package com.quant.system.dto;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import lombok.Data;
 
@@ -24,4 +25,13 @@ public class UserVO {
 
     /** 最后登录时间 */
     private LocalDateTime lastLoginAt;
+
+    /** 角色：ADMIN=管理员 GUEST=临时账号（V5.58） */
+    private String role;
+
+    /** 是否管理员（前端渲染判定用） */
+    private boolean admin;
+
+    /** 权限码清单（管理员=全量；临时账号=所分配的码；V5.58） */
+    private List<String> permissions;
 }

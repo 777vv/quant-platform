@@ -83,6 +83,13 @@
             </span>
           </template>
         </el-table-column>
+        <el-table-column label="年化收益率" min-width="130" align="right">
+          <template #default="{ row }">
+            <span :class="changeColorClass(row.annualizedReturnPct)" class="num">
+              {{ row.annualizedReturnPct === null ? '--' : (row.annualizedReturnPct > 0 ? '+' : '') + row.annualizedReturnPct.toFixed(2) + '%' }}
+            </span>
+          </template>
+        </el-table-column>
         <el-table-column label="最大回撤" min-width="130" align="right">
           <template #default="{ row }">
             <span class="num text-down">{{ row.maxDrawdownPct === null ? '--' : row.maxDrawdownPct.toFixed(2) + '%' }}</span>
@@ -115,7 +122,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { EChartsOption } from 'echarts'
 import ChartPanel from '@/components/charts/ChartPanel.vue'
-import { annualizedVolatilityPct, maxDrawdownPct, rangeReturnPct } from '@/utils/metrics'
+import { annualizedReturnPct, annualizedVolatilityPct, maxDrawdownPct, rangeReturnPct } from '@/utils/metrics'
 import { fundKline, fundNav, watchlist, type SeriesPoint, type WatchItemVO } from '@/api/fund'
 import { changeColorClass } from '@/utils/format'
 import { useEscToClose } from '@/utils/escClose'
@@ -175,6 +182,7 @@ interface CompareSeries {
   /** 归一化值（首日=100） */
   normalized: number[]
   returnPct: number | null
+  annualizedReturnPct: number | null
   maxDrawdownPct: number | null
   volatilityPct: number | null
 }
@@ -199,7 +207,9 @@ function onSlotChange() {
 
 /** 加载所选基金的序列并归一化 */
 async function load() {
-  const codes = slots.value.filter((c) => c !== '')
+  // 过滤必须用 falsy 判断：EP 可清空下拉点 × 后 v-model 是 undefined 而非 ''，
+  // 只排除 '' 会让 undefined 混进取数列表，弹「undefined 不在自选池中」（V5.62 用户反馈）
+  const codes = slots.value.filter((c) => c)
   if (codes.length === 0) {
     seriesList.value = []
     return
@@ -238,6 +248,11 @@ async function load() {
         dates: points.map((p) => p.date),
         normalized: values.map((v) => Number(((v / base) * 100).toFixed(3))),
         returnPct: rangeReturnPct(values),
+        annualizedReturnPct: annualizedReturnPct(
+          values,
+          points[0]?.date ?? '',
+          points[points.length - 1]?.date ?? ''
+        ),
         maxDrawdownPct: maxDrawdownPct(values),
         volatilityPct: annualizedVolatilityPct(values)
       })
@@ -298,6 +313,7 @@ const summaries = computed(() =>
     endDate: item.dates[item.dates.length - 1] ?? '--',
     dayCount: item.dates.length,
     returnPct: item.returnPct,
+    annualizedReturnPct: item.annualizedReturnPct,
     maxDrawdownPct: item.maxDrawdownPct,
     volatilityPct: item.volatilityPct
   }))

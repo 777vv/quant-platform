@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 基金标签接口：标签库维护 + 基金贴标签
@@ -36,6 +38,7 @@ public class FundTagController {
     }
 
     /** 新建标签（名称唯一） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_TAG)
     @PostMapping("/tags")
     public R<Void> create(@RequestBody TagNameRequest request) {
         tagService.createTag(request.name());
@@ -43,6 +46,7 @@ public class FundTagController {
     }
 
     /** 重命名标签 */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_TAG)
     @PutMapping("/tags/{id}")
     public R<Void> rename(@PathVariable Long id, @RequestBody TagNameRequest request) {
         tagService.renameTag(id, request.name());
@@ -50,6 +54,7 @@ public class FundTagController {
     }
 
     /** 删除标签（同时清理关联，前端二次确认） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_TAG)
     @DeleteMapping("/tags/{id}")
     public R<Void> delete(@PathVariable Long id) {
         tagService.deleteTag(id);
@@ -63,6 +68,7 @@ public class FundTagController {
     }
 
     /** 覆盖式设置某基金的标签 */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_TAG)
     @PutMapping("/funds/{code}/tags")
     public R<Void> setTags(@PathVariable String code, @RequestBody SetTagsRequest request) {
         tagService.setFundTags(code, request.tagIds());

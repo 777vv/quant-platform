@@ -40,3 +40,19 @@ export function annualizedVolatilityPct(values: number[]): number | null {
   const variance = returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1)
   return Number((Math.sqrt(variance) * Math.sqrt(244) * 100).toFixed(2))
 }
+
+/** 年化收益率（%）：按自然日复利折算 (末值/首值)^(365/自然日数) − 1，数据不足或区间为空返回 null。
+ *  口径说明：收益率按自然日折算（行业惯例，选满一年时年化=区间收益）；与年化波动率的 √244 交易日口径并存
+ *  属金融惯例——波动率按交易日放大、收益率按日历时间折算。 */
+export function annualizedReturnPct(values: number[], fromDate: string, toDate: string): number | null {
+  const first = values[0]
+  const last = values[values.length - 1]
+  if (values.length < 2 || !Number.isFinite(first) || first <= 0 || !Number.isFinite(last) || last <= 0) {
+    return null
+  }
+  const naturalDays = Math.round((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000)
+  if (!Number.isFinite(naturalDays) || naturalDays <= 0) {
+    return null
+  }
+  return Number(((Math.pow(last / first, 365 / naturalDays) - 1) * 100).toFixed(2))
+}

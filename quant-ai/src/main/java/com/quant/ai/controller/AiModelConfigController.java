@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * AI 模型配置接口（平台配置）。
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 查询接口只回传打码后的 Token。
  */
 @RestController
+@SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
 @RequestMapping("/api/ai/model-config")
 public class AiModelConfigController {
 

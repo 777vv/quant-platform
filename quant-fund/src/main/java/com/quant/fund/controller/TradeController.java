@@ -27,6 +27,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 交易流水接口（FR2）
@@ -87,6 +89,7 @@ public class TradeController {
     }
 
     /** 新增交易流水（自动触发该基金持仓重算） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_TRADE)
     @PostMapping("/trades")
     public R<Void> add(@Valid @RequestBody TradeFlowRequest request) {
         tradeService.add(request);
@@ -94,6 +97,7 @@ public class TradeController {
     }
 
     /** 修改交易流水（新旧基金代码不一致时两只都重算） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_TRADE)
     @PutMapping("/trades/{id}")
     public R<Void> update(@PathVariable Long id, @Valid @RequestBody TradeFlowRequest request) {
         tradeService.update(id, request);
@@ -101,6 +105,7 @@ public class TradeController {
     }
 
     /** 删除交易流水（自动触发持仓重算） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_TRADE)
     @DeleteMapping("/trades/{id}")
     public R<Void> delete(@PathVariable Long id) {
         tradeService.delete(id);
@@ -108,6 +113,7 @@ public class TradeController {
     }
 
     /** 手动单基金增量同步（异步），返回进度 taskId */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_SYNC)
     @PostMapping("/funds/{code}/sync")
     public R<Map<String, String>> sync(@PathVariable String code) {
         String taskId = syncService.manualSync(code);

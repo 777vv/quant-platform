@@ -7,7 +7,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 /**
- * 用户表（个人单用户：仅管理员一个账号）
+ * 用户表（V5.58 起支持临时账号：ADMIN=管理员全权限；GUEST=按 permissions 授权的受限账号）
  */
 @TableName("sys_user")
 public class SysUser {
@@ -27,6 +27,21 @@ public class SysUser {
 
     /** 通知收件邮箱（信号汇总邮件收件人） */
     private String email;
+
+    /** 角色：ADMIN=管理员(全权限) GUEST=临时账号(按 permissions 授权) */
+    private String role;
+
+    /** 权限码，逗号分隔（如 menu:funds,action:sync）；仅 GUEST 生效，ADMIN 恒为全权限 */
+    private String permissions;
+
+    /** 是否启用：1=启用 0=停用（停用立即踢下线） */
+    private Integer enabled;
+
+    /** 过期时间（null=永久；过期后拒绝登录且在线会话失效） */
+    private LocalDateTime expiresAt;
+
+    /** 备注（给谁用的、为什么开） */
+    private String remark;
 
     /** 防爆破锁定截止时间（连续失败 5 次后锁定 10 分钟，null=未锁定） */
     private LocalDateTime lockedUntil;
@@ -81,6 +96,46 @@ public class SysUser {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getRole() {
+        return role;
+    }
+
+    public void setRole(String role) {
+        this.role = role;
+    }
+
+    public String getPermissions() {
+        return permissions;
+    }
+
+    public void setPermissions(String permissions) {
+        this.permissions = permissions;
+    }
+
+    public Integer getEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(Integer enabled) {
+        this.enabled = enabled;
+    }
+
+    public LocalDateTime getExpiresAt() {
+        return expiresAt;
+    }
+
+    public void setExpiresAt(LocalDateTime expiresAt) {
+        this.expiresAt = expiresAt;
+    }
+
+    public String getRemark() {
+        return remark;
+    }
+
+    public void setRemark(String remark) {
+        this.remark = remark;
     }
 
     public LocalDateTime getLockedUntil() {

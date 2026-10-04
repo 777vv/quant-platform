@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 回测接口（FR2）
@@ -30,6 +32,7 @@ public class BacktestController {
     }
 
     /** 发起回测（异步执行），返回回测记录 ID */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_STRATEGY)
     @PostMapping
     public R<Map<String, Long>> create(@RequestBody BacktestRequest request) {
         return R.ok(Map.of("id", backtestService.create(request)));

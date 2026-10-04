@@ -15,6 +15,11 @@
     <description>基金池/数据导入/行情净值同步/东财client（M2 实现）</description>
 
     <dependencies>
+
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot4-starter</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.quant</groupId>
             <artifactId>quant-common</artifactId>

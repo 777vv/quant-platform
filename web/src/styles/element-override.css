@@ -264,3 +264,15 @@
 .q-on-dark .el-input__suffix {
   color: var(--q-login-text-muted);
 }
+
+/* 下拉触发器（顶栏用户名、列表行「更多」等）：去掉悬浮/聚焦时的默认描边外框（V5.59 用户反馈）。
+   EP 给触发元素加了 tabindex，浏览器在其获得焦点（含鼠标点选）时会画默认 outline 外框，观感突兀；
+   hover 反馈仍由页面自身的颜色变化承担（如 .header-user:hover 变主色），不需要框线。 */
+.el-dropdown,
+.el-dropdown .el-dropdown-selfdefine,
+.el-dropdown .el-tooltip__trigger,
+.el-dropdown .el-tooltip__trigger:hover,
+.el-dropdown .el-tooltip__trigger:focus,
+.el-dropdown .el-tooltip__trigger:focus-visible {
+  outline: none;
+}

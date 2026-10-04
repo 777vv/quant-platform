@@ -91,7 +91,7 @@ function formatPrice(value: number): string {
 .spark-line {
   display: block;
   width: 100%;
-  height: 30px;
+  height: 22px;
 }
 
 .spark-line--empty {

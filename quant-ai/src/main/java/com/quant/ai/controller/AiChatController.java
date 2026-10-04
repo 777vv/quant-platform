@@ -20,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import reactor.core.publisher.Flux;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * AI 助手接口（FR6，M5-05/M5-06）
@@ -38,6 +40,7 @@ public class AiChatController {
      * 流式对话（SSE）。事件帧：session / tool / token / error / done。
      * 说明：浏览器 EventSource 不支持 POST，前端用 fetch + ReadableStream 解析本响应。
      */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_AI_CHAT)
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chat(@RequestBody AiChatRequest request) {
         return aiChatService.stream(request);
@@ -47,6 +50,7 @@ public class AiChatController {
      * 非流式对话（降级路径，技术文档 6.8 的 stream=false 语义）。
      * 独立路径而非同路径开关：SSE 与 JSON 两种响应类型无法在同一个映射上共存。
      */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_AI_CHAT)
     @PostMapping("/chat/sync")
     public R<String> chatSync(@RequestBody AiChatRequest request) {
         return R.ok(aiChatService.chatSync(request));
@@ -77,6 +81,7 @@ public class AiChatController {
     }
 
     /** 删除会话（含历史消息与记忆窗口） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_AI_CHAT)
     @DeleteMapping("/sessions/{sessionId}")
     public R<Void> deleteSession(@PathVariable String sessionId) {
         aiChatService.deleteSession(sessionId);

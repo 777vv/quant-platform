@@ -6,7 +6,7 @@
         <el-col :span="8">
           <el-input v-model="code" placeholder="输入基金代码，如 510300 / 110003" maxlength="12" clearable @keyup.enter="handleCheck">
             <template #append>
-              <el-button :loading="checking" @click="handleCheck">校验</el-button>
+              <el-button v-if="userStore.can(PERM.ACTION_IMPORT_FUND)" :loading="checking" @click="handleCheck">校验</el-button>
             </template>
           </el-input>
         </el-col>
@@ -31,7 +31,7 @@
       </el-descriptions>
 
       <div v-if="checkResult && checkResult.supported" class="block">
-        <el-button type="primary" :loading="importing" :disabled="progress && progress.status === 'RUNNING'" @click="handleImport">
+        <el-button v-if="userStore.can(PERM.ACTION_IMPORT_FUND)" type="primary" :loading="importing" :disabled="progress && progress.status === 'RUNNING'" @click="handleImport">
           {{ poolTag.button }}
         </el-button>
         <span class="import-note">{{ poolTag.note }}</span>
@@ -97,7 +97,7 @@
         />
       </div>
       <div class="batch-row">
-        <el-button type="primary" :loading="batchRunning" :disabled="pendingCount === 0 || singleRunning" @click="handleStartBatch">
+        <el-button v-if="userStore.can(PERM.ACTION_IMPORT_FUND)" type="primary" :loading="batchRunning" :disabled="pendingCount === 0 || singleRunning" @click="handleStartBatch">
           开始批量导入（{{ pendingCount }} 只）
         </el-button>
         <span class="muted">
@@ -121,7 +121,7 @@
             <el-table-column prop="code" label="失败代码" width="110" />
             <el-table-column prop="reason" label="失败原因" min-width="260" show-overflow-tooltip />
           </el-table>
-          <el-button v-if="batchProgress.status !== 'RUNNING'" size="small" @click="handleRetryFailed">
+          <el-button v-if="batchProgress.status !== 'RUNNING' && userStore.can(PERM.ACTION_IMPORT_FUND)" size="small" @click="handleRetryFailed">
             重试失败项（{{ batchProgress.failures.length }} 只）
           </el-button>
         </template>
@@ -131,10 +131,14 @@
 </template>
 
 <script setup lang="ts">
+import { useUserStore } from '@/stores/user'
+import { PERM } from '@/utils/permissions'
 import { computed, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { checkFund, etfCandidates, batchImportProgress, importFund, importProgress, startBatchImport } from '@/api/fund'
 import type { BatchImportProgress, EtfCandidate, FundCheckVO, TaskProgressVO } from '@/api/fund'
+
+const userStore = useUserStore()
 
 const code = ref('')
 const checking = ref(false)

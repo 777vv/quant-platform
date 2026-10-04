@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 手动触发同步与同步状态接口（FR2/FR5）
@@ -30,6 +32,7 @@ public class SyncController {
     }
 
     /** 手动触发全局任务：etf / nav / valuation / indices / profiles（档案规模强制刷新） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_SYNC)
     @PostMapping("/{type}")
     public R<Void> trigger(@PathVariable String type) {
         switch (type) {

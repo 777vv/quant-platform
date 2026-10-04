@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 策略配置接口（FR2）
@@ -56,6 +58,7 @@ public class StrategyController {
     }
 
     /** 新增策略配置（每基金每类型唯一，参数经策略校验） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_STRATEGY)
     @PostMapping("/funds/{code}/strategies")
     public R<Void> add(@PathVariable String code, @RequestBody StrategyConfigRequest request) {
         configService.add(code, request);
@@ -63,6 +66,7 @@ public class StrategyController {
     }
 
     /** 修改策略参数/启停状态 */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_STRATEGY)
     @PutMapping("/strategies/{id}")
     public R<Void> update(@PathVariable Long id, @RequestBody StrategyConfigRequest request) {
         configService.update(id, request);
@@ -70,6 +74,7 @@ public class StrategyController {
     }
 
     /** 删除策略配置 */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_STRATEGY)
     @DeleteMapping("/strategies/{id}")
     public R<Void> delete(@PathVariable Long id) {
         configService.delete(id);

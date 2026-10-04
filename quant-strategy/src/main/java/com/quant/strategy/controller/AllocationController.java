@@ -16,6 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import cn.dev33.satoken.annotation.SaCheckRole;
+import com.quant.common.auth.PermissionCodes;
 
 /**
  * 全局仓位配置接口（V5.36，平台配置 → 仓位配置卡）：
@@ -41,6 +43,7 @@ public class AllocationController {
     }
 
     /** 保存仓位配置（min ≤ max 由校验保证；返回保存后的配置便于前端核对） */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PutMapping("/config")
     public R<AllocationConfig> save(@Valid @RequestBody AllocationConfigRequest request) {
         allocationService.save(request);
@@ -51,6 +54,7 @@ public class AllocationController {
      * 手动触发一次检查（与每周二任务同一执行体）。
      * 返回检查明细与是否发送了告警，便于"立即检查"按钮给出可读反馈。
      */
+    @SaCheckRole(com.quant.common.auth.PermissionCodes.ROLE_ADMIN)
     @PostMapping("/check")
     public R<Map<String, Object>> check() {
         AllocationCheckVO result = allocationService.check();

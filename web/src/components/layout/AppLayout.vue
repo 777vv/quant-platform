@@ -8,49 +8,10 @@ router
         :background-color="SIDEBAR_BG"
         :text-color="SIDEBAR_TEXT"
         :active-text-color="SIDEBAR_TEXT_ACTIVE">
-        <el-menu-item index="/">
-          <el-icon><Odometer /></el-icon>
-          <span>仪表盘</span>
-        </el-menu-item>
-        <el-menu-item index="/funds">
-          <el-icon><Coin /></el-icon>
-          <span>基金池</span>
-        </el-menu-item>
-        <el-menu-item index="/trades">
-          <el-icon><Tickets /></el-icon>
-          <span>交易流水</span>
-        </el-menu-item>
-        <el-menu-item index="/signals">
-          <el-icon><Bell /></el-icon>
-          <span>信号查询</span>
-        </el-menu-item>
-        <el-menu-item index="/market-signals">
-          <el-icon><Histogram /></el-icon>
-          <span>市场信号</span>
-        </el-menu-item>
-        <el-menu-item index="/compare">
-          <el-icon><DataAnalysis /></el-icon>
-          <span>基金对比</span>
-        </el-menu-item>
-        <el-menu-item index="/import">
-          <el-icon><Download /></el-icon>
-          <span>数据导入</span>
-        </el-menu-item>
-        <el-menu-item index="/ai-usage">
-          <el-icon><TrendCharts /></el-icon>
-          <span>AI用量统计</span>
-        </el-menu-item>
-        <el-menu-item index="/manual">
-          <el-icon><Reading /></el-icon>
-          <span>使用手册</span>
-        </el-menu-item>
-        <el-menu-item index="/user">
-          <el-icon><UserFilled /></el-icon>
-          <span>平台配置</span>
-        </el-menu-item>
-        <el-menu-item index="/login-logs">
-          <el-icon><Clock /></el-icon>
-          <span>登录日志</span>
+        <!-- V5.58 菜单按权限过滤：管理员全量可见；临时账号只看所分配的菜单码 -->
+        <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -75,19 +36,41 @@ router
         <router-view />
       </el-main>
     </el-container>
-    <!-- AI 投资助手浮窗（FR6）：登录后全局可用 -->
-    <AiChatWidget />
+    <!-- AI 投资助手浮窗（FR6）：登录后可用；V5.58 未获 AI 对话权限的临时账号不渲染入口球 -->
+    <AiChatWidget v-if="userStore.can(PERM.ACTION_AI_CHAT)" />
   </el-container>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { SIDEBAR_BG, SIDEBAR_TEXT, SIDEBAR_TEXT_ACTIVE } from '@/utils/palette'
+import { PERM } from '@/utils/permissions'
 
 /** 侧栏宽度（与 tokens.css 的 --q-layout-sidebar-width 一致，供 el-aside 属性使用） */
 const SIDEBAR_WIDTH = '200px'
+
+/** 侧栏菜单清单（V5.58 数据驱动 + 权限过滤）：perm 为空 = 登录即可见（仪表盘）；icon 用全局注册的图标名 */
+const MENUS = [
+  { path: '/', label: '仪表盘', icon: 'Odometer', perm: '' },
+  { path: '/funds', label: '基金池', icon: 'Coin', perm: PERM.MENU_FUNDS },
+  { path: '/trades', label: '交易流水', icon: 'Tickets', perm: PERM.MENU_TRADES },
+  { path: '/signals', label: '信号查询', icon: 'Bell', perm: PERM.MENU_SIGNALS },
+  { path: '/market-signals', label: '市场信号', icon: 'Histogram', perm: PERM.MENU_MARKET_SIGNALS },
+  { path: '/compare', label: '基金对比', icon: 'DataAnalysis', perm: PERM.MENU_COMPARE },
+  { path: '/import', label: '数据导入', icon: 'Download', perm: PERM.MENU_IMPORT },
+  { path: '/ai-usage', label: 'AI用量统计', icon: 'TrendCharts', perm: PERM.MENU_AI_USAGE },
+  { path: '/manual', label: '使用手册', icon: 'Reading', perm: PERM.MENU_MANUAL },
+  { path: '/user', label: '平台配置', icon: 'UserFilled', perm: PERM.MENU_PLATFORM_CONFIG },
+  { path: '/login-logs', label: '登录日志', icon: 'Clock', perm: PERM.MENU_LOGIN_LOGS },
+  { path: '/user-manage', label: '用户管理', icon: 'Setting', perm: PERM.MENU_PLATFORM_CONFIG, adminOnly: true }
+]
+
+/** 按角色与权限码过滤后的菜单（adminOnly 项仅管理员可见） */
+const visibleMenus = computed(() =>
+  MENUS.filter((item) => (item.adminOnly ? userStore.isAdmin : item.perm === '' || userStore.can(item.perm)))
+)
 import AiChatWidget from '@/components/ai/AiChatWidget.vue'
 
 const route = useRoute()

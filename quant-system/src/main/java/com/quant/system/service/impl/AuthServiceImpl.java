@@ -7,6 +7,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.quant.common.exception.BizException;
+import com.quant.common.auth.PermissionCodes;
 import com.quant.system.dto.LoginRequest;
 import com.quant.system.dto.LoginResult;
 import com.quant.system.dto.PasswordRequest;
@@ -53,6 +54,15 @@ public class AuthServiceImpl implements AuthService {
             throw new BizException(DEFAULT_MSG);
         }
         checkLocked(user);
+        // V5.58：停用/过期的临时账号在密码校验前就拒绝（避免"密码正确却被踢"的困惑），并记入登录日志
+        if (user.getEnabled() != null && user.getEnabled() == 0) {
+            loginLogService.record(user.getUsername(), false, "账号已停用");
+            throw new BizException("账号已停用，请联系管理员");
+        }
+        if (user.getExpiresAt() != null && user.getExpiresAt().isBefore(LocalDateTime.now())) {
+            loginLogService.record(user.getUsername(), false, "账号已过期");
+            throw new BizException("临时账号已过期，请联系管理员");
+        }
         if (!BCrypt.checkpw(request.getPassword(), user.getPassword())) {
             recordLoginFail(user);
             loginLogService.record(request.getUsername(), false, DEFAULT_MSG);
@@ -140,6 +150,24 @@ public class AuthServiceImpl implements AuthService {
         vo.setNickname(user.getNickname());
         vo.setEmail(user.getEmail());
         vo.setLastLoginAt(user.getLastLoginAt());
+        // V5.58：下发角色与权限码，前端据此渲染菜单与按钮显隐（后端注解仍是最终防线）
+        String role = user.getRole() == null ? PermissionCodes.ROLE_ADMIN : user.getRole();
+        vo.setRole(role);
+        vo.setAdmin(PermissionCodes.ROLE_ADMIN.equals(role));
+        if (PermissionCodes.ROLE_ADMIN.equals(role)) {
+            vo.setPermissions(PermissionCodes.ALL);
+        } else {
+            java.util.List<String> codes = new java.util.ArrayList<>();
+            if (user.getPermissions() != null && !user.getPermissions().isBlank()) {
+                for (String code : user.getPermissions().split(",")) {
+                    String trimmed = code.trim();
+                    if (!trimmed.isEmpty() && PermissionCodes.isKnown(trimmed)) {
+                        codes.add(trimmed);
+                    }
+                }
+            }
+            vo.setPermissions(codes);
+        }
         return vo;
     }
 }

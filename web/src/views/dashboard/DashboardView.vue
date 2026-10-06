@@ -297,7 +297,7 @@
     <el-row v-if="showMovers || showTradesCard" class="data-row" :gutter="12">
       <el-col v-if="showMovers" :span="8" :xs="24">
         <el-card shadow="never" class="board-card">
-          <template #header><span>自选 7 日涨跌榜</span></template>
+          <template #header><span>自选 5 日涨跌榜</span></template>
           <el-empty v-if="overview && overview.movers.length === 0" description="暂无数据" :image-size="60" />
           <template v-else>
             <!-- 领涨与领跌并排：两榜合起来最多 12 条，竖排会让本卡比同排卡片高出一倍 -->
@@ -311,8 +311,8 @@
                       :title="`查看 ${item.fundName} 详情`"
                       @click="$router.push(`/funds/${item.fundCode}`)"
                     >{{ item.fundName }}</span>
-                    <span class="index-pct" :class="changeColorClass(item.changePct7d)">
-                      {{ formatPercent(item.changePct7d) }}
+                    <span class="index-pct" :class="changeColorClass(item.changePct5d)">
+                      {{ formatPercent(item.changePct5d) }}
                     </span>
                   </li>
                 </ul>
@@ -326,8 +326,8 @@
                       :title="`查看 ${item.fundName} 详情`"
                       @click="$router.push(`/funds/${item.fundCode}`)"
                     >{{ item.fundName }}</span>
-                    <span class="index-pct" :class="changeColorClass(item.changePct7d)">
-                      {{ formatPercent(item.changePct7d) }}
+                    <span class="index-pct" :class="changeColorClass(item.changePct5d)">
+                      {{ formatPercent(item.changePct5d) }}
                     </span>
                   </li>
                 </ul>

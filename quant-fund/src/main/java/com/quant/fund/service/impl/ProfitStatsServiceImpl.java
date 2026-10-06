@@ -239,35 +239,19 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
                 monthlyOf(series.dates(), series.pnl()), true);
     }
 
+    /**
+     * 自选 5 日涨跌榜（V5.64 口径与「市场信号/基金对比」对齐，V5.67 窗口 7→5 个交易日）：
+     * 近 **5 个交易日** 涨跌幅（不再用自然日，节假日不会压缩实际跨度）；
+     * 场外基金用 **复权净值**（缺失回退单位净值，含分红再投资口径，与市场信号/基金对比一致）。
+     * 取数仍保持批量（V5.43 的教训）：只取近 20 个自然日价格（覆盖任意 7 个交易日跨度），ETF/场外各一条 SQL，
+     * 每基金按日期升序回退 7 根；序列不足 6 个样本的基金跳过（与 MarketSignalService.chgPct 同口径）。
+     */
     @Override
-    public List<DashboardOverviewVO.MoverItem> movers7d() {
+    public List<DashboardOverviewVO.MoverItem> movers() {
         List<FundBasic> funds = fundBasicMapper.selectList(
                 new LambdaQueryWrapper<FundBasic>().eq(FundBasic::getStatus, 1));
-        LocalDate target = LocalDate.now().minusDays(7);
-        // 批量取价（V5.43 性能修正）：原逐基金 2 次点查（N+1），现 ETF/场外各 2 条 group-by 回捞，共 4 次
-        Map<String, BigDecimal> lastPrices = latestPricesOnOrBefore(funds, LocalDate.now());
-        Map<String, BigDecimal> pastPrices = latestPricesOnOrBefore(funds, target);
-        List<DashboardOverviewVO.MoverItem> movers = new ArrayList<>();
-        for (FundBasic fund : funds) {
-            BigDecimal quote = lastPrices.get(fund.getFundCode());
-            BigDecimal past = pastPrices.get(fund.getFundCode());
-            if (quote == null || past == null || past.compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-            movers.add(new DashboardOverviewVO.MoverItem(fund.getFundCode(), fund.getFundName(),
-                    quote.subtract(past).multiply(BigDecimal.valueOf(100))
-                            .divide(past, 2, RoundingMode.HALF_UP)));
-        }
-        movers.sort(Comparator.comparing(DashboardOverviewVO.MoverItem::changePct7d).reversed());
-        return movers;
-    }
-
-    /**
-     * 批量取"每只基金在 onOrBefore（含）之前最近一根的价格"（ETF→收盘价 / 场外→单位净值）。
-     * 两步法：① group-by 拿每只基金的最近日期；② 按"代码 ∈ 范围 且 日期 ∈ 候选日期集合"回捞，
-     * 内存里只保留各自最大日期那根（第二步会带回少量其它基金同日行，属预期）。
-     */
-    private Map<String, BigDecimal> latestPricesOnOrBefore(List<FundBasic> funds, LocalDate onOrBefore) {
+        LocalDate since = LocalDate.now().minusDays(20);
+        Map<String, List<BigDecimal>> seriesByCode = new HashMap<>();
         List<String> etfCodes = new ArrayList<>();
         List<String> otcCodes = new ArrayList<>();
         for (FundBasic fund : funds) {
@@ -277,64 +261,48 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
                 otcCodes.add(fund.getFundCode());
             }
         }
-        Map<String, BigDecimal> result = new HashMap<>();
-        latestEtfPricesOnOrBefore(etfCodes, onOrBefore, result);
-        latestOtcPricesOnOrBefore(otcCodes, onOrBefore, result);
-        return result;
-    }
-
-    /** ETF：两步回捞最新收盘价 */
-    private void latestEtfPricesOnOrBefore(List<String> codes, LocalDate onOrBefore, Map<String, BigDecimal> out) {
-        if (codes.isEmpty()) {
-            return;
-        }
-        List<FundEtfKline> maxRows = klineMapper.selectList(new QueryWrapper<FundEtfKline>()
-                .select("fund_code", "MAX(trade_date) AS trade_date")
-                .in("fund_code", codes)
-                .le("trade_date", onOrBefore)
-                .groupBy("fund_code"));
-        Map<String, LocalDate> maxDates = new HashMap<>();
-        for (FundEtfKline row : maxRows) {
-            maxDates.put(row.getFundCode(), row.getTradeDate());
-        }
-        if (maxDates.isEmpty()) {
-            return;
-        }
-        List<FundEtfKline> rows = klineMapper.selectList(new LambdaQueryWrapper<FundEtfKline>()
-                .in(FundEtfKline::getFundCode, codes)
-                .in(FundEtfKline::getTradeDate, maxDates.values()));
-        for (FundEtfKline row : rows) {
-            if (row.getTradeDate().equals(maxDates.get(row.getFundCode())) && row.getClose() != null) {
-                out.put(row.getFundCode(), row.getClose());
+        // ETF：前复权收盘价（与市场信号/对比页一致）
+        if (!etfCodes.isEmpty()) {
+            List<FundEtfKline> rows = klineMapper.selectList(new QueryWrapper<FundEtfKline>()
+                    .select("fund_code", "trade_date", "close")
+                    .in("fund_code", etfCodes)
+                    .ge("trade_date", since)
+                    .orderByAsc("fund_code").orderByAsc("trade_date"));
+            for (FundEtfKline row : rows) {
+                seriesByCode.computeIfAbsent(row.getFundCode(), k -> new ArrayList<>()).add(row.getClose());
             }
         }
-    }
-
-    /** 场外：两步回捞最新单位净值 */
-    private void latestOtcPricesOnOrBefore(List<String> codes, LocalDate onOrBefore, Map<String, BigDecimal> out) {
-        if (codes.isEmpty()) {
-            return;
-        }
-        List<FundNav> maxRows = navMapper.selectList(new QueryWrapper<FundNav>()
-                .select("fund_code", "MAX(nav_date) AS nav_date")
-                .in("fund_code", codes)
-                .le("nav_date", onOrBefore)
-                .groupBy("fund_code"));
-        Map<String, LocalDate> maxDates = new HashMap<>();
-        for (FundNav row : maxRows) {
-            maxDates.put(row.getFundCode(), row.getNavDate());
-        }
-        if (maxDates.isEmpty()) {
-            return;
-        }
-        List<FundNav> rows = navMapper.selectList(new LambdaQueryWrapper<FundNav>()
-                .in(FundNav::getFundCode, codes)
-                .in(FundNav::getNavDate, maxDates.values()));
-        for (FundNav row : rows) {
-            if (row.getNavDate().equals(maxDates.get(row.getFundCode())) && row.getUnitNav() != null) {
-                out.put(row.getFundCode(), row.getUnitNav());
+        // 场外：复权净值（缺失回退单位净值）
+        if (!otcCodes.isEmpty()) {
+            List<FundNav> rows = navMapper.selectList(new LambdaQueryWrapper<FundNav>()
+                    .in(FundNav::getFundCode, otcCodes)
+                    .select(FundNav::getFundCode, FundNav::getNavDate, FundNav::getUnitNav, FundNav::getAdjNav)
+                    .ge(FundNav::getNavDate, since)
+                    .orderByAsc(FundNav::getFundCode).orderByAsc(FundNav::getNavDate));
+            for (FundNav row : rows) {
+                BigDecimal value = row.getAdjNav() != null ? row.getAdjNav() : row.getUnitNav();
+                if (value != null) {
+                    seriesByCode.computeIfAbsent(row.getFundCode(), k -> new ArrayList<>()).add(value);
+                }
             }
         }
+        List<DashboardOverviewVO.MoverItem> movers = new ArrayList<>();
+        for (FundBasic fund : funds) {
+            List<BigDecimal> series = seriesByCode.get(fund.getFundCode());
+            if (series == null || series.size() < 6) {
+                continue;
+            }
+            int last = series.size() - 1;
+            BigDecimal base = series.get(last - 5);
+            if (base.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            movers.add(new DashboardOverviewVO.MoverItem(fund.getFundCode(), fund.getFundName(),
+                    series.get(last).subtract(base).multiply(BigDecimal.valueOf(100))
+                            .divide(base, 2, RoundingMode.HALF_UP)));
+        }
+        movers.sort(Comparator.comparing(DashboardOverviewVO.MoverItem::changePct5d).reversed());
+        return movers;
     }
 
     /**

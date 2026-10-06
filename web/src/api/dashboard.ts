@@ -71,7 +71,7 @@ export interface HoldingBrief {
 export interface MoverItem {
   fundCode: string
   fundName: string
-  changePct7d: number
+  changePct5d: number
 }
 
 /** 配置占比条目 */

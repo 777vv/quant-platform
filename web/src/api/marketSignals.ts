@@ -1,4 +1,5 @@
-import { get } from './request'
+import { get, post } from './request'
+import type { PageResult } from '@/types/api'
 
 /** PE 分位窗口：3y=近3年 / 5y=近5年 / 10y=近10年 / all=全历史 */
 export type PeWindow = '3y' | '5y' | '10y' | 'all'
@@ -20,13 +21,16 @@ export interface MarketSignalRow {
   lastDate: string | null
 
   /** 近 7 个交易日涨跌幅%（短期反转区：领涨≠能追） */
-  chg7d: number | null
+  chg5d: number | null
   /** 近 15 个交易日涨跌幅%（短期反转区：领跌=超跌关注） */
-  chg15d: number | null
+  chg10d: number | null
   /** 近 30 个交易日涨跌幅%（中期动量） */
+  chg20d: number | null
   chg30d: number | null
   /** 近 60 个交易日涨跌幅%（中期动量） */
   chg60d: number | null
+  chg90d: number | null
+  chg120d: number | null
   /** 近 250 个交易日涨跌幅%（52 周位置，历史不足为 null） */
   chg250d: number | null
 
@@ -103,4 +107,77 @@ export async function marketSignalOverviewCached(peWindow: PeWindow, force = fal
   const data = await marketSignalOverview(peWindow)
   cache = { key: peWindow, at: Date.now(), data }
   return { data, at: cache.at }
+}
+
+/** 【均价】页签行（V5.68）：基金最新一条均线快照 + 现价/均线比值（3 位小数，>1 在均线上方） */
+export interface FundMaRow {
+  fundCode: string
+  fundName: string
+  dataDate: string
+  closePrice: number
+  ma5: number | null
+  ma10: number | null
+  ma20: number | null
+  ma30: number | null
+  ma60: number | null
+  ma90: number | null
+  ma120: number | null
+  ma250: number | null
+  ratio5: number | null
+  ratio10: number | null
+  ratio20: number | null
+  ratio30: number | null
+  ratio60: number | null
+  ratio90: number | null
+  ratio120: number | null
+  ratio250: number | null
+}
+
+/** 均线刷新/回跑结果 */
+export interface MaRunResult {
+  fundCount: number
+  rowCount: number
+  dateFrom: string | null
+  dateTo: string | null
+}
+
+/** 【均价】页签数据：每基金最新一条快照（读 fund_ma_daily 表） */
+export function fundMaRows() {
+  return get<FundMaRow[]>('/market-signals/ma')
+}
+
+/** 手动刷新均线（仅交易日；写全局表需 ACTION_SYNC 权限） */
+export function refreshMa() {
+  return post<MaRunResult>('/market-signals/ma/refresh')
+}
+
+/** 回跑均线数据：回退 N 个交易日逐日计算落表（幂等覆盖；需 ACTION_SYNC 权限） */
+export function backfillMa(days: number) {
+  return post<MaRunResult>(`/market-signals/ma/backfill/${days}`, {})
+}
+
+/** 均线信号行（V5.70）：短期均线上穿/下穿长期均线 */
+export interface MaSignalItem {
+  id: number
+  fundCode: string
+  fundName: string
+  signalDate: string
+  maShort: number
+  maLong: number
+  direction: 'UP' | 'DOWN'
+  /** 信号描述：如「5日均线上穿10日均线」 */
+  signalDesc: string
+  priceAt: number | null
+  maShortVal: number | null
+  maLongVal: number | null
+}
+
+/** 均线信号分页（新→旧），可按基金代码过滤 */
+export function maSignalsPage(params: { fundCode?: string; page: number; size: number }) {
+  return get<PageResult<MaSignalItem>>('/ma-signals/page', params)
+}
+
+/** 某基金的全部均线信号（基金详情【信号查询】页签用） */
+export function maSignalsByFund(fundCode: string) {
+  return get<MaSignalItem[]>(`/ma-signals/by-fund/${fundCode}`)
 }

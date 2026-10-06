@@ -43,7 +43,7 @@ import org.springframework.stereotype.Service;
 public class MarketSignalServiceImpl implements MarketSignalService {
 
     /** 涨跌幅窗口（交易日数）——与前端列一一对应 */
-    private static final int[] CHG_WINDOWS = {7, 15, 30, 60, 250};
+    private static final int[] CHG_WINDOWS = {5, 10, 20, 30, 60, 90, 120, 250};
 
     /** 均线窗口（交易日数） */
     private static final int[] MA_WINDOWS = {20, 60, 200};
@@ -145,7 +145,7 @@ public class MarketSignalServiceImpl implements MarketSignalService {
                     tags.getOrDefault(fund.getFundCode(), List.of()),
                     series.isEmpty() ? null : series.get(series.size() - 1),
                     lastDates.get(fund.getFundCode()),
-                    chgs[0], chgs[1], chgs[2], chgs[3], chgs[4],
+                    chgs[0], chgs[1], chgs[2], chgs[3], chgs[4], chgs[5], chgs[6], chgs[7],
                     aboveMa(series, mas[0]), aboveMa(series, mas[1]), aboveMa(series, mas[2]),
                     maSummary(series, mas),
                     dd.drawdownPct(), dd.drawdownPctile(),

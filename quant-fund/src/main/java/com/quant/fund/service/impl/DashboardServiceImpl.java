@@ -112,7 +112,7 @@ public class DashboardServiceImpl implements DashboardService {
             allocation.add(new DashboardOverviewVO.AllocationItem("CASH", "现金", cash, weightOf(cash, total)));
         }
         List<DashboardOverviewVO.SyncStatusItem> syncStatus = syncSummaryService.summary();
-        return new DashboardOverviewVO(briefs, profitStatsService.movers7d(), allocation, syncStatus,
+        return new DashboardOverviewVO(briefs, profitStatsService.movers(), allocation, syncStatus,
                 syncSummaryService.summaryText(syncStatus));
     }
 

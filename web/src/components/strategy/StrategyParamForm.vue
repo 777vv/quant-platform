@@ -63,6 +63,59 @@
       </div>
     </template>
 
+    <!-- 均线突破买入（V5.73）：趋势策略——收盘价上穿突破均线买入至满仓、下穿跌破均线卖出至底仓 -->
+    <template v-else-if="type === 'MA_BREAK'">
+      <el-form-item>
+        <template #label><ParamLabel text="初始仓位份额" help="仅回测首日生效：开始回测时先按这个份额买入建仓（份），后续从「已持有初始仓位」起步；填 0 等于不建仓。取值 0 ~ 满仓份额。" /></template>
+        <el-input-number v-model="form.initialShare" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="底仓份额" help="卖出下限：跌破卖出信号触发后的持仓份额不低于这个数（份）。须小于满仓份额。" /></template>
+        <el-input-number v-model="form.baseShare" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="满仓份额" help="买入上限：突破买入信号触发后直接买入到这个份额（份）。请让它与你的可用资金匹配，回测时本金必须买得起它。" /></template>
+        <el-input-number v-model="form.fullShare" :min="1" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="均线突破（日）" help="买入信号：收盘价【上穿】这条均线时触发买入，直接买入至满仓份额。例如填 60 = 收盘价上穿 60 日均线买入。取值 2~500 个交易日；周期越大信号越少越迟。" /></template>
+        <el-input-number v-model="form.breakoutMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="均线跌破（日）" help="信号均线：收盘价【下穿】这条均线时触发「跌破时操作」。例如填 30 = 收盘价跌破 30 日均线触发。取值 2~500 个交易日。" /></template>
+        <el-input-number v-model="form.breakdownMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="突破时操作" help="上穿「均线突破」均线时执行：买入至满仓 / 卖出至底仓。与「跌破时操作」必须一买一卖相反（如突破买入 + 跌破卖出 = 趋势跟随；突破卖出 + 跌破买入 = 均值回归）。" /></template>
+        <el-radio-group v-model="form.breakoutAction" @change="onBreakoutActionChange">
+          <el-radio-button value="BUY">买入</el-radio-button>
+          <el-radio-button value="SELL">卖出</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="跌破时操作" help="下穿「均线跌破」均线时执行（自动与突破方向相反）。" /></template>
+        <el-radio-group v-model="form.breakdownAction">
+          <el-radio-button value="BUY">买入</el-radio-button>
+          <el-radio-button value="SELL">卖出</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="冷静天数" help="最近一次交易后的 N 个交易日内不再重复交易（0=不冷静）。冷却期内触发的信号会暂挂：冷却结束后复核均线状态，仍满足（如现价仍低于跌破均线）才执行，已恢复则保持仓位不动。" /></template>
+        <el-input-number v-model="form.cooldownDays" :min="0" :max="500" :controls="false" />
+      </el-form-item>
+      <div class="osc-summary">
+        <div class="osc-title">策略逻辑速览</div>
+        <ul>
+          <li><b>均线突破买入</b>：前一交易日收盘价在「均线突破」均线上或下方、<b>当日收盘价上穿</b>该均线 → 直接买入至<b>满仓份额</b>（按次日开盘价成交）。</li>
+          <li><b>均线跌破卖出</b>：前一交易日在均线上、<b>当日收盘价下穿</b>「均线跌破」均线 → 直接卖出至<b>底仓份额</b>（按次日开盘价成交）。</li>
+          <li><b>两个信号同一天都触发</b>时<b>买入优先</b>（与震荡向上策略同一规则）；已满仓时突破信号不出、已到底仓时跌破信号不出。</li>
+          <li><b>冷静天数</b>：最近一次交易后 N 个交易日内不交易；冷却结束后复核均线状态——仍满足条件才补执行，已恢复则不动。</li>
+          <li><b>均线周期越长</b>信号越少越迟（250 日均线一年只上下穿一两次）；周期太小（如 5 日）信号频繁、噪音多。</li>
+          <li><b>均线周期越大</b>，回测所需的历史预热数据越多——请把回测起始日期往前留足（250 日均线约需 1 年以上历史）。</li>
+        </ul>
+      </div>
+    </template>
+
     <!-- 网格族（V5.27 红利/纳指网格；V5.28 金字塔/倒金字塔网格）：四个类型共用同一套参数与规则，
          差异只在默认值取向——金字塔族多一个「每格增减」参数控制逐格份额阶梯 -->
     <template v-else-if="isGridType">
@@ -179,7 +232,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, reactive, watch } from 'vue'
+import { computed, h, onMounted, reactive, watch } from 'vue'
 import { ElIcon, ElTooltip } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 
@@ -274,6 +327,17 @@ const defaults: Record<string, Record<string, unknown>> = {
     sizingStepPct: 0,
     sizingBase: 'anchor',
     maxSizingMultiple: 3
+  },
+  // 均线突破（V5.73，V5.75 方向可配）：突破/跌破方向一买一卖恒相反
+  MA_BREAK: {
+    initialShare: 10000,
+    baseShare: 5000,
+    fullShare: 20000,
+    breakoutMaDays: 60,
+    breakdownMaDays: 30,
+    breakoutAction: 'BUY',
+    breakdownAction: 'SELL',
+    cooldownDays: 5
   },
   // 红利网格（V5.27）：低波动慢牛（实测 515080 年化波动 13.7%、区间 1.395~1.637）→ 等差、约 1.4% 一格、
   // 底仓占比高、涨破上沿只保留底仓不上移、默认不开趋势闸门；红利 ETF 溢价常年≈0 故溢价闸门关闭
@@ -373,6 +437,12 @@ const defaults: Record<string, Record<string, unknown>> = {
 
 const form = reactive<Record<string, unknown>>({ ...(defaults[props.type] ?? {}), ...props.modelValue })
 
+// 挂载即回传默认参数（V5.77）：父组件的回测表单需要完整参数（如满仓份额）来联动计算初始资金，
+// 若等用户手改参数才回传，父组件会一直拿到空 params
+onMounted(() => {
+  emit('update:modelValue', { ...form })
+})
+
 watch(
   () => props.type,
   (type) => {
@@ -389,31 +459,61 @@ watch(
   },
   { deep: true }
 )
+
+/** 突破/跌破方向恒相反（V5.75）：改一边自动翻转另一边，保证一买一卖 */
+function onBreakoutActionChange(value: string) {
+  form.breakdownAction = value === 'BUY' ? 'SELL' : 'BUY'
+}
 </script>
 
 <style scoped>
-/* 参数网格：列数按容器宽度自适应（回测区 1615px → 4 列；弹窗 728px → 2 列；窄屏 → 1 列），
-   列宽下限 340px 保证「标签 + 数字输入框」都舒展，避免退化成每列一个 150px 的窄控件 */
+/* 参数网格：列数按容器宽度自适应。列宽下限 200px（数字/日期类短控件足够）——
+   一行可排 5~6 个参数（回测宽卡 6~7 列、策略弹窗 4 列、窄屏 1 列），避免大面积留白 */
 .param-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   column-gap: var(--q-space-4);
   align-items: start;
 }
 
-/* 列间距交给 grid 的 gap，避免 form-item 自带的右边距再叠一层 */
+/* 标签置顶（V5.78）：每格「标签一行 + 控件一行」——标签长短不再挤占控件空间，
+   同列控件左边缘与宽度完全一致，解决「标签长短不齐 → 输入框有长有短」的参差感 */
 .param-grid :deep(.el-form-item) {
+  display: block;
   margin-right: 0;
 }
 
-/* 参数标签不换行（弹框加宽后空间足够；换行的两行标签与控件基线错位很难看） */
-.param-grid :deep(.param-label) {
-  white-space: nowrap;
+.param-grid :deep(.el-form-item__label) {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  margin-bottom: var(--q-space-1);
 }
 
-/* 数字/单选/下拉等控件铺满所在格子，不再固定 150px 留白 */
+/* 数字/单选/下拉等控件铺满所在格子，同一列内严格等宽 */
 .param-grid :deep(.el-input-number),
 .param-grid :deep(.el-select) {
+  width: 100%;
+}
+
+/* 铺满后的数字框内容左对齐（居中在大宽框里会显得找不着锚点） */
+.param-grid :deep(.el-input-number .el-input__inner) {
+  text-align: left;
+}
+
+/* 单选按钮组同样铺满格子并均分（如 买入｜卖出），与输入框同宽保持整列节奏一致 */
+.param-grid :deep(.el-radio-group) {
+  display: flex;
+  width: 100%;
+}
+
+.param-grid :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.param-grid :deep(.el-radio-button__inner) {
   width: 100%;
 }
 

@@ -588,3 +588,42 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sys_user' AND COLUMN_NAME = 'remark');
 SET @sql := IF(@c = 0, 'ALTER TABLE sys_user ADD COLUMN remark VARCHAR(255) DEFAULT '''' COMMENT ''备注''', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- V5.68：基金日均线快照表——每交易日 23:00 定时任务（ma:daily）+ 手动刷新/回跑写入；
+-- 幂等键 = 基金代码 + 行情数据截至日（重复跑覆盖当天）；均价为对应周期收盘价的简单平均（MA），
+-- ETF 用前复权收盘、场外用复权净值（缺失回退单位净值），与市场信号/基金对比同源。
+CREATE TABLE IF NOT EXISTS fund_ma_daily (
+  id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+  fund_code   VARCHAR(12)  NOT NULL COMMENT '基金代码',
+  trade_date  DATE         NOT NULL COMMENT '行情数据截至日（非自然今天：盘中手动刷新会落到最新数据日）',
+  close_price DECIMAL(18,4) NOT NULL COMMENT '该日最新价（ETF=前复权收盘 / 场外=复权净值回退单位净值）',
+  ma5         DECIMAL(18,4) DEFAULT NULL COMMENT '5 个交易日均价（样本不足为 null）',
+  ma10        DECIMAL(18,4) DEFAULT NULL COMMENT '10 个交易日均价',
+  ma20        DECIMAL(18,4) DEFAULT NULL COMMENT '20 个交易日均价',
+  ma30        DECIMAL(18,4) DEFAULT NULL COMMENT '30 个交易日均价',
+  ma60        DECIMAL(18,4) DEFAULT NULL COMMENT '60 个交易日均价',
+  ma90        DECIMAL(18,4) DEFAULT NULL COMMENT '90 个交易日均价',
+  ma120       DECIMAL(18,4) DEFAULT NULL COMMENT '120 个交易日均价',
+  ma250       DECIMAL(18,4) DEFAULT NULL COMMENT '250 个交易日均价',
+  created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_at  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  UNIQUE KEY uk_fund_date (fund_code, trade_date),
+  KEY idx_date (trade_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '基金日均线快照表';
+
+-- V5.69：均线信号表——短期均线上穿/下穿长期均线时记录（每交易日 10:00 定时任务从 fund_ma_daily 判定）；
+-- 幂等键 = 基金代码 + 信号日期 + 均线对。
+CREATE TABLE IF NOT EXISTS ma_signal (
+  id           BIGINT PRIMARY KEY AUTO_INCREMENT,
+  fund_code    VARCHAR(12)  NOT NULL COMMENT '基金代码',
+  signal_date  DATE         NOT NULL COMMENT '信号日期（交叉确认的交易日）',
+  ma_short     INT          NOT NULL COMMENT '短期均线周期（天）',
+  ma_long      INT          NOT NULL COMMENT '长期均线周期（天）',
+  direction    VARCHAR(8)   NOT NULL COMMENT 'UP=上穿（金叉） DOWN=下穿（死叉）',
+  price_at     DECIMAL(18,4) DEFAULT NULL COMMENT '信号日收盘价/净值',
+  ma_short_val DECIMAL(18,4) DEFAULT NULL COMMENT '信号日短期均线值',
+  ma_long_val  DECIMAL(18,4) DEFAULT NULL COMMENT '信号日长期均线值',
+  created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  UNIQUE KEY uk_fund_date_pair (fund_code, signal_date, ma_short, ma_long),
+  KEY idx_date (signal_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '均线信号记录表';

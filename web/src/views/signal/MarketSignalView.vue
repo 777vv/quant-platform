@@ -33,7 +33,7 @@
       <el-tabs v-model="activeTab">
         <!-- 页签一：多窗口涨跌榜（每个窗口的"正确读法"写进表头提示） -->
         <el-tab-pane label="涨跌榜" name="chg">
-          <el-table v-loading="loading" :data="chgRows" size="small" :default-sort="{ prop: 'chg7d', order: 'descending' }" @sort-change="onChgSort">
+          <el-table v-loading="loading" :data="chgRows" size="small" :default-sort="{ prop: 'chg5d', order: 'descending' }" @sort-change="onChgSort">
             <el-table-column label="基金" min-width="150" show-overflow-tooltip>
               <template #default="{ row }">
                 <span class="fund-link" :title="`查看 ${row.fundName} 详情`" @click="$router.push(`/funds/${row.fundCode}`)">
@@ -47,20 +47,28 @@
                 <span class="num">{{ formatAmount(row.lastClose) }}</span>
               </template>
             </el-table-column>
-            <el-table-column align="right" min-width="88" prop="chg7d" sortable="custom">
+            <el-table-column align="right" min-width="88" prop="chg5d" sortable="custom">
               <template #header>
-                <span title="近7个交易日涨跌。A股短期（1个月内）反转效应强：领涨≠能追，领跌=超跌关注">7日</span>
+                <span title="近5个交易日涨跌。A股短期反转效应最强窗口：领涨≠能追，领跌=超跌关注">5日</span>
               </template>
               <template #default="{ row }">
-                <span class="num" :class="changeColorClass(row.chg7d)">{{ formatPercent(row.chg7d) }}</span>
+                <span class="num" :class="changeColorClass(row.chg5d)">{{ formatPercent(row.chg5d) }}</span>
               </template>
             </el-table-column>
-            <el-table-column align="right" min-width="88" prop="chg15d" sortable="custom">
+            <el-table-column align="right" min-width="88" prop="chg10d" sortable="custom">
               <template #header>
-                <span title="近15个交易日涨跌。同 7 日：短期看反转，领涨要当心回吐">15日</span>
+                <span title="近10个交易日（两周）涨跌。同 5 日：短期看反转，领涨要当心回吐">10日</span>
               </template>
               <template #default="{ row }">
-                <span class="num" :class="changeColorClass(row.chg15d)">{{ formatPercent(row.chg15d) }}</span>
+                <span class="num" :class="changeColorClass(row.chg10d)">{{ formatPercent(row.chg10d) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column align="right" min-width="88" prop="chg20d" sortable="custom">
+              <template #header>
+                <span title="近20个交易日（约一个月）涨跌。短中期过渡">20日</span>
+              </template>
+              <template #default="{ row }">
+                <span class="num" :class="changeColorClass(row.chg20d)">{{ formatPercent(row.chg20d) }}</span>
               </template>
             </el-table-column>
             <el-table-column align="right" min-width="88" prop="chg30d" sortable="custom">
@@ -73,10 +81,26 @@
             </el-table-column>
             <el-table-column align="right" min-width="88" prop="chg60d" sortable="custom">
               <template #header>
-                <span title="近60个交易日涨跌。中期动量参考">60日</span>
+                <span title="近60个交易日（约一个季度）涨跌。中期动量参考">60日</span>
               </template>
               <template #default="{ row }">
                 <span class="num" :class="changeColorClass(row.chg60d)">{{ formatPercent(row.chg60d) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column align="right" min-width="88" prop="chg90d" sortable="custom">
+              <template #header>
+                <span title="近90个交易日涨跌。中期动量参考">90日</span>
+              </template>
+              <template #default="{ row }">
+                <span class="num" :class="changeColorClass(row.chg90d)">{{ formatPercent(row.chg90d) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column align="right" min-width="88" prop="chg120d" sortable="custom">
+              <template #header>
+                <span title="近120个交易日（约半年）涨跌。中期动量参考">120日</span>
+              </template>
+              <template #default="{ row }">
+                <span class="num" :class="changeColorClass(row.chg120d)">{{ formatPercent(row.chg120d) }}</span>
               </template>
             </el-table-column>
             <el-table-column align="right" min-width="92" prop="chg250d" sortable="custom">
@@ -234,18 +258,98 @@
             <el-pagination v-model:current-page="premiumPage" v-model:page-size="premiumSize" :page-sizes="PAGE_SIZES" :total="filteredRows.length" layout="total, sizes, prev, pager, next" background />
           </div>
         </el-tab-pane>
+        <!-- 页签四：均价（V5.68）。数据来自每日 23:00 定时任务落表的 fund_ma_daily；
+             比值 = 现价 ÷ 对应周期均价（3 位小数，>1 红色=均线上方，<1 绿色=下方）；
+             刷新=手动触发计算落表（仅交易日）；回跑=补算过去 N 个交易日 -->
+        <el-tab-pane label="均价" name="ma">
+          <div class="ma-toolbar">
+            <span class="muted">
+              数据日期：{{ maDataDate ?? '—' }} · 现价÷均价保留 3 位小数（&gt;1 红色=价格在均线上方，&lt;1 绿色=下方）· 每交易日 23:00 自动计算
+            </span>
+            <div v-if="userStore.can(PERM.ACTION_SYNC)" class="ma-actions">
+              <el-button size="small" :loading="maRefreshing" @click="onMaRefresh">刷新</el-button>
+              <el-button size="small" @click="maBackfillVisible = true">回跑数据</el-button>
+            </div>
+          </div>
+          <el-alert
+            v-if="!userStore.can(PERM.ACTION_SYNC)"
+            type="info"
+            :closable="false"
+            class="block"
+            title="均价快照由系统每个交易日 23:00 自动计算落表；如需立即更新请联系管理员点「刷新」。"
+          />
+          <el-table v-loading="maLoading" :data="maPaged" size="small" border @sort-change="onMaSort">
+            <el-table-column label="基金" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="fund-link" :title="`查看 ${row.fundName} 详情`" @click="$router.push(`/funds/${row.fundCode}`)">
+                  {{ row.fundName }}
+                </span>
+                <span class="fund-code">{{ row.fundCode }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="现价" align="right" min-width="84">
+              <template #default="{ row }">
+                <span class="num">{{ formatAmount(row.closePrice) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-for="window in MA_WINDOWS"
+              :key="`ratio${window}`"
+              align="right"
+              min-width="86"
+              :prop="`ratio${window}`"
+              sortable="custom"
+            >
+              <template #header>
+                <span :title="`现价 ÷ ${window}个交易日均价（简单平均），>1 价格在均线上方`">{{ window }}日</span>
+              </template>
+              <template #default="{ row }: { row: FundMaRow }">
+                <span class="num" :class="ratioClass(ratioOf(row, window))">
+                  {{ ratioOf(row, window) == null ? '—' : ratioOf(row, window)!.toFixed(3) }}
+                </span>
+              </template>
+            </el-table-column>
+            <!-- 日期：该基金行情数据截至日（各基金可能略有差异，如场外净值滞后一天） -->
+            <el-table-column label="日期" align="center" min-width="104">
+              <template #default="{ row }: { row: FundMaRow }">
+                <span class="num">{{ row.dataDate ?? '—' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="pager-row">
+            <el-pagination v-model:current-page="maPage" v-model:page-size="maSize" :page-sizes="PAGE_SIZES" :total="maRows.length" layout="total, sizes, prev, pager, next" background />
+          </div>
+        </el-tab-pane>
       </el-tabs>
+      <!-- 回跑均线弹窗 -->
+      <el-dialog v-model="maBackfillVisible" title="回跑均线数据" width="480px">
+        <el-form label-width="110px">
+          <el-form-item label="回跑交易日数">
+            <el-input-number v-model="maBackfillDays" :min="5" :max="500" :controls="false" style="width: 140px" />
+            <span class="field-hint">5~500；取自选池价格日期并集的最近 N 个交易日，已存在的日期会被覆盖更新</span>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="maBackfillVisible = false">取消</el-button>
+          <el-button type="primary" :loading="maBackfilling" @click="onMaBackfill">开始回跑</el-button>
+        </template>
+      </el-dialog>
     </el-card>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { changeColorClass, formatAmount, formatPercent } from '@/utils/format'
 import { marketSignalOverviewCached, type MarketSignalRow, type PeWindow } from '@/api/marketSignals'
+import { backfillMa, fundMaRows, refreshMa, type FundMaRow } from '@/api/marketSignals'
+import { useUserStore } from '@/stores/user'
+import { PERM } from '@/utils/permissions'
 
 const loading = ref(false)
 const activeTab = ref('chg')
+const userStore = useUserStore()
 const rows = ref<MarketSignalRow[]>([])
 const selectedTags = ref<string[]>([])
 
@@ -310,8 +414,108 @@ const valSize = ref(10)
 const premiumPage = ref(1)
 const premiumSize = ref(10)
 
+// ===== 【均价】页签（V5.68）：数据读 fund_ma_daily 表；刷新/回跑写表需 ACTION_SYNC =====
+const MA_WINDOWS = [5, 10, 20, 30, 60, 90, 120, 250]
+const maRows = ref<FundMaRow[]>([])
+const maLoading = ref(false)
+const maLoaded = ref(false)
+const maRefreshing = ref(false)
+const maBackfillVisible = ref(false)
+const maBackfillDays = ref(250)
+const maBackfilling = ref(false)
+const maPage = ref(1)
+const maSize = ref(10)
+const maSort = ref<{ prop: string; order: string | null }>({ prop: 'ratio20', order: 'descending' })
+
+const maDataDate = computed(() => {
+  const dates = maRows.value.map((row) => row.dataDate).sort()
+  return dates.length > 0 ? dates[dates.length - 1] : null
+})
+
+/** 比值着色：>1 红色（均线上方/强势）、<1 绿色（下方），=1 无色（用户拍板的显示规则） */
+function ratioClass(value: number | null): string {
+  if (value == null) {
+    return ''
+  }
+  return value > 1 ? 'text-up' : value < 1 ? 'text-down' : ''
+}
+
+function onMaSort({ prop, order }: { prop: string; order: string | null }) {
+  maSort.value = { prop, order }
+}
+
+/** 取行内指定周期的比值（动态键的类型安全封装） */
+function ratioOf(row: FundMaRow, window: number): number | null {
+  return (row as unknown as Record<string, number | null>)[`ratio${window}`]
+}
+
+const maSorted = computed(() => {
+  const sorted = [...maRows.value]
+  if (!maSort.value.prop || !maSort.value.order) {
+    return sorted
+  }
+  const dir = maSort.value.order === 'descending' ? -1 : 1
+  const key = maSort.value.prop
+  sorted.sort((a, b) => {
+    const av = (a as unknown as Record<string, number | null>)[key]
+    const bv = (b as unknown as Record<string, number | null>)[key]
+    if (av == null && bv == null) return 0
+    if (av == null) return 1
+    if (bv == null) return -1
+    return (av - bv) * dir
+  })
+  return sorted
+})
+
+const maPaged = computed(() => {
+  const start = (maPage.value - 1) * maSize.value
+  return maSorted.value.slice(start, start + maSize.value)
+})
+
+async function loadMa() {
+  maLoading.value = true
+  try {
+    maRows.value = await fundMaRows()
+    maLoaded.value = true
+  } finally {
+    maLoading.value = false
+  }
+}
+
+/** 手动刷新：后端校验交易日并按最新数据日重算落表（幂等），完成后重新拉列表 */
+async function onMaRefresh() {
+  maRefreshing.value = true
+  try {
+    const result = await refreshMa()
+    ElMessage.success(`已刷新 ${result.fundCount} 只基金（数据日 ${result.dateFrom ?? '—'} ~ ${result.dateTo ?? '—'}）`)
+    await loadMa()
+  } finally {
+    maRefreshing.value = false
+  }
+}
+
+/** 回跑：确认后调后端（可能数秒~数十秒），完成后重新拉列表 */
+async function onMaBackfill() {
+  maBackfilling.value = true
+  try {
+    const result = await backfillMa(maBackfillDays.value)
+    ElMessage.success(`回跑完成：${result.rowCount} 行（${result.dateFrom ?? '—'} ~ ${result.dateTo ?? '—'}，${result.fundCount} 只基金）`)
+    maBackfillVisible.value = false
+    await loadMa()
+  } finally {
+    maBackfilling.value = false
+  }
+}
+
+// 切到均价页签时懒加载一次
+watch(activeTab, (tab) => {
+  if (tab === 'ma' && !maLoaded.value && !maLoading.value) {
+    loadMa()
+  }
+})
+
 // 各页签的排序状态：必须对**全量**排序后再切页，否则点列头只排当前页、跨页排序会错
-const chgSort = ref<{ prop: string; order: string | null }>({ prop: 'chg7d', order: 'descending' })
+const chgSort = ref<{ prop: string; order: string | null }>({ prop: 'chg5d', order: 'descending' })
 const premiumSortState = ref<{ prop: string; order: string | null }>({ prop: 'premiumPct', order: 'descending' })
 
 function onChgSort({ prop, order }: { prop: string; order: string | null }) {
@@ -507,4 +711,26 @@ onMounted(() => load())
   margin-top: var(--q-space-2);
 }
 
+</style>
+
+<style scoped>
+/* 均价页签工具行：左侧说明文字、右侧操作按钮 */
+.ma-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-3);
+  margin-bottom: var(--q-space-3);
+}
+
+.ma-actions {
+  display: flex;
+  gap: var(--q-space-2);
+}
+
+.field-hint {
+  margin-left: var(--q-space-3);
+  font-size: var(--q-font-xs);
+  color: var(--q-text-muted);
+}
 </style>

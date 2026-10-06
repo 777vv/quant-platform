@@ -36,14 +36,20 @@ public record MarketSignalVO(
             /** 价格数据截至日（K线最新交易日 / 净值最新日） */
             LocalDate lastDate,
 
-            /** 近 7 个交易日涨跌幅%（短期反转区：领涨≠能追） */
-            BigDecimal chg7d,
-            /** 近 15 个交易日涨跌幅%（短期反转区：领跌=超跌关注） */
-            BigDecimal chg15d,
+            /** 近 5 个交易日涨跌幅%（短期反转最强窗口：领涨≠能追） */
+            BigDecimal chg5d,
+            /** 近 10 个交易日涨跌幅%（短期反转区：领跌=超跌关注） */
+            BigDecimal chg10d,
+            /** 近 20 个交易日涨跌幅%（约一个月，短中期过渡） */
+            BigDecimal chg20d,
             /** 近 30 个交易日涨跌幅%（中期动量） */
             BigDecimal chg30d,
-            /** 近 60 个交易日涨跌幅%（中期动量） */
+            /** 近 60 个交易日涨跌幅%（约一个季度，中期动量） */
             BigDecimal chg60d,
+            /** 近 90 个交易日涨跌幅%（中期动量） */
+            BigDecimal chg90d,
+            /** 近 120 个交易日涨跌幅%（约半年，中期动量） */
+            BigDecimal chg120d,
             /** 近 250 个交易日涨跌幅%（52 周位置，历史不足显示 null） */
             BigDecimal chg250d,
 

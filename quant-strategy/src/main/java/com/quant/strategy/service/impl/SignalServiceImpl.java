@@ -33,6 +33,7 @@ import com.quant.strategy.dto.SignalItemVO;
 import com.quant.strategy.entity.SignalRecord;
 import com.quant.strategy.entity.StrategyConfig;
 import com.quant.strategy.grid.AbstractGridStrategy;
+import com.quant.strategy.ma.MaBreakStrategy;
 import com.quant.strategy.oscillation.OscillatingUpStrategy;
 import com.quant.strategy.mapper.SignalRecordMapper;
 import com.quant.strategy.mapper.StrategyConfigMapper;
@@ -248,6 +249,12 @@ public class SignalServiceImpl implements SignalService {
         if (OscillatingUpStrategy.TYPE.equals(strategyType)) {
             // loadRecent 收的是自然日：A 股年约 243 个交易日，按 1.6 倍 + 30 天冗余，保证窗口内至少有 K线天数 根 bar
             return (int) Math.ceil(Strategy.intOr(params, "windowDays", 60) * 1.6) + 30;
+        }
+        if (MaBreakStrategy.TYPE.equals(strategyType)) {
+            // 均线突破/跌破：取两条均线中较长者，回看需覆盖 prev + 当日 + 均线窗口
+            int maDays = Math.max(Strategy.intOr(params, "breakoutMaDays", 60),
+                    Strategy.intOr(params, "breakdownMaDays", 30));
+            return (int) Math.ceil(maDays * 1.6) + 30;
         }
         if (AbstractGridStrategy.isGridType(strategyType)) {
             // 网格族：MA 闸门需要约 90 个自然日，与回测预热（warmupDaysOf）保持同一口径

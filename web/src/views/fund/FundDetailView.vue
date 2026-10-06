@@ -195,6 +195,47 @@
       <!-- 「指数估值」页签已并入行情走势的「估值副图」（V5.57）：PE 走势与行情同一横轴对照查看，
            当前 PE 与分位摘要移到副图开关旁的工具栏提示；未识别跟踪指数/债券指数不适用 PE 的空态文案保留在提示位 -->
 
+      <!-- 信号查询页签（V5.70）：合并本基金的策略信号与均线信号，类型下拉筛选（后续可扩展更多信号类型） -->
+      <el-tab-pane label="信号查询" name="signals">
+        <div class="sig-toolbar">
+          <span class="muted">本基金产生的全部信号 · 共 {{ signalRowsFiltered.length }} 条</span>
+          <el-select v-model="signalTypeFilter" size="small" style="width: 140px">
+            <el-option value="all" label="全部信号" />
+            <el-option value="strategy" label="策略信号" />
+            <el-option value="ma" label="均线信号" />
+          </el-select>
+        </div>
+        <el-table v-loading="signalsTabLoading" :data="signalRowsPaged" size="small">
+          <el-table-column prop="date" label="日期" min-width="100" />
+          <el-table-column label="信号类型" min-width="220">
+            <template #default="{ row }">
+              <el-tag size="small" effect="plain" :type="row.kind === 'strategy' ? 'primary' : 'warning'">
+                {{ row.kind === 'strategy' ? '策略' : '均线' }}
+              </el-tag>
+              <span class="sig-type-name">{{ row.typeName }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="方向" min-width="80">
+            <template #default="{ row }">
+              <span :class="row.dirClass">{{ row.direction }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="detail" label="说明" min-width="280" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.detail || '—' }}</template>
+          </el-table-column>
+        </el-table>
+        <div class="pager-row">
+          <el-pagination
+            v-model:current-page="signalPageNo"
+            v-model:page-size="signalPageSize"
+            :total="signalRowsFiltered.length"
+            :page-sizes="[10, 20, 50, 100]"
+            layout="total, sizes, prev, pager, next, jumper"
+            background
+            @size-change="signalPageNo = 1"
+          />
+        </div>
+      </el-tab-pane>
       <el-tab-pane label="交易流水" name="trades">
         <div class="toolbar">
           <!-- 新增走共享弹窗（与基金池「记一笔」同一套录入规则）；行内「编辑」仍用本页弹窗做更正 -->
@@ -271,9 +312,10 @@
       <el-tab-pane label="回测" name="backtest">
         <el-card shadow="never" class="block">
           <template #header>发起回测</template>
-          <el-form inline>
+          <!-- 与下方参数网格同一套栅格 + 标签置顶（V5.78）：筛选字段与策略参数列列对齐、控件同列等宽 -->
+          <div class="bt-grid">
             <el-form-item label="策略">
-              <el-select v-model="backtestForm.strategyType" style="width: 150px" @change="handleBacktestTypeChange">
+              <el-select v-model="backtestForm.strategyType" @change="handleBacktestTypeChange">
                 <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
               </el-select>
             </el-form-item>
@@ -283,10 +325,25 @@
             <el-form-item label="结束日期">
               <el-date-picker v-model="backtestForm.endDate" type="date" value-format="YYYY-MM-DD" />
             </el-form-item>
-            <el-form-item label="初始资金">
-              <el-input-number v-model="backtestForm.initialCapital" :min="1000" :controls="false" style="width: 140px" />
+            <!-- V5.79：口径说明改问号悬浮（挪出下方小字，行内更紧凑）；初始资金不可手填 -->
+            <el-form-item>
+              <template #label>
+                <span>
+                  初始资金
+                  <el-tooltip
+                    placement="top"
+                    effect="dark"
+                    :show-after="120"
+                    popper-class="param-help-popper"
+                    :content="capitalComputing ? '按开始日期价格计算中…' : '由满仓份额 × 开始日期价 × 1.01（手续费与滑点缓冲）自动算出，不可手填；开始日期当日休市取其后首个交易日价'"
+                  >
+                    <el-icon class="label-help"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </span>
+              </template>
+              <el-input-number v-model="backtestForm.initialCapital" :min="1000" :controls="false" :readonly="true" class="capital-field" />
             </el-form-item>
-          </el-form>
+          </div>
           <!-- :key 强制重挂载：参数表单只在首次挂载时读 modelValue，不换 key 时外部回填不会显示 -->
           <StrategyParamForm
             :key="`bt-${backtestForm.strategyType}-${paramFormKey}`"
@@ -356,8 +413,16 @@
           <el-table-column prop="errorMsg" label="失败原因" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">{{ row.errorMsg || '--' }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="148" fixed="right">
             <template #default="{ row }">
+              <!-- 应用：把本次回测所用参数一键落地为该基金的策略配置（V5.65）；仅成功记录显示 -->
+              <el-button
+                v-if="userStore.can(PERM.ACTION_STRATEGY) && row.status === 1"
+                size="small"
+                type="primary"
+                plain
+                @click="applyBacktest(row)"
+              >应用</el-button>
               <el-button size="small" @click="$router.push(`/backtest/${row.id}`)">结果</el-button>
             </template>
           </el-table-column>
@@ -383,10 +448,11 @@
     </el-tabs>
 
     <el-dialog v-model="strategyDialogVisible" :title="editingStrategyId ? '编辑策略配置' : '新增策略配置'" width="1000px" class="strategy-dialog">
-      <el-form label-width="150px" class="strategy-form">
+      <!-- 标签置顶（V5.78）：与内部参数网格同一套「标签在上、控件铺满」的排布，整弹窗节奏一致 -->
+      <el-form label-position="top" class="strategy-form">
         <el-form-item label="策略类型">
           <!-- 编辑模式下禁切类型：类型是 (基金,类型) 唯一键的一半，换类型等于换策略，应删除重建 -->
-          <el-select v-model="newStrategyType" style="width: 100%" :disabled="!!editingStrategyId">
+          <el-select v-model="newStrategyType" style="width: 100%" :disabled="!!editingStrategyId" @change="(t: string) => applyBacktestParams(t, 'dialog')">
             <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
           </el-select>
         </el-form-item>
@@ -494,10 +560,12 @@ import {
   deleteStrategy,
   fundStrategies,
   pageBacktest,
+  signalsPage,
   strategyTypes,
   updateStrategy
 } from '@/api/strategy'
 import type { BacktestRecord, StrategyConfig, StrategyTypeVO } from '@/api/strategy'
+import { maSignalsByFund, type MaSignalItem } from '@/api/marketSignals'
 import {
   deleteTrade,
   fundDetail,
@@ -1458,6 +1526,13 @@ async function handleDeleteTrade(row: TradeFlow) {
 
 watch(navMode, () => loadChart())
 
+// 切到【信号查询】页签时懒加载一次（策略信号 + 均线信号合并）
+watch(activeTab, (tab) => {
+  if (tab === 'signals' && !signalsTabLoaded.value && !signalsTabLoading.value) {
+    loadFundSignals()
+  }
+})
+
 // ===== 策略配置与回测 =====
 const strategies = ref<StrategyConfig[]>([])
 const strategyTypeList = ref<StrategyTypeVO[]>([])
@@ -1488,6 +1563,10 @@ const PARAM_LABELS: Record<string, Record<string, string>> = {
     riseReducePct: '上涨减仓%', fallAddPct: '下跌加仓%',
     buyShare: '买入份额', sellShare: '卖出份额',
     sizingStepPct: '每档份额增减%', sizingBase: '档位基准', maxSizingMultiple: '单笔最大倍数'
+  },
+  MA_BREAK: {
+    initialShare: '初始仓位份额', baseShare: '底仓份额', fullShare: '满仓份额',
+    breakoutMaDays: '均线突破(日)', breakdownMaDays: '均线跌破(日)', cooldownDays: '冷静天数'
   },
   DIV_GRID: {
     mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
@@ -1610,6 +1689,142 @@ const backtestForm = reactive({
   initialCapital: 100000
 })
 const backtestRecords = ref<BacktestRecord[]>([])
+
+// ===== V5.76 初始资金自动计算：满仓份额 × 开始日期价 × 1.01（费用缓冲），输入框只读 =====
+const capitalComputing = ref(false)
+/** 并发保护令牌：只认最后一次触发的计算，避免慢请求晚到覆盖新值 */
+let capitalCalcToken = 0
+/** 开始日期价缓存（键 fundCode|startDate）：同一基金同一开始日期不重复拉行情 */
+const capitalPriceCache = new Map<string, number>()
+
+/**
+ * 按满仓份额与开始日期价重算初始资金。
+ * 价格口径与回测引擎一致：ETF 用前复权收盘价、场外用复权净值；开始日期当天休市时
+ * 取其后 21 个自然日内首个交易日的价（行情区间多取 21 天余量）。
+ * 价格缺失时保持现值不乱算，发起回测前由 handleBacktest 校验拦截。
+ */
+async function recalcInitialCapital() {
+  const full = Number(backtestForm.params?.fullShare ?? 0)
+  const start = backtestForm.startDate
+  if (!detail.value || !start || !(full > 0)) {
+    return
+  }
+  capitalComputing.value = true
+  const myToken = ++capitalCalcToken
+  try {
+    const key = `${code}|${start}`
+    if (!capitalPriceCache.has(key)) {
+      const end = shiftDays(start, 21)
+      const points = detail.value.fundType === 1
+        ? await fundKline(code, 8000, start, end).catch(() => [])
+        : await fundNav(code, 8000, start, end).catch(() => [])
+      if (myToken !== capitalCalcToken) {
+        return
+      }
+      const first = (points || []).find((p) => p.date >= start)
+      if (first) {
+        const price = detail.value.fundType === 1 ? Number(first.close) : Number(first.adjNav ?? first.unitNav)
+        if (price > 0) {
+          capitalPriceCache.set(key, price)
+        }
+      }
+    }
+    const price = capitalPriceCache.get(key)
+    if (price !== undefined && price > 0) {
+      // 向上取整：宁可资金多备一点，也不让回测因差 1 元被「初始本金不足」拦下
+      backtestForm.initialCapital = Math.ceil(full * price * 1.01)
+    } else {
+      // 价格拿不到（开始日期早于数据起点/行情缺失）：清零交给「发起回测」前的校验拦截，不残留旧值
+      backtestForm.initialCapital = 0
+    }
+  } finally {
+    if (myToken === capitalCalcToken) {
+      capitalComputing.value = false
+    }
+  }
+}
+
+// 开始日期、参数对象（参数表单挂载即回传默认值，之后每次改动都会换新对象）、详情加载完成，任一变化都重算
+watch(() => [backtestForm.startDate, backtestForm.params, detail.value?.fundType], () => recalcInitialCapital())
+
+// ===== 信号查询页签（V5.70）：合并策略信号与均线信号 =====
+type SignalKind = 'strategy' | 'ma'
+interface SignalTabRow {
+  date: string
+  kind: SignalKind
+  typeName: string
+  direction: string
+  dirClass: string
+  detail: string
+}
+const signalTypeFilter = ref<'all' | SignalKind>('all')
+const signalRows = ref<SignalTabRow[]>([])
+const signalsTabLoading = ref(false)
+const signalsTabLoaded = ref(false)
+const signalPageNo = ref(1)
+const signalPageSize = ref(10)
+
+const signalRowsFiltered = computed(() => {
+  if (signalTypeFilter.value === 'all') {
+    return signalRows.value
+  }
+  return signalRows.value.filter((row) => row.kind === signalTypeFilter.value)
+})
+
+const signalRowsPaged = computed(() => {
+  const start = (signalPageNo.value - 1) * signalPageSize.value
+  return signalRowsFiltered.value.slice(start, start + signalPageSize.value)
+})
+
+/** 策略方向文案与着色（红涨绿跌语义：买入红/卖出绿/持有中性） */
+function strategyDirectionOf(direction: string): { direction: string; dirClass: string } {
+  if (direction === 'BUY') {
+    return { direction: '买入', dirClass: 'text-up' }
+  }
+  if (direction === 'SELL') {
+    return { direction: '卖出', dirClass: 'text-down' }
+  }
+  return { direction: '持有', dirClass: '' }
+}
+
+/** 拉取本基金全部信号（策略 signal_record + 均线 ma_signal），合并按日期倒序 */
+async function loadFundSignals() {
+  signalsTabLoading.value = true
+  try {
+    const [strategyPage, maSignals] = await Promise.all([
+      signalsPage({ fundCode: code, page: 1, size: 500 }).catch(() => ({ records: [], total: 0 })),
+      maSignalsByFund(code).catch(() => [] as MaSignalItem[])
+    ])
+    const merged: SignalTabRow[] = []
+    for (const s of strategyPage.records) {
+      const dir = strategyDirectionOf(s.direction)
+      merged.push({
+        date: s.signalDate,
+        kind: 'strategy',
+        typeName: s.strategyName,
+        direction: dir.direction,
+        dirClass: dir.dirClass,
+        detail: s.suggestDesc
+      })
+    }
+    for (const m of maSignals) {
+      merged.push({
+        date: String(m.signalDate),
+        kind: 'ma',
+        typeName: m.signalDesc,
+        direction: m.direction === 'UP' ? '上穿' : '下穿',
+        dirClass: m.direction === 'UP' ? 'text-up' : 'text-down',
+        detail: `信号价 ${m.priceAt ?? '—'}；${m.maShort}日均线 ${m.maShortVal ?? '—'}、${m.maLong}日均线 ${m.maLongVal ?? '—'}`
+      })
+    }
+    merged.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    signalRows.value = merged
+    signalPageNo.value = 1
+    signalsTabLoaded.value = true
+  } finally {
+    signalsTabLoading.value = false
+  }
+}
 const backtestRunning = ref(false)
 /** 回测状态轮询句柄：组件卸载时必须清理，否则离开页面后仍每 1.5 秒轮询直到回测结束 */
 let backtestTimer: number | undefined
@@ -1631,10 +1846,12 @@ async function loadStrategies() {
 }
 
 /**
- * 取本基金「最近一次该策略的回测参数」（回测列表按 id 倒序，取第一条同类型记录）。
+ * 取本基金「最近一次该策略的回测参数与区间」（回测列表按 id 倒序，取第一条同类型记录）。
  * 没有历史返回 null，由参数表单填默认值。
  */
-async function lastBacktestParams(type: string): Promise<{ params: Record<string, unknown>; date: string } | null> {
+async function lastBacktestParams(
+  type: string
+): Promise<{ params: Record<string, unknown>; startDate: string; endDate: string } | null> {
   if (!type) {
     return null
   }
@@ -1644,7 +1861,7 @@ async function lastBacktestParams(type: string): Promise<{ params: Record<string
     if (!hit) {
       return null
     }
-    return { params: JSON.parse(hit.params) as Record<string, unknown>, date: hit.endDate }
+    return { params: JSON.parse(hit.params) as Record<string, unknown>, startDate: hit.startDate, endDate: hit.endDate }
   } catch {
     return null
   }
@@ -1652,6 +1869,7 @@ async function lastBacktestParams(type: string): Promise<{ params: Record<string
 
 /**
  * 按策略回填参数（取不到则清空 → 表单用默认值），强制表单重挂载并给出提示。
+ * 发起回测表单（V5.81）连同上次回测的起止日期一起回填——初始资金由「满仓份额 × 开始日期价」自动重算。
  *
  * @param type   策略类型
  * @param target form=发起回测表单，dialog=新增策略弹框
@@ -1660,12 +1878,18 @@ async function applyBacktestParams(type: string, target: 'form' | 'dialog') {
   const hit = await lastBacktestParams(type)
   if (target === 'form') {
     backtestForm.params = hit ? { ...hit.params } : {}
+    if (hit) {
+      backtestForm.startDate = hit.startDate
+      backtestForm.endDate = hit.endDate
+    }
   } else {
     newStrategyParams.value = hit ? { ...hit.params } : {}
   }
   paramFormKey.value += 1
   prefillHint.value = hit
-    ? `已回填「${strategyNameOf(type)}」上次回测（截至 ${hit.date}）的参数，可直接开始回测或按需修改`
+    ? target === 'form'
+      ? `已回填「${strategyNameOf(type)}」上次回测（${hit.startDate} ~ ${hit.endDate}）的参数与区间，初始资金已按开始日期价自动算出，可直接开始回测或按需修改`
+      : `已回填「${strategyNameOf(type)}」上次回测（截至 ${hit.endDate}）的参数，可直接保存或按需修改`
     : ''
 }
 
@@ -1721,6 +1945,12 @@ async function initBacktestForm() {
   strategyTypeList.value = await strategyTypes()
   await loadBacktests()
   if (backtestForm.strategyType) {
+    // 已配置策略进入：参数用配置值，回测区间回填该策略最近一次回测的起止日期（初始资金随之自动算出）
+    const hit = await lastBacktestParams(backtestForm.strategyType)
+    if (hit && !backtestForm.startDate) {
+      backtestForm.startDate = hit.startDate
+      backtestForm.endDate = hit.endDate
+    }
     return
   }
   backtestForm.strategyType = defaultStrategyType()
@@ -1747,6 +1977,45 @@ async function handleSaveStrategy() {
   }
   strategyDialogVisible.value = false
   loadStrategies()
+}
+
+/**
+ * 「应用」回测记录（V5.65）：把本次回测所用策略参数一键落地为该基金的策略配置。
+ * 同类型策略已存在 → 覆盖其参数（enabled/备注保持原值）；不存在 → 新增（默认启用）。
+ * 成功后刷新策略配置列表；用户在确认框取消则静默返回。
+ */
+async function applyBacktest(row: BacktestRecord) {
+  let params: Record<string, unknown>
+  try {
+    params = JSON.parse(row.params) as Record<string, unknown>
+  } catch {
+    ElMessage.error('回测参数解析失败，无法应用')
+    return
+  }
+  const typeName = strategyNameOf(row.strategyType)
+  const existing = strategies.value.find((s) => s.strategyType === row.strategyType)
+  try {
+    if (existing) {
+      await ElMessageBox.confirm(
+        `该基金已配置「${typeName}」策略。应用后将按本次回测参数**覆盖其参数**（启用状态与备注保持不变，其他类型策略不受影响）。继续？`,
+        '应用回测策略',
+        { type: 'warning', confirmButtonText: '覆盖参数', cancelButtonText: '取消' }
+      )
+      await updateStrategy(existing.id, { strategyType: row.strategyType, params })
+      ElMessage.success(`已按回测参数更新「${typeName}」策略`)
+    } else {
+      await ElMessageBox.confirm(
+        `将按本次回测参数为该基金新增「${typeName}」策略配置（默认启用）。继续？`,
+        '应用回测策略',
+        { type: 'info', confirmButtonText: '新增策略', cancelButtonText: '取消' }
+      )
+      await addStrategy(code, { strategyType: row.strategyType, params })
+      ElMessage.success(`已新增「${typeName}」策略配置`)
+    }
+    loadStrategies()
+  } catch {
+    // 用户取消确认框：静默返回
+  }
 }
 
 /**
@@ -1783,6 +2052,11 @@ async function loadBacktests() {
 async function handleBacktest() {
   if (!backtestForm.startDate || !backtestForm.endDate) {
     ElMessage.warning('请选择回测区间')
+    return
+  }
+  // V5.76：初始资金由前端自动算出，价格缺失时算不出来——拦住而不是把 0/默认值发给后端
+  if (!(backtestForm.initialCapital > 0)) {
+    ElMessage.warning('初始资金尚未算出（开始日期价格缺失），请调整回测区间后重试')
     return
   }
   backtestRunning.value = true
@@ -1932,5 +2206,64 @@ onMounted(() => {
 
 .toolbar {
   margin-bottom: 10px;
+}
+
+/* ===== 回测筛选字段网格（V5.78/V5.79）：与 StrategyParamForm 的参数网格同一节奏 =====
+   同一 minmax 栅格 → 列数与列宽和下方参数区严格一致；标签置顶 → 同列控件等宽对齐；
+   列宽下限 200px → 一行 5~6 个配置，不再空旷 */
+.bt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  column-gap: var(--q-space-4);
+  align-items: start;
+  margin-bottom: var(--q-space-2);
+}
+
+.bt-grid :deep(.el-form-item) {
+  display: block;
+  margin-right: 0;
+}
+
+.bt-grid :deep(.el-form-item__label) {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  margin-bottom: var(--q-space-1);
+}
+
+.bt-grid :deep(.el-select),
+.bt-grid :deep(.el-date-editor),
+.bt-grid :deep(.el-input-number) {
+  width: 100%;
+}
+
+.bt-grid :deep(.el-input-number .el-input__inner) {
+  text-align: left;
+}
+
+/* 初始资金：自动算出的只读字段，浅灰底 + 虚线边表达「不可编辑」（与 TradeEntryDialog 的 .auto-field 同款式） */
+.capital-field :deep(.el-input__wrapper) {
+  background-color: var(--q-bg-subtle);
+  box-shadow: none;
+  border: 1px dashed var(--q-border);
+}
+
+.capital-field :deep(.el-input__wrapper) .el-input__inner {
+  cursor: default;
+}
+
+/* 初始资金标签的问号说明图标（与参数网格的「?」同款式） */
+.label-help {
+  color: var(--q-text-muted);
+  cursor: help;
+  font-size: 14px;
+  vertical-align: -3px;
+  margin-left: 2px;
+}
+
+.label-help:hover {
+  color: var(--q-color-primary);
 }
 </style>

@@ -45,7 +45,7 @@ public record DashboardOverviewVO(
             /** 基金简称 */
             String fundName,
             /** 近 7 日涨跌幅（%） */
-            BigDecimal changePct7d) {
+            BigDecimal changePct5d) {
     }
 
     /**

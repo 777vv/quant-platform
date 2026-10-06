@@ -28,5 +28,5 @@ public interface ProfitStatsService {
     /**
      * 自选基金近 7 日涨跌幅榜（降序；区间两端缺行情的基金跳过）。
      */
-    List<DashboardOverviewVO.MoverItem> movers7d();
+    List<DashboardOverviewVO.MoverItem> movers();
 }

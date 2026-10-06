@@ -21,6 +21,7 @@ import com.quant.strategy.core.MarketDataSeries;
 import com.quant.strategy.core.Strategy;
 import com.quant.strategy.core.StrategyRegistry;
 import com.quant.strategy.grid.AbstractGridStrategy;
+import com.quant.strategy.ma.MaBreakStrategy;
 import com.quant.strategy.dto.BacktestRequest;
 import com.quant.strategy.entity.BacktestRecord;
 import com.quant.strategy.entity.BacktestTradeDetail;
@@ -102,6 +103,12 @@ public class BacktestServiceImpl implements BacktestService {
         }
         if (AbstractGridStrategy.isGridType(strategyType)) {
             int maDays = Math.max(params.path("trendMaDays").asInt(60), 60);
+            return (int) Math.ceil(maDays * 1.6) + 30;
+        }
+        if (MaBreakStrategy.TYPE.equals(strategyType)) {
+            // 均线突破/跌破：预热要覆盖较长那条均线（首日即有完整均线值）
+            int maDays = Math.max(params.path("breakoutMaDays").asInt(60),
+                    params.path("breakdownMaDays").asInt(30));
             return (int) Math.ceil(maDays * 1.6) + 30;
         }
         return 30;

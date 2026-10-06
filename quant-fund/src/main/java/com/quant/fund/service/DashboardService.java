@@ -27,7 +27,7 @@ public interface DashboardService {
     void forceRefreshIndices();
 
     /**
-     * 速览区：持仓概览（前 5）/ 自选 7 日涨跌榜 / 配置占比 / 同步状态。
+     * 速览区：持仓概览（前 5）/ 自选 5 日涨跌榜 / 配置占比 / 同步状态。
      */
     DashboardOverviewVO overview();
 }

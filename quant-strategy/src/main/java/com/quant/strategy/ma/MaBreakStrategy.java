@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import com.quant.common.exception.BizException;
 import com.quant.strategy.core.BacktestAction;
 import com.quant.strategy.core.BacktestState;
+import com.quant.strategy.core.FeeProperties;
 import com.quant.strategy.core.MarketDataSeries;
 import com.quant.strategy.core.Signal;
 import com.quant.strategy.core.Strategy;
@@ -33,12 +34,19 @@ import tools.jackson.databind.JsonNode;
  *       已恢复则暂挂作废、保持仓位不动（V5.74 用户口径）。</li>
  * </ul>
  *
- * <h3>触发判定</h3>
+ * <h3>触发判定（V5.87 起：目标仓位模型，全状态驱动）</h3>
  * <ul>
- *   <li><b>上穿突破均线</b> → 执行突破方向（默认：买入至满仓；可配为卖出至底仓——均值回归玩法）；</li>
- *   <li><b>下穿跌破均线</b> → 执行跌破方向（与突破方向恒相反）；</li>
- *   <li><b>两个信号同日都触发</b> → 方向相反时<b>买入优先</b>（与震荡向上策略 V5.13 同一规则）；</li>
- *   <li>均线样本不足（如 250 日均线需要 250 根历史）时该信号不判定，策略保持持仓不动。</li>
+ *   <li>每天收盘按<b>状态</b>（而非穿越动作）计算目标仓位：
+ *       收盘在「均线突破」线<b>上方</b> → 执行突破操作（配置买入=满仓 / 卖出=底仓）；
+ *       收盘在「均线跌破」线<b>下方</b> → 执行跌破操作（恒与突破操作相反）；</li>
+ *   <li><b>双线同触、快线优先</b>：价格夹在两线之间时两侧同时触发，按<b>周期较小的快线</b>执行——
+ *       快线反应更快，代表最新状态；</li>
+ *   <li><b>中性区</b>：收盘低于突破线又高于跌破线（下降趋势形态的两线之间）方向不明 → 维持现仓位；</li>
+ *   <li>实际仓位 ≠ 目标仓位 → 次日开盘价一次性调仓到目标；已在目标仓位 → 不动。
+ *       状态制下不存在"信号丢失"，调仓频率完全由冷静期控制；</li>
+ *   <li><b>冷静期</b>：最近一次实际交易后 N 个交易日内不调仓（0=关闭）。状态每日重评，
+ *       冷却期满当天按最新状态执行——无需暂挂/复核机制（V5.86 及之前的穿越/暂挂模型已废弃）；</li>
+ *   <li>均线样本不足（如 250 日均线需要 250 根历史）时不判定，维持现仓位。</li>
  * </ul>
  */
 @Component
@@ -49,6 +57,13 @@ public class MaBreakStrategy implements Strategy {
 
     /** 回测发起前资金校验的费用缓冲（买入约万 2.5 + 滑点余量，取 1%） */
     private static final BigDecimal FEE_BUFFER = new BigDecimal("1.01");
+
+    /** 费率配置（ETF 最低佣金用于判断"补买是否注定无法成交"） */
+    private final FeeProperties feeProperties;
+
+    public MaBreakStrategy(FeeProperties feeProperties) {
+        this.feeProperties = feeProperties;
+    }
 
     /** 参数名：均线突破（日） */
     private static final String P_BREAKOUT_MA = "breakoutMaDays";
@@ -124,7 +139,7 @@ public class MaBreakStrategy implements Strategy {
     @Override
     public Signal generateSignal(StrategyContext context) {
         MarketDataSeries series = context.recentSeries();
-        // 需要"前一交易日 + 当日 + 均线窗口"三份历史：样本不足先 HOLD（数据每天积累，够了自然出信号）
+        // 需要当日收盘 + 均线窗口历史：样本不足先 HOLD（数据每天积累，够了自然出信号）
         if (series.size() < 3) {
             return new Signal(Signal.HOLD, null, "行情数据不足，暂无法判断");
         }
@@ -134,73 +149,48 @@ public class MaBreakStrategy implements Strategy {
         int cooldown = Math.max(Strategy.intOr(params, P_COOLDOWN_DAYS, 0), 0);
         int index = series.size() - 1;
         BigDecimal price = series.get(index).close();
-        BigDecimal prevClose = series.get(index - 1).close();
         LocalDate lastTradeDate = context.lastTradeDate();
         int barsSinceTrade = lastTradeDate == null ? Integer.MAX_VALUE : barsSince(series, lastTradeDate, index);
         BigDecimal maBreakCurr = maAt(series, index, breakout);
-        BigDecimal maBreakPrev = maAt(series, index - 1, breakout);
         BigDecimal maDownCurr = maAt(series, index, breakdown);
-        BigDecimal maDownPrev = maAt(series, index - 1, breakdown);
-        if (maBreakCurr == null || maBreakPrev == null || maDownCurr == null || maDownPrev == null) {
-            return new Signal(Signal.HOLD, price, "历史数据不足，均线突破/跌破信号暂无法判定");
+        if (maBreakCurr == null || maDownCurr == null) {
+            return new Signal(Signal.HOLD, price, "历史数据不足，均线信号暂无法判定");
         }
         String breakoutAction = breakoutActionOf(params);
         String breakdownAction = breakdownActionOf(breakoutAction);
-        boolean crossUp = prevClose.compareTo(maBreakPrev) <= 0 && price.compareTo(maBreakCurr) > 0;
-        boolean crossDown = prevClose.compareTo(maDownPrev) >= 0 && price.compareTo(maDownCurr) < 0;
-        // 冷却中：当日交叉信号暂缓（冷却期满首日按均线状态复核执行/作废）
-        if (cooldown > 0 && barsSinceTrade < cooldown) {
-            String deferred = crossUp ? "上穿" : crossDown ? "下穿" : null;
-            return new Signal(Signal.HOLD, price, "冷静期内（距上次实际交易 " + barsSinceTrade
-                    + " 个交易日，冷静 " + cooldown + " 天）"
-                    + (deferred == null ? "" : "，" + deferred + "交叉信号暂缓，冷却期满后复核执行"));
-        }
-        // 冷却期满首日：状态复核——现价仍在跌破均线下方 → 补执行跌破方向；仍在突破均线上方 → 补执行突破方向；否则保持不动
-        if (cooldown > 0 && barsSinceTrade == cooldown) {
-            BigDecimal base = Strategy.dec(params, "baseShare", BigDecimal.ZERO);
-            BigDecimal full = Strategy.dec(params, "fullShare", BigDecimal.ZERO);
-            BigDecimal current = context.currentShares() == null ? BigDecimal.ZERO : context.currentShares();
-            if (price.compareTo(maDownCurr) < 0 && current.compareTo(base) > 0) {
-                return new Signal(Signal.SELL, price, "冷静期结束复核：现价 " + strip(price) + " 仍低于 "
-                        + breakdown + " 日均线 " + strip(maDownCurr) + "，建议卖出至底仓 " + strip(base) + " 份");
-            }
-            if (price.compareTo(maBreakCurr) > 0 && current.compareTo(full) < 0) {
-                return new Signal(Signal.BUY, price, "冷静期结束复核：现价 " + strip(price) + " 仍高于 "
-                        + breakout + " 日均线 " + strip(maBreakCurr) + "，建议买入至满仓");
-            }
-            return new Signal(Signal.HOLD, price, "冷静期结束复核：暂缓信号条件已不成立，保持仓位不动");
-        }
-        // 冷却外正常交叉：按各自方向给出建议
         BigDecimal current = context.currentShares() == null ? BigDecimal.ZERO : context.currentShares();
         BigDecimal base = Strategy.dec(params, "baseShare", BigDecimal.ZERO);
         BigDecimal full = Strategy.dec(params, "fullShare", BigDecimal.ZERO);
-        if (crossUp) {
-            if ("BUY".equals(breakoutAction) && current.compareTo(full) < 0) {
-                return new Signal(Signal.BUY, price, "今日收盘 " + strip(price) + " 上穿 " + breakout
-                        + " 日均线 " + strip(maBreakCurr) + "（突破买入信号），建议买入至满仓");
-            }
-            if ("SELL".equals(breakoutAction) && current.compareTo(base) > 0) {
-                return new Signal(Signal.SELL, price, "今日收盘 " + strip(price) + " 上穿 " + breakout
-                        + " 日均线 " + strip(maBreakCurr) + "（突破卖出信号），建议卖出至底仓");
-            }
-            return new Signal(Signal.HOLD, price, "上穿 " + breakout + " 日均线触发，但"
-                    + ("BUY".equals(breakoutAction) ? "已满仓" : "已到底仓") + "，无操作建议");
+        // 冷却中：不给操作建议（状态每日重评，冷却期满当天按最新状态给出）
+        if (cooldown > 0 && barsSinceTrade < cooldown) {
+            return new Signal(Signal.HOLD, price, "冷静期内（距上次实际交易 " + barsSinceTrade
+                    + " 个交易日，冷静 " + cooldown + " 天），暂不给操作建议");
         }
-        if (crossDown) {
-            if ("BUY".equals(breakdownAction) && current.compareTo(full) < 0) {
-                return new Signal(Signal.BUY, price, "今日收盘 " + strip(price) + " 下穿 " + breakdown
-                        + " 日均线 " + strip(maDownCurr) + "（跌破买入信号），建议买入至满仓");
-            }
-            if ("SELL".equals(breakdownAction) && current.compareTo(base) > 0) {
-                return new Signal(Signal.SELL, price, "今日收盘 " + strip(price) + " 下穿 " + breakdown
-                        + " 日均线 " + strip(maDownCurr) + "（跌破卖出信号），建议卖出至底仓");
-            }
-            return new Signal(Signal.HOLD, price, "下穿 " + breakdown + " 日均线触发，但"
-                    + ("BUY".equals(breakdownAction) ? "已满仓" : "已到底仓") + "，无操作建议");
+        // 目标仓位模型（V5.87）：突破线触发（收盘在线上方）→ 突破操作；跌破线触发（收盘在线下方）→ 跌破操作；
+        // 两侧同时触发（价格夹在两线之间）→ 快线（周期较小者）优先；两侧都不触发 → 维持现仓位
+        boolean breakoutTriggered = price.compareTo(maBreakCurr) > 0;
+        boolean breakdownTriggered = price.compareTo(maDownCurr) < 0;
+        if (!breakoutTriggered && !breakdownTriggered) {
+            return new Signal(Signal.HOLD, price, "价格处于两线之间的中性区（收盘 " + strip(price)
+                    + "，" + breakout + "日均线 " + strip(maBreakCurr) + "，" + breakdown
+                    + "日均线 " + strip(maDownCurr) + "），维持现仓位");
         }
-        return new Signal(Signal.HOLD, price, "未触发均线突破/跌破信号（现价 "
-                + strip(price) + "，" + breakout + "日均线 " + strip(maBreakCurr) + "，"
-                + breakdown + "日均线 " + strip(maDownCurr) + "）");
+        boolean bothTriggered = breakoutTriggered && breakdownTriggered;
+        boolean useBreakout = bothTriggered ? breakout <= breakdown : breakoutTriggered;
+        String directive = useBreakout ? breakoutAction : breakdownAction;
+        String triggerDesc = "收盘 " + strip(price) + "（触发线：" + (useBreakout ? "均线突破" : "均线跌破")
+                + " " + (useBreakout ? breakout : breakdown) + " 日线 "
+                + strip(useBreakout ? maBreakCurr : maDownCurr)
+                + (bothTriggered ? "；双线同触、快线优先）" : "）");
+        BigDecimal target = "BUY".equals(directive) ? full : base;
+        if (target.compareTo(current) > 0) {
+            return new Signal(Signal.BUY, price, triggerDesc + "，状态满足买入，建议买入至满仓");
+        }
+        if (target.compareTo(current) < 0) {
+            return new Signal(Signal.SELL, price, triggerDesc + "，状态满足卖出，建议卖出只留底仓 " + strip(base) + " 份");
+        }
+        return new Signal(Signal.HOLD, price, triggerDesc + "，已处于目标仓位（"
+                + ("BUY".equals(directive) ? "满仓" : "底仓") + "），无操作建议");
     }
 
     @Override
@@ -227,79 +217,56 @@ public class MaBreakStrategy implements Strategy {
         int cooldown = Math.max(Strategy.intOr(params, P_COOLDOWN_DAYS, 0), 0);
         Integer lastIndex = (Integer) state.getScratch().get("lastIndex");
         BigDecimal currClose = data.get(index).close();
-        BigDecimal prevClose = data.get(index - 1).close();
-        if (currClose == null || prevClose == null) {
+        if (currClose == null) {
             return BacktestAction.hold();
         }
         BigDecimal maBreakCurr = maAt(data, index, breakout);
-        BigDecimal maBreakPrev = maAt(data, index - 1, breakout);
         BigDecimal maDownCurr = maAt(data, index, breakdown);
-        BigDecimal maDownPrev = maAt(data, index - 1, breakdown);
-        boolean crossUp = maBreakCurr != null && maBreakPrev != null
-                && prevClose.compareTo(maBreakPrev) <= 0 && currClose.compareTo(maBreakCurr) > 0;
-        boolean crossDown = maDownCurr != null && maDownPrev != null
-                && prevClose.compareTo(maDownPrev) >= 0 && currClose.compareTo(maDownCurr) < 0;
         BigDecimal full = Strategy.dec(params, "fullShare", BigDecimal.ZERO);
         BigDecimal base = Strategy.dec(params, "baseShare", BigDecimal.ZERO);
         BigDecimal current = state.getShares();
         String breakoutAction = breakoutActionOf(params);
         String breakdownAction = breakdownActionOf(breakoutAction);
-        // 冷却中：当日触发的突破/跌破信号暂挂（最新覆盖），冷却期满首日按均线状态复核
+        // 冷却期内不调仓（V5.74 口径：最近一次实际交易后 N 个交易日内不重复交易）；
+        // 状态每日重评，冷却期满当天拿到的就是最新目标，无需暂挂/复核机制
         if (cooldown > 0 && lastIndex != null && index - lastIndex < cooldown) {
-            if (crossUp) {
-                state.getScratch().put("pending", breakoutAction);
-            }
-            if (crossDown) {
-                state.getScratch().put("pending", breakdownAction);
-            }
             return new BacktestAction(BacktestAction.HOLD, BigDecimal.ZERO, "冷静期内（剩 "
-                    + (cooldown - (index - lastIndex)) + " 个交易日），暂不交易；暂挂信号冷却期满后复核");
+                    + (cooldown - (index - lastIndex)) + " 个交易日），暂不调仓");
         }
-        // 冷却期满首日：先复核暂挂信号（按当前均线状态），当日新交叉优先于暂挂
-        if (cooldown > 0 && lastIndex != null && index - lastIndex == cooldown) {
-            String pending = (String) state.getScratch().get("pending");
-            state.getScratch().put("pending", null);
-            if ("SELL".equals(pending) && maDownCurr != null
-                    && currClose.compareTo(maDownCurr) < 0 && current.compareTo(base) > 0) {
-                return new BacktestAction(BacktestAction.SELL,
-                        current.subtract(base).setScale(2, RoundingMode.DOWN),
-                        "冷静期结束复核：收盘 " + strip(currClose) + " 仍低于 " + breakdown
-                                + " 日均线 " + strip(maDownCurr) + "，卖出只留底仓 " + strip(base) + " 份");
-            }
-            if ("BUY".equals(pending) && maBreakCurr != null
-                    && currClose.compareTo(maBreakCurr) > 0 && current.compareTo(full) < 0) {
-                return new BacktestAction(BacktestAction.BUY,
-                        full.subtract(current).setScale(2, RoundingMode.DOWN),
-                        "冷静期结束复核：收盘 " + strip(currClose) + " 仍高于 " + breakout
-                                + " 日均线 " + strip(maBreakCurr) + "，买入至满仓 " + strip(full) + " 份");
-            }
-            if (pending != null) {
-                return new BacktestAction(BacktestAction.HOLD, BigDecimal.ZERO,
-                        "冷静期结束复核：暂挂信号条件已不成立，保持仓位不动");
-            }
+        // 目标仓位模型（V5.87）：突破线触发（收盘在线上方）→ 突破操作；跌破线触发（收盘在线下方）→ 跌破操作；
+        // 两侧同时触发（价格夹在两线之间）→ 快线（周期较小者）优先；两侧都不触发 → 维持现仓位
+        boolean breakoutTriggered = maBreakCurr != null && currClose.compareTo(maBreakCurr) > 0;
+        boolean breakdownTriggered = maDownCurr != null && currClose.compareTo(maDownCurr) < 0;
+        if (!breakoutTriggered && !breakdownTriggered) {
+            return BacktestAction.hold();
         }
-        // 冷却外正常交叉：按各自方向执行（成交后更新 lastIndex——漏更会让冷却停在旧起点，实测踩过）
-        if (crossUp) {
-            BigDecimal target = "BUY".equals(breakoutAction) ? full : base;
-            if (target.compareTo(current) > 0) {
-                state.getScratch().put("lastIndex", index);
-                return BacktestAction.buy(target.subtract(current).setScale(2, RoundingMode.DOWN),
-                        "收盘 " + strip(currClose) + " 上穿 " + breakout + " 日均线 " + strip(maBreakCurr)
-                                + "，" + ("BUY".equals(breakoutAction) ? "买入至满仓 " + strip(full)
-                                : "卖出至底仓 " + strip(base)) + " 份");
-            }
+        boolean bothTriggered = breakoutTriggered && breakdownTriggered;
+        boolean useBreakout = bothTriggered ? breakout <= breakdown : breakoutTriggered;
+        String directive = useBreakout ? breakoutAction : breakdownAction;
+        String triggerDesc = "收盘 " + strip(currClose) + "（触发线：" + (useBreakout ? "均线突破" : "均线跌破")
+                + " " + (useBreakout ? breakout : breakdown) + " 日线 "
+                + strip(useBreakout ? maBreakCurr : maDownCurr)
+                + (bothTriggered ? "；双线同触、快线优先）" : "）");
+        BigDecimal target = "BUY".equals(directive) ? full : base;
+        if (target.compareTo(current) == 0) {
+            return BacktestAction.hold();
         }
-        if (crossDown) {
-            BigDecimal target = "BUY".equals(breakdownAction) ? full : base;
-            if (target.compareTo(current) > 0) {
-                state.getScratch().put("lastIndex", index);
-                return BacktestAction.buy(target.subtract(current).setScale(2, RoundingMode.DOWN),
-                        "收盘 " + strip(currClose) + " 下穿 " + breakdown + " 日均线 " + strip(maDownCurr)
-                                + "，" + ("BUY".equals(breakdownAction) ? "买入至满仓 " + strip(full)
-                                : "卖出至底仓 " + strip(base)) + " 份");
+        if (target.compareTo(current) > 0) {
+            // 现金连最低佣金都覆盖不了时这笔补买注定无法成交——不发单、不重置冷却
+            //（否则每个冷静期满都会白耗一次并把 lastIndex 不断后移，把真卖出信号吞在冷却期里，V5.86 实测踩过）
+            BigDecimal minFee = data.isEtf()
+                    ? BigDecimal.valueOf(feeProperties.getEtfMinCommission())
+                    : BigDecimal.ZERO;
+            if (state.getCash().compareTo(minFee) <= 0) {
+                return BacktestAction.hold();
             }
+            state.getScratch().put("lastIndex", index);
+            return BacktestAction.buy(target.subtract(current).setScale(2, RoundingMode.DOWN),
+                    triggerDesc + "，状态满足买入 → 买入至满仓 " + strip(full) + " 份");
         }
-        return BacktestAction.hold();
+        state.getScratch().put("lastIndex", index);
+        return BacktestAction.sell(current.subtract(target).setScale(2, RoundingMode.DOWN),
+                triggerDesc + "，状态满足卖出 → 卖出只留底仓 " + strip(base) + " 份");
     }
 
     @Override

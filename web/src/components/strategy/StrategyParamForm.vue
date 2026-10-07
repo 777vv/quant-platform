@@ -78,39 +78,39 @@
         <el-input-number v-model="form.fullShare" :min="1" :controls="false" />
       </el-form-item>
       <el-form-item>
-        <template #label><ParamLabel text="均线突破（日）" help="买入信号：收盘价【上穿】这条均线时触发买入，直接买入至满仓份额。例如填 60 = 收盘价上穿 60 日均线买入。取值 2~500 个交易日；周期越大信号越少越迟。" /></template>
+        <template #label><ParamLabel text="均线突破（日）" help="突破线：收盘价站在这条均线上方即触发「突破时操作」（买入=买至满仓 / 卖出=只留底仓）。每天按收盘状态判定，不要求「上穿」动作。取值 2~500 个交易日；周期越大越迟钝。" /></template>
         <el-input-number v-model="form.breakoutMaDays" :min="2" :max="500" :controls="false" />
       </el-form-item>
       <el-form-item>
-        <template #label><ParamLabel text="均线跌破（日）" help="信号均线：收盘价【下穿】这条均线时触发「跌破时操作」。例如填 30 = 收盘价跌破 30 日均线触发。取值 2~500 个交易日。" /></template>
+        <template #label><ParamLabel text="均线跌破（日）" help="跌破线：收盘价跌到这条均线下方即触发「跌破时操作」（自动与突破操作相反）。取值 2~500 个交易日。" /></template>
         <el-input-number v-model="form.breakdownMaDays" :min="2" :max="500" :controls="false" />
       </el-form-item>
       <el-form-item>
-        <template #label><ParamLabel text="突破时操作" help="上穿「均线突破」均线时执行：买入至满仓 / 卖出至底仓。与「跌破时操作」必须一买一卖相反（如突破买入 + 跌破卖出 = 趋势跟随；突破卖出 + 跌破买入 = 均值回归）。" /></template>
+        <template #label><ParamLabel text="突破时操作" help="收盘价在「均线突破」线上方时执行：买入至满仓（趋势跟随）/ 卖出只留底仓（均值回归）。与「跌破时操作」必须一买一卖相反（如突破买入 + 跌破卖出 = 趋势跟随；突破卖出 + 跌破买入 = 均值回归）。" /></template>
         <el-radio-group v-model="form.breakoutAction" @change="onBreakoutActionChange">
           <el-radio-button value="BUY">买入</el-radio-button>
           <el-radio-button value="SELL">卖出</el-radio-button>
         </el-radio-group>
       </el-form-item>
       <el-form-item>
-        <template #label><ParamLabel text="跌破时操作" help="下穿「均线跌破」均线时执行（自动与突破方向相反）。" /></template>
+        <template #label><ParamLabel text="跌破时操作" help="收盘价在「均线跌破」线下方时执行（自动与突破方向相反）。" /></template>
         <el-radio-group v-model="form.breakdownAction">
           <el-radio-button value="BUY">买入</el-radio-button>
           <el-radio-button value="SELL">卖出</el-radio-button>
         </el-radio-group>
       </el-form-item>
       <el-form-item>
-        <template #label><ParamLabel text="冷静天数" help="最近一次交易后的 N 个交易日内不再重复交易（0=不冷静）。冷却期内触发的信号会暂挂：冷却结束后复核均线状态，仍满足（如现价仍低于跌破均线）才执行，已恢复则保持仓位不动。" /></template>
+        <template #label><ParamLabel text="冷静天数" help="最近一次交易后的 N 个交易日内不调仓（0=不冷静）。状态每天按最新收盘重评，冷却期满当天按最新目标执行。" /></template>
         <el-input-number v-model="form.cooldownDays" :min="0" :max="500" :controls="false" />
       </el-form-item>
       <div class="osc-summary">
         <div class="osc-title">策略逻辑速览</div>
         <ul>
-          <li><b>均线突破买入</b>：前一交易日收盘价在「均线突破」均线上或下方、<b>当日收盘价上穿</b>该均线 → 直接买入至<b>满仓份额</b>（按次日开盘价成交）。</li>
-          <li><b>均线跌破卖出</b>：前一交易日在均线上、<b>当日收盘价下穿</b>「均线跌破」均线 → 直接卖出至<b>底仓份额</b>（按次日开盘价成交）。</li>
-          <li><b>两个信号同一天都触发</b>时<b>买入优先</b>（与震荡向上策略同一规则）；已满仓时突破信号不出、已到底仓时跌破信号不出。</li>
-          <li><b>冷静天数</b>：最近一次交易后 N 个交易日内不交易；冷却结束后复核均线状态——仍满足条件才补执行，已恢复则不动。</li>
-          <li><b>均线周期越长</b>信号越少越迟（250 日均线一年只上下穿一两次）；周期太小（如 5 日）信号频繁、噪音多。</li>
+          <li><b>目标仓位模型（全状态驱动）</b>：收盘在「均线突破」线上方 → 执行突破操作（买入=买至<b>满仓份额</b> / 卖出=只留<b>底仓份额</b>）；收盘在「均线跌破」线下方 → 执行跌破操作（恒相反）；均按次日开盘价成交，仓位已在目标则不动。</li>
+          <li><b>双线同触、快线优先</b>：价格夹在两线之间时两侧同时触发（如收盘在 120 日线上方、同时已跌破 90 日线），按<b>周期较小的快线</b>执行——快线反应更快，代表最新状态。</li>
+          <li><b>中性区</b>：收盘低于突破线又高于跌破线（下降趋势形态的两线之间）方向不明 → 维持现仓位不动。</li>
+          <li><b>冷静天数</b>：最近一次交易后 N 个交易日内不调仓；状态每天按最新收盘重评，期满当天按最新目标执行。</li>
+          <li><b>均线周期越长</b>状态切换越少越迟（250 日均线一年只上下穿一两次）；周期太小（如 5 日）调仓频繁、噪音多。</li>
           <li><b>均线周期越大</b>，回测所需的历史预热数据越多——请把回测起始日期往前留足（250 日均线约需 1 年以上历史）。</li>
         </ul>
       </div>

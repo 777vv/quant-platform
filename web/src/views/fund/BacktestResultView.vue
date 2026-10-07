@@ -74,22 +74,33 @@
       <ChartPanel v-if="drawdownOption" :option="drawdownOption as EChartsOption" height="240px" />
     </el-card>
     <el-card shadow="never" class="block" header="交易明细">
-      <el-table :data="trades" border size="small" max-height="420">
-        <el-table-column prop="tradeDate" label="日期" width="110" />
-        <el-table-column label="方向" width="70">
+      <!-- 列宽全部用 min-width 参与均分（合计约 900px）：表格恒 100% 铺满、窄容器也不出横向滚动条，富余宽度由信号理由吸收 -->
+      <el-table :data="tradeRows" border size="small" max-height="420">
+        <el-table-column prop="tradeDate" label="日期" min-width="100" />
+        <el-table-column label="方向" min-width="55">
           <template #default="{ row }">
             <el-tag :type="row.direction === 'BUY' ? 'danger' : 'success'" size="small">
               {{ row.direction === 'BUY' ? '买入' : '卖出' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="price" label="价格" width="100" align="right" />
-        <el-table-column prop="share" label="份额" width="110" align="right" />
-        <el-table-column prop="amount" label="金额" width="120" align="right" />
-        <el-table-column prop="fee" label="手续费" width="90" align="right" />
-        <el-table-column prop="cashAfter" label="成交后现金" width="130" align="right" />
-        <el-table-column prop="positionAfter" label="成交后份额" width="120" align="right" />
-        <el-table-column prop="reason" label="信号理由" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="price" label="价格" min-width="70" align="right" />
+        <el-table-column prop="share" label="份额" min-width="80" align="right" />
+        <el-table-column prop="amount" label="金额" min-width="82" align="right" />
+        <el-table-column prop="fee" label="手续费" min-width="60" align="right" />
+        <el-table-column prop="cashAfter" label="成交后现金" min-width="90" align="right" />
+        <el-table-column label="成交后资产" min-width="90" align="right">
+          <template #default="{ row }">{{ row.assetsAfter }}</template>
+        </el-table-column>
+        <!-- 交易收益 = 本笔成交后资产 − 上一笔成交后资产；只有卖出产生这层含义，买入显示横杠 -->
+        <el-table-column label="交易收益" min-width="82" align="right">
+          <template #default="{ row }">
+            <span v-if="row.tradePnl != null" :class="row.pnlClass">{{ row.tradePnl }}</span>
+            <span v-else class="pnl-dash">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="positionAfter" label="成交后份额" min-width="82" align="right" />
+        <el-table-column prop="reason" label="信号理由" min-width="110" show-overflow-tooltip />
       </el-table>
     </el-card>
   </div>
@@ -101,6 +112,7 @@ import { QuestionFilled } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import type { EChartsOption, ScatterSeriesOption } from 'echarts'
 import { DOWN, UP } from '@/utils/palette'
+import { changeColorClass } from '@/utils/format'
 import ChartPanel from '@/components/charts/ChartPanel.vue'
 import { backtestDetail, backtestTrades } from '@/api/strategy'
 import type { BacktestRecord, BacktestTrade } from '@/api/strategy'
@@ -111,6 +123,30 @@ const record = ref<BacktestRecord | null>(null)
 const trades = ref<BacktestTrade[]>([])
 const equityOption = ref<EChartsOption | null>(null)
 const drawdownOption = ref<EChartsOption | null>(null)
+
+/** 交易明细展示行：在接口行上附加「成交后资产」与「交易收益」（仅卖出行有值）两列 */
+type TradeDisplayRow = BacktestTrade & { assetsAfter: string; tradePnl: string | null; pnlClass: string }
+
+/**
+ * 展示行装配（按成交时间顺序逐行推进）：
+ * 成交后资产 = 成交后现金 + 成交后份额 × 成交价（该笔成交时点上的总资产快照）；
+ * 交易收益 = 本笔成交后资产 − 上一笔成交后资产，只对卖出展示（买入不产生已实现收益，显示横杠）。
+ */
+const tradeRows = computed<TradeDisplayRow[]>(() => {
+  let prevAssets: number | null = null
+  return trades.value.map((t) => {
+    const assets = t.cashAfter + t.positionAfter * t.price
+    const pnl = t.direction === 'SELL' && prevAssets != null ? assets - prevAssets : null
+    const row: TradeDisplayRow = {
+      ...t,
+      assetsAfter: assets.toFixed(2),
+      tradePnl: pnl == null ? null : (pnl > 0 ? '+' : '') + pnl.toFixed(2),
+      pnlClass: changeColorClass(pnl)
+    }
+    prevAssets = assets
+    return row
+  })
+})
 
 /**
  * 同仓位持有收益%：把「买入持有」基准按策略的平均仓位占比折算。
@@ -283,6 +319,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 买入行的交易收益横杠：弱化展示（没有可表达的收益） */
+.pnl-dash {
+  color: var(--q-text-muted);
+}
+
 /* 结论条：一排"左值 vs 右值 + 胜负标签"，比在描述列表里找数字直观 */
 .verdict-card :deep(.el-card__body) {
   padding: var(--q-space-3) var(--q-space-4);

@@ -22,6 +22,7 @@ import com.quant.strategy.core.Strategy;
 import com.quant.strategy.core.StrategyRegistry;
 import com.quant.strategy.grid.AbstractGridStrategy;
 import com.quant.strategy.ma.MaBreakStrategy;
+import com.quant.strategy.ma.MaTakeProfitGridStrategy;
 import com.quant.strategy.dto.BacktestRequest;
 import com.quant.strategy.entity.BacktestRecord;
 import com.quant.strategy.entity.BacktestTradeDetail;
@@ -110,6 +111,10 @@ public class BacktestServiceImpl implements BacktestService {
             int maDays = Math.max(params.path("breakoutMaDays").asInt(60),
                     params.path("breakdownMaDays").asInt(30));
             return (int) Math.ceil(maDays * 1.6) + 30;
+        }
+        if (MaTakeProfitGridStrategy.TYPE.equals(strategyType)) {
+            // 均线止盈/加仓（V5.88）：预热要覆盖基准均线（首日即有完整均线值）
+            return (int) Math.ceil(params.path("baselineMaDays").asInt(120) * 1.6) + 30;
         }
         return 30;
     }
@@ -233,4 +238,23 @@ public class BacktestServiceImpl implements BacktestService {
         }
         return trimmed;
     }
+    /**
+     * 删除回测记录（V5.92）：记录与其全部交易明细一起删（明细无外键，需手动按 backtest_id 清理）；
+     * 运行中的回测（status=0）不允许删，避免异步任务写库时记录已消失。
+     */
+    @Override
+    public boolean delete(Long id) {
+        BacktestRecord record = recordMapper.selectById(id);
+        if (record == null) {
+            return false;
+        }
+        if (Integer.valueOf(0).equals(record.getStatus())) {
+            throw new BizException("该回测正在运行中，无法删除");
+        }
+        tradeMapper.delete(new LambdaQueryWrapper<BacktestTradeDetail>()
+                .eq(BacktestTradeDetail::getBacktestId, id));
+        recordMapper.deleteById(id);
+        return true;
+    }
+
 }

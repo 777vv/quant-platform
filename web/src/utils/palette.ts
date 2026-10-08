@@ -29,8 +29,8 @@ export const TEXT_SECONDARY = '#6b7280'
 export const CANDLE_UP = UP
 export const CANDLE_DOWN = DOWN
 
-/** 均线（MA5/10/20/60）——由浅到深，与 K 线红色保持区分度 */
-export const MA_COLORS = ['#f59e0b', '#0ea5e9', '#7c3aed', '#64748b']
+/** 均线（V5.88：改为一组长周期 30/60/90/120/180/250）——6 色互不撞色，并与 K 线红/绿保持区分度 */
+export const MA_COLORS = ['#f59e0b', '#0ea5e9', '#7c3aed', '#64748b', '#10b981', '#ec4899']
 
 /** 布林带：中轨 + 上下轨（上下轨同色，中轨用主色区分） */
 export const BOLL_MID = '#7c3aed'

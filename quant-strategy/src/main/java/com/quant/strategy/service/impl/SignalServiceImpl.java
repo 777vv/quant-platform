@@ -34,6 +34,7 @@ import com.quant.strategy.entity.SignalRecord;
 import com.quant.strategy.entity.StrategyConfig;
 import com.quant.strategy.grid.AbstractGridStrategy;
 import com.quant.strategy.ma.MaBreakStrategy;
+import com.quant.strategy.ma.MaTakeProfitGridStrategy;
 import com.quant.strategy.oscillation.OscillatingUpStrategy;
 import com.quant.strategy.mapper.SignalRecordMapper;
 import com.quant.strategy.mapper.StrategyConfigMapper;
@@ -260,6 +261,10 @@ public class SignalServiceImpl implements SignalService {
             // 网格族：MA 闸门需要约 90 个自然日，与回测预热（warmupDaysOf）保持同一口径
             int maDays = Math.max(Strategy.intOr(params, "trendMaDays", 60), 60);
             return (int) Math.ceil(maDays * 1.6) + 30;
+        }
+        if (MaTakeProfitGridStrategy.TYPE.equals(strategyType)) {
+            // 均线止盈/加仓（V5.88）：回看需覆盖基准均线 + 当日，与回测预热（warmupDaysOf）同一口径
+            return (int) Math.ceil(Strategy.intOr(params, "baselineMaDays", 120) * 1.6) + 30;
         }
         return DEFAULT_WINDOW_DAYS;
     }

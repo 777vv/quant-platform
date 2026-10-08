@@ -317,7 +317,7 @@
             </el-table-column>
           </el-table>
           <div class="pager-row">
-            <el-pagination v-model:current-page="maPage" v-model:page-size="maSize" :page-sizes="PAGE_SIZES" :total="maRows.length" layout="total, sizes, prev, pager, next" background />
+            <el-pagination v-model:current-page="maPage" v-model:page-size="maSize" :page-sizes="PAGE_SIZES" :total="maFilteredRows.length" layout="total, sizes, prev, pager, next" background />
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -449,8 +449,32 @@ function ratioOf(row: FundMaRow, window: number): number | null {
   return (row as unknown as Record<string, number | null>)[`ratio${window}`]
 }
 
+/**
+ * 均价页签也吃顶部的全局筛选（标签 / 基金，V5.94 用户反馈修复）。
+ *
+ * 均价接口（fund_ma_daily 快照）**不带标签**，标签只能取自概览那份数据（同一自选池，overview 才带 tags）；
+ * 因此概览里没有的基金视为"无标签"——不筛选时照常显示，只在按标签筛选时被排除（口径与其它页签一致）。
+ */
+const tagsByCode = computed(() => {
+  const map = new Map<string, string[]>()
+  rows.value.forEach((row) => map.set(row.fundCode, row.tags))
+  return map
+})
+
+const maFilteredRows = computed(() => {
+  return maRows.value.filter((row) => {
+    if (selectedFund.value && row.fundCode !== selectedFund.value) {
+      return false
+    }
+    if (selectedTags.value.length > 0 && !(tagsByCode.value.get(row.fundCode) ?? []).some((t) => selectedTags.value.includes(t))) {
+      return false
+    }
+    return true
+  })
+})
+
 const maSorted = computed(() => {
-  const sorted = [...maRows.value]
+  const sorted = [...maFilteredRows.value]
   if (!maSort.value.prop || !maSort.value.order) {
     return sorted
   }
@@ -567,6 +591,7 @@ function resetPages() {
   chgPage.value = 1
   valPage.value = 1
   premiumPage.value = 1
+  maPage.value = 1
 }
 
 /**

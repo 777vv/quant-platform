@@ -115,6 +115,51 @@
         </ul>
       </div>
     </template>
+    <template v-else-if="type === 'MA_TP_GRID'">
+      <el-form-item>
+        <template #label><ParamLabel text="初始仓位份额" help="仅回测首日生效：开始回测时先按这个份额买入建仓（份）；同时也是「中性带」的目标仓位——价格处于上下沿之间时，每天复核并把仓位调回这个数。取值 0 ~ 满仓份额。" /></template>
+        <el-input-number v-model="form.initialShare" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="底仓份额" help="止盈目标：价格突破上沿（≥ 基准均线 ×(1+上限%)）时卖出，只保留这个份额（份）。须小于满仓份额。" /></template>
+        <el-input-number v-model="form.baseShare" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="满仓份额" help="加仓目标：价格跌破下沿（≤ 基准均线 ×(1−下限%)）时买入，直接买到这个份额（份）。请让它与你的可用资金匹配，回测时本金必须买得起它。" /></template>
+        <el-input-number v-model="form.fullShare" :min="1" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="基准均线（日）" help="围绕这条均线画上下两条百分比带（如填 120 = 以 120 日均线为基准）。每天按收盘价与当日均线值比较判定，不要求「上穿/下穿」动作。取值 2~500 个交易日；周期越大越迟钝。" /></template>
+        <el-input-number v-model="form.baselineMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="回踩均线（日）" help="上下沿之间时，收盘回落到这条均线的当日值（≤ 该均线值）就把仓位调回「初始份额」——即「现价回踩回踩均线时保持初始份额」。可与基准均线相同（如都填 120），也可配更短周期（基准 120 / 回踩 60 = 回踩到 60 日线就补回）。取值 2~500 个交易日。" /></template>
+        <el-input-number v-model="form.reboundMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="上限百分比" help="止盈线：收盘价 ≥ 基准均线 ×(1+这个百分比) 时触发卖出至底仓。例：均线价 10 元、填 10，则价格到 11 元及以上触发。取值 0~100（不含 0）。" /></template>
+        <el-input-number v-model="form.upperPct" :min="0.1" :max="100" :precision="2" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="下限百分比" help="加仓线：收盘价 ≤ 基准均线 ×(1−这个百分比) 时触发买入至满仓。例：均线价 10 元、填 10，则价格到 9 元及以下触发。取值 0~100（不含 0）。" /></template>
+        <el-input-number v-model="form.lowerPct" :min="0.1" :max="100" :precision="2" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="冷静天数" help="最近一次实际交易后的 N 个交易日内不调仓（0=不冷静）。状态每天重新评估，冷静期一满就按当天最新状态执行，信号不会丢。" /></template>
+        <el-input-number v-model="form.cooldownDays" :min="0" :max="500" :controls="false" />
+      </el-form-item>
+      <div class="osc-summary">
+        <div class="osc-title">策略逻辑速览</div>
+        <ul>
+          <li><b>三条带、三种目标仓位</b>：收盘 <b>≥ 上沿</b>（基准均线 ×(1+上限%)）→ 卖出至<b>底仓</b>；收盘 <b>≤ 下沿</b>（基准均线 ×(1−下限%)）→ 买入至<b>满仓</b>；<b>回踩到回踩均线</b>（收盘 ≤ 回踩均线值）→ 调回<b>初始份额</b>。</li>
+          <li><b>上下沿之间、仍在回踩均线上方</b>：维持现仓位不动（不加仓也不减仓）。</li>
+          <li><b>每天按收盘状态判定</b>（不要求"上穿/下穿"动作），信号次日开盘价执行；已在目标仓位则不再发信号。</li>
+          <li><b>回踩均线可独立于基准均线</b>：如基准 120 / 回踩 60 = 回踩到 60 日线就补回初始份额，比等 120 日线更早；两者相同则行为等同"回到均线即归位"。</li>
+          <li><b>冷静天数</b>：最近一次实际交易后 N 个交易日内不调仓；状态每天按最新收盘重评，冷却期满当天按最新状态执行，信号不会丢。</li>
+          <li><b>均线周期越大越迟钝</b>、回测所需的历史预热越多（250 日均线约需一年）——区间开头预热不足时上下沿信号会推迟甚至为空。</li>
+        </ul>
+      </div>
+    </template>
 
     <!-- 网格族（V5.27 红利/纳指网格；V5.28 金字塔/倒金字塔网格）：四个类型共用同一套参数与规则，
          差异只在默认值取向——金字塔族多一个「每格增减」参数控制逐格份额阶梯 -->
@@ -337,6 +382,17 @@ const defaults: Record<string, Record<string, unknown>> = {
     breakdownMaDays: 30,
     breakoutAction: 'BUY',
     breakdownAction: 'SELL',
+    cooldownDays: 5
+  },
+  // 均线止盈/加仓（V5.88 用户口径）：围绕一条基准均线的上下百分比带，中性带回初始份额
+  MA_TP_GRID: {
+    initialShare: 10000,
+    baseShare: 5000,
+    fullShare: 20000,
+    baselineMaDays: 120,
+    reboundMaDays: 120,
+    upperPct: 10,
+    lowerPct: 10,
     cooldownDays: 5
   },
   // 红利网格（V5.27）：低波动慢牛（实测 515080 年化波动 13.7%、区间 1.395~1.637）→ 等差、约 1.4% 一格、

@@ -168,7 +168,7 @@ const avgCostRatioPct = computed(() => {
 
 /** 策略展示名（类型码 → 中文名，未知回退类型码） */
 const strategyName = computed(() => {
-  const map: Record<string, string> = { OSC_UP: '震荡向上', DIV_GRID: '红利网格', NDX_GRID: '纳指网格', PYRAMID_GRID: '金字塔网格', INV_PYRAMID_GRID: '倒金字塔网格', GRID: '网格交易（已下线）', VAL_PERCENTILE: '估值百分位（已下线）' }
+  const map: Record<string, string> = { OSC_UP: '震荡向上', DIV_GRID: '红利网格', NDX_GRID: '纳指网格', PYRAMID_GRID: '金字塔网格', INV_PYRAMID_GRID: '倒金字塔网格', MA_TP_GRID: '均线止盈/加仓', GRID: '网格交易（已下线）', VAL_PERCENTILE: '估值百分位（已下线）' }
   return record.value ? map[record.value.strategyType] ?? record.value.strategyType : '--'
 })
 

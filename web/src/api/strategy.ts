@@ -115,6 +115,11 @@ export function backtestTrades(id: number, page = 1, size = 100) {
   return get<PageResult<BacktestTrade>>(`/backtest/${id}/trades`, { page, size })
 }
 
+/** 删除回测记录（同时删除交易明细；运行中的回测不允许删） */
+export function deleteBacktest(id: number) {
+  return del<boolean>(`/backtest/${id}`)
+}
+
 /** 策略信号记录（每日 21:00 任务生成） */
 export interface SignalRecord {
   id: number

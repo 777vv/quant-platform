@@ -8,6 +8,7 @@ import com.quant.strategy.dto.BacktestRequest;
 import com.quant.strategy.entity.BacktestRecord;
 import com.quant.strategy.entity.BacktestTradeDetail;
 import com.quant.strategy.service.BacktestService;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -36,6 +37,13 @@ public class BacktestController {
     @PostMapping
     public R<Map<String, Long>> create(@RequestBody BacktestRequest request) {
         return R.ok(Map.of("id", backtestService.create(request)));
+    }
+
+    /** 删除回测记录（V5.92：同时删除交易明细；运行中的回测不允许删） */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_STRATEGY)
+    @DeleteMapping("/{id}")
+    public R<Boolean> delete(@PathVariable Long id) {
+        return R.ok(backtestService.delete(id));
     }
 
     /** 回测记录分页（不含曲线大字段） */

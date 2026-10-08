@@ -413,7 +413,10 @@
           <el-table-column prop="errorMsg" label="失败原因" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">{{ row.errorMsg || '--' }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="148" fixed="right">
+          <!-- 操作列宽度按按钮数给足（V5.93 实测）：三个 small 按钮 50×3 + 间距 12×2 = 174px，
+               单元格还要吃掉内边距 16px + 边框 1px，所以 190px 仍差 1px → 「删除」被挤到第二行。
+               取 204px（内容 187px，余量 13px），不要再往临界值上写 -->
+          <el-table-column label="操作" width="204" fixed="right">
             <template #default="{ row }">
               <!-- 应用：把本次回测所用参数一键落地为该基金的策略配置（V5.65）；仅成功记录显示 -->
               <el-button
@@ -424,6 +427,14 @@
                 @click="applyBacktest(row)"
               >应用</el-button>
               <el-button size="small" @click="$router.push(`/backtest/${row.id}`)">结果</el-button>
+              <!-- 删除（V5.92）：清掉杂乱的旧回测；运行中（status=0）不可删 -->
+              <el-button
+                v-if="userStore.can(PERM.ACTION_STRATEGY) && row.status !== 0"
+                size="small"
+                type="danger"
+                plain
+                @click="handleDeleteBacktest(row)"
+              >删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -543,8 +554,12 @@ import { annualizedReturnPct, annualizedVolatilityPct, maxDrawdownPct, rangeRetu
 import { TEXT_INVERSE, TRADE_BUY, TRADE_DIVIDEND, TRADE_SELL } from '@/utils/palette'
 import { useEscToClose } from '@/utils/escClose'
 
-/** 均线组（行业默认参数） */
-const MA_WINDOWS = [5, 10, 20, 60]
+/**
+ * 均线组（V5.88 用户口径：只保留 30/60/90/120/180/250 这组长周期均线，原 5/10/20/60 移除）。
+ * 注意配套：最长 250 日均线需要 250 个交易日（约 365 自然日）的前置数据才画得出来，
+ * 故 INDICATOR_WARMUP_DAYS 同步提高，且预设区间也带预热段（见 loadChart）。
+ */
+const MA_WINDOWS = [30, 60, 90, 120, 180, 250]
 
 /** 布林带参数（20 日 ± 2 倍标准差，行业默认） */
 const BOLL_PERIOD = 20
@@ -557,6 +572,7 @@ import {
   addStrategy,
   backtestDetail,
   createBacktest,
+  deleteBacktest,
   deleteStrategy,
   fundStrategies,
   pageBacktest,
@@ -643,8 +659,12 @@ const rangeStats = computed(() => {
 function onZoomChange(range: { startPercent: number; endPercent: number }) {
   visibleWindow.value = range
 }
-/** 指标预热天数（自然日）：给 MA60/BOLL/MACD 留足前置数据 */
-const INDICATOR_WARMUP_DAYS = 150
+/**
+ * 指标预热天数（自然日）：给均线与 BOLL/MACD 留足前置数据。
+ * V5.88 由 150 提高到 400（约 275 个交易日）——均线组改为 30/60/90/120/180/250 后，
+ * 最长 250 日线需要 250 个交易日前置，150 天（约 100 交易日）会让 MA180/250 整段为空。
+ */
+const INDICATOR_WARMUP_DAYS = 400
 
 /**
  * 行情图交易标记（买入 b / 卖出 s / 分红 q）。
@@ -657,7 +677,7 @@ async function loadMarks() {
   tradeMarks.value = await fundMarks(code).catch(() => [])
 }
 
-/** 主图指标：MA（均线组 5/10/20/60）/ BOLL（20 日 ±2σ）/ NONE */
+/** 主图指标：MA（均线组 30/60/90/120/180/250）/ BOLL（20 日 ±2σ）/ NONE */
 const mainIndicator = ref<'MA' | 'BOLL' | 'NONE'>('MA')
 
 /** 是否显示 MACD 副图（DIF/DEA + 柱，柱按红涨绿跌着色） */
@@ -995,20 +1015,27 @@ async function loadDetail() {
 }
 
 /**
- * 加载行情图。
- * 未指定日期时按区间下拉取数；指定了自定义日期区间（含框选）时：
- * ① 往前多取 INDICATOR_WARMUP_DAYS 天作为**指标预热段**——MA60/BOLL/MACD 需要足量前置数据，
- *    只取选区会让窗口开头的指标失真甚至为空；
- * ② 指标在完整序列上计算，再用 dataZoom 把显示窗口收敛到选区，做到"看某一段"又不丢指标精度。
+ * 加载行情图。**取数区间与显示区间分离**（V5.88）：
+ * ① 取数：目标区间（预设区间或自定义/框选区间）**再往前多取 INDICATOR_WARMUP_DAYS 天**作为指标预热段
+ *    ——均线改为 30/60/90/120/180/250 后，长周期均线需要大量前置数据，只取目标区间会让窗口开头的
+ *    MA120/180/250 为空甚至整段缺失；
+ * ② 显示：指标在完整序列上计算，再用 dataZoom（{@link withWindow}）把可见窗口**精确收敛回目标区间**，
+ *    做到"看某一段"既不丢指标精度、也不会把预热段混进画面。
  */
 async function loadChart() {
   if (!detail.value) return
   const range = chartDateRange.value
-  const start = range ? shiftDays(range[0], -INDICATOR_WARMUP_DAYS) : undefined
-  const end = range ? range[1] : undefined
+  const today = todayStr()
+  // 目标区间：自定义区间优先，否则按区间下拉（近3个月/1年/3年/5年）
+  const targetStart = range ? range[0] : shiftDays(today, -rangeDays.value)
+  const targetEnd = range ? range[1] : today
+  const start = shiftDays(targetStart, -INDICATOR_WARMUP_DAYS)
+  // end 预设时也要传（= 今天）：后端以「start 与 end 都非空」判定自定义区间，只传 start 会被忽略、
+  // 退化成按 rangeDays 回看——预热段随之失效，MA90/120/180/250 在窗口开头整段为空（V5.88 实测踩过）
+  const end = targetEnd
   // 股息率副图打开时才拉（并按区间缓存）：关掉副图就不产生任何额外请求
   if (showYield.value) {
-    const span = range ? Math.max(1, daysBetween(shiftDays(range[0], -1), range[1])) : rangeDays.value
+    const span = Math.max(1, daysBetween(shiftDays(targetStart, -1), targetEnd))
     yieldData.value = await fundDividendYield(code, span).catch(() => null)
   }
   // 规模副图打开时才拉：全量返回（自上线日起，量小）
@@ -1024,11 +1051,17 @@ async function loadChart() {
   chartValues.value = points.map((point) =>
     detail.value?.fundType === 1 ? Number(point.close) : Number(point[navMode.value] ?? point.unitNav)
   )
-  const withMarks = appendTradeMarks(range ? withWindow(base, chartDates.value, range) : base, points)
+  // 显示窗口统一收敛到目标区间（预设与自定义同一套逻辑）
+  const withMarks = appendTradeMarks(withWindow(base, chartDates.value, [targetStart, targetEnd]), points)
   chartOption.value = withMarks
-  // 初始可见窗口取 option 上的 dataZoom（预设区间默认显示最近 40%、自定义区间为选区）
   const zooms = (withMarks.dataZoom as Array<{ start?: number; end?: number }> | undefined) ?? []
   visibleWindow.value = { startPercent: zooms[0]?.start ?? 0, endPercent: zooms[0]?.end ?? 100 }
+}
+
+/** 今天（本地时区）yyyy-MM-dd */
+function todayStr(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }
 
 /** 切换区间下拉时清掉自定义日期（两者互斥） */
@@ -1538,8 +1571,19 @@ const strategies = ref<StrategyConfig[]>([])
 const strategyTypeList = ref<StrategyTypeVO[]>([])
 
 /** 策略类型 → 展示名（来自注册表；未知类型回退类型码） */
+/**
+ * 已下线策略的中文名（V5.28 从注册表移除；历史回测/旧配置仍需可读，作为 strategyNameOf 的第二级回退，
+ * 否则 510300 这类含历史 GRID/VAL_PERCENTILE 回测的基金会显示成原始类型码）
+ */
+const RETIRED_STRATEGY_NAMES: Record<string, string> = {
+  GRID: '网格交易(已下线)',
+  VAL_PERCENTILE: '估值百分位(已下线)'
+}
+
 function strategyNameOf(type: string): string {
-  return strategyTypeList.value.find((t) => t.type === type)?.name ?? type
+  return strategyTypeList.value.find((t) => t.type === type)?.name
+    ?? RETIRED_STRATEGY_NAMES[type]
+    ?? type
 }
 
 /** 策略配置详情弹框 */
@@ -1924,14 +1968,21 @@ async function openEditStrategy(row: StrategyConfig) {
   strategyDialogVisible.value = true
 }
 
-/** 默认策略：本基金已配置的 → 最近一次回测的 → 注册表里的第一个 */
+/**
+ * 默认策略：本基金已配置的 → 最近一次回测的 → 注册表里的第一个。
+ * **三个来源都必须落在注册表内**（V5.88 修复）：已下线的策略（如 GRID/VAL_PERCENTILE）虽仍出现在历史
+ * 回测记录/旧配置里，但不在下拉选项中——直接取用会让 el-select 显示成原始类型码（510300 最新回测是
+ * VAL_PERCENTILE，实测就显示成了"VAL_PERCENTILE"），且回测提交也会被后端拒绝。
+ */
 function defaultStrategyType(): string {
-  if (strategies.value.length > 0) {
-    return strategies.value[0].strategyType
+  const available = new Set(strategyTypeList.value.map((t) => t.type))
+  const configured = strategies.value.find((s) => available.has(s.strategyType))
+  if (configured) {
+    return configured.strategyType
   }
-  const lastType = backtestRecords.value[0]?.strategyType
-  if (lastType) {
-    return lastType
+  const lastBacktest = backtestRecords.value.find((r) => available.has(r.strategyType))
+  if (lastBacktest) {
+    return lastBacktest.strategyType
   }
   return strategyTypeList.value[0]?.type ?? ''
 }
@@ -2047,6 +2098,22 @@ async function loadBacktests() {
   }
   backtestRecords.value = page.records
   btTotal.value = page.total
+}
+
+/** 删除回测记录（V5.92）：确认后调删除接口并刷新列表；删除后记录不再出现在列表中 */
+async function handleDeleteBacktest(row: BacktestRecord) {
+  await ElMessageBox.confirm(
+    `确认删除回测 #${row.id}（${strategyNameOf(row.strategyType)} ${row.startDate} ~ ${row.endDate}）？删除后不可恢复。`,
+    '删除回测记录',
+    { type: 'warning' }
+  )
+  const deleted = await deleteBacktest(row.id)
+  if (!deleted) {
+    ElMessage.warning('回测记录不存在或已被删除')
+  } else {
+    ElMessage.success('回测记录已删除')
+  }
+  loadBacktests()
 }
 
 async function handleBacktest() {

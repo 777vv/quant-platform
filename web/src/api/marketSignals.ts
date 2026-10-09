@@ -173,7 +173,7 @@ export interface MaSignalItem {
 }
 
 /** 均线信号分页（新→旧），可按基金代码过滤 */
-export function maSignalsPage(params: { fundCode?: string; page: number; size: number }) {
+export function maSignalsPage(params: { fundCode?: string; keyword?: string; direction?: string; page: number; size: number }) {
   return get<PageResult<MaSignalItem>>('/ma-signals/page', params)
 }
 

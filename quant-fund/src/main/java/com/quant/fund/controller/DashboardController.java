@@ -40,6 +40,15 @@ public class DashboardController {
     }
 
     /** 速览区：持仓概览/自选7日涨跌/配置占比/同步状态 */
+    /**
+     * 收益日历（V6.07）：某年的逐日收益 + 自然月汇总 + 全年汇总。
+     * 前端「点总资产卡片」时才调用（不在仪表盘首屏预取）；服务端按年缓存 5 分钟。
+     */
+    @GetMapping("/profit/calendar")
+    public R<com.quant.fund.dto.ProfitCalendarVO> profitCalendar(@RequestParam int year) {
+        return R.ok(profitStatsService.calendar(year));
+    }
+
     @GetMapping("/overview")
     public R<DashboardOverviewVO> overview() {
         return R.ok(dashboardService.overview());

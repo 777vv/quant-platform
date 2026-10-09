@@ -22,6 +22,7 @@ import com.quant.fund.dto.AssetSummaryVO;
 import com.quant.fund.dto.DashboardOverviewVO;
 import com.quant.fund.dto.HoldingVO;
 import com.quant.fund.dto.LastQuote;
+import com.quant.fund.dto.ProfitCalendarVO;
 import com.quant.fund.dto.ProfitCurveVO;
 import com.quant.fund.entity.FundBasic;
 import com.quant.fund.entity.FundEtfKline;
@@ -125,6 +126,13 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
     private volatile AssetSummaryVO summaryCache;
     private volatile LocalDateTime summaryCachedAt;
 
+    /** 收益日历缓存时长：5 分钟（按年缓存；数据只在记账/同步后变化，弹框另有「刷新」可强制重取） */
+    private static final Duration CALENDAR_CACHE_TTL = Duration.ofMinutes(5);
+
+    /** 收益日历按年缓存（V6.07）：日历弹框会反复切月/切年，避免每次都全量重算 */
+    private final Map<Integer, ProfitCalendarVO> calendarCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<Integer, LocalDateTime> calendarCachedAt = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override
     public AssetSummaryVO summary() {
         AssetSummaryVO cached = summaryCache;
@@ -216,6 +224,118 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         BigDecimal pct = baseMarketValue == null || baseMarketValue.compareTo(BigDecimal.ZERO) <= 0 ? null
                 : pnl.multiply(BigDecimal.valueOf(100)).divide(baseMarketValue, 2, RoundingMode.HALF_UP);
         return new PeriodPnl(pnl.setScale(2, RoundingMode.HALF_UP), pct);
+    }
+
+    @Override
+    public ProfitCalendarVO calendar(int year) {
+        LocalDateTime cachedAt = calendarCachedAt.get(year);
+        ProfitCalendarVO cached = calendarCache.get(year);
+        if (cached != null && cachedAt != null && cachedAt.plus(CALENDAR_CACHE_TTL).isAfter(LocalDateTime.now())) {
+            return cached;
+        }
+        ProfitCalendarVO result = computeCalendar(year);
+        calendarCache.put(year, result);
+        calendarCachedAt.put(year, LocalDateTime.now());
+        return result;
+    }
+
+    /**
+     * 计算某年收益日历（内部方法，结果进缓存）。
+     *
+     * <p>取数范围 = 该年 1 月 1 日**往前多取 3 个月**（沿用 FIRST_PERIOD_LOOKBACK_MONTHS）——
+     * 保证该年第一个数据日也能找到"前一数据日"作收益率分母；算完裁剪到该年。
+     * 与 curve() 不同：**不拉沪深300 基准**（日历不需要，且那条链路是历史超时事故点）。
+     */
+    private ProfitCalendarVO computeCalendar(int year) {
+        ProfitCalendarVO vo = new ProfitCalendarVO();
+        vo.setYear(year);
+        LocalDate yearStart = LocalDate.of(year, 1, 1);
+        LocalDate yearEnd = LocalDate.of(year, 12, 31);
+        List<FundBasic> tradedFunds = tradedFunds();
+        if (tradedFunds.isEmpty()) {
+            vo.setHasData(false);
+            vo.setDays(List.of());
+            vo.setMonths(List.of());
+            vo.setYearPnl(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+            vo.setYearDayCount(0);
+            return vo;
+        }
+        SeriesData series = computeSeries(yearStart.minusMonths(FIRST_PERIOD_LOOKBACK_MONTHS), tradedFunds);
+        // 首笔流水日之前的日子不进日历（同 curve() 的"不拖长零值尾巴"口径）：那时候账户还没建仓
+        LocalDate minTradeDate = tradeFlowMapper.selectList(new LambdaQueryWrapper<TradeFlow>()
+                        .in(TradeFlow::getFundCode, tradedFunds.stream().map(FundBasic::getFundCode).toList()))
+                .stream().map(TradeFlow::getTradeDate).min(Comparator.naturalOrder()).orElse(yearStart);
+        // 该年之前的最后一个数据点 = 全年/首日收益率的基准
+        int baseIdx = -1;
+        for (int i = 0; i < series.dates().size(); i++) {
+            if (LocalDate.parse(series.dates().get(i)).isBefore(yearStart)) {
+                baseIdx = i;
+            } else {
+                break;
+            }
+        }
+        List<ProfitCalendarVO.DayPoint> days = new ArrayList<>();
+        List<Integer> dayIndexes = new ArrayList<>();
+        for (int i = Math.max(baseIdx + 1, 0); i < series.dates().size(); i++) {
+            LocalDate date = LocalDate.parse(series.dates().get(i));
+            if (date.isAfter(yearEnd)) {
+                break;
+            }
+            if (i == 0) {
+                // 序列首个数据点没有"前一数据日"（账户从这一天才开始）：不产出日收益，留作次日基准
+                continue;
+            }
+            if (date.isBefore(minTradeDate)) {
+                // 首笔流水之前：账户未建仓，不出格子
+                continue;
+            }
+            BigDecimal pnl = series.pnl().get(i).subtract(series.pnl().get(i - 1))
+                    .setScale(2, RoundingMode.HALF_UP);
+            days.add(new ProfitCalendarVO.DayPoint(series.dates().get(i), pnl,
+                    pctOf(pnl, series.marketValues().get(i - 1)), series.marketValues().get(i)));
+            dayIndexes.add(i);
+        }
+        vo.setDays(days);
+
+        // 自然月汇总：月收益 = 当月各日收益之和（恒等于"月末累计 − 上月末累计"）；
+        // 月收益率分母 = 当月首个数据日的前一数据日持仓市值（与 KPI 月收益率同口径）
+        List<ProfitCalendarVO.MonthPoint> months = new ArrayList<>();
+        int i = 0;
+        while (i < days.size()) {
+            String month = days.get(i).date().substring(0, 7);
+            BigDecimal monthPnl = BigDecimal.ZERO;
+            int count = 0;
+            int firstSeriesIdx = dayIndexes.get(i);
+            while (i < days.size() && days.get(i).date().startsWith(month)) {
+                monthPnl = monthPnl.add(days.get(i).pnl());
+                count++;
+                i++;
+            }
+            monthPnl = monthPnl.setScale(2, RoundingMode.HALF_UP);
+            BigDecimal baseMarketValue = firstSeriesIdx >= 1 ? series.marketValues().get(firstSeriesIdx - 1) : null;
+            months.add(new ProfitCalendarVO.MonthPoint(month, monthPnl, pctOf(monthPnl, baseMarketValue), count));
+        }
+        vo.setMonths(months);
+        vo.setYearDayCount(days.size());
+
+        // 全年汇总：口径与 periodPnlOf 一致（基准 = 上年最后一个数据点；没有基准时退化为"区间末累计收益"）
+        BigDecimal lastPnl = days.isEmpty() ? null : series.pnl().get(dayIndexes.get(dayIndexes.size() - 1));
+        BigDecimal basePnl = baseIdx >= 0 ? series.pnl().get(baseIdx) : null;
+        BigDecimal yearPnl = lastPnl == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+                : (basePnl == null ? lastPnl : lastPnl.subtract(basePnl)).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal baseMarketValue = baseIdx >= 0 ? series.marketValues().get(baseIdx) : null;
+        vo.setYearPnl(yearPnl);
+        vo.setYearPct(pctOf(yearPnl, baseMarketValue));
+        vo.setHasData(!days.isEmpty());
+        return vo;
+    }
+
+    /** 收益率（%）= 收益额 ÷ 基准持仓市值 × 100；基准缺失或 ≤ 0 时返回 null */
+    private BigDecimal pctOf(BigDecimal pnl, BigDecimal baseMarketValue) {
+        if (baseMarketValue == null || baseMarketValue.compareTo(BigDecimal.ZERO) <= 0) {
+            return null;
+        }
+        return pnl.multiply(BigDecimal.valueOf(100)).divide(baseMarketValue, 2, RoundingMode.HALF_UP);
     }
 
     @Override

@@ -122,6 +122,30 @@ public class BacktestServiceImpl implements BacktestService {
     @Async("taskExecutor")
     protected void runBacktest(Long recordId, String fundCode, Strategy strategy, JsonNode params,
                                LocalDate startDate, LocalDate endDate, BigDecimal initialCapital) {
+        BacktestRecord record = new BacktestRecord();
+        record.setId(recordId);
+        record.setFundCode(fundCode);
+        record.setStartDate(startDate);
+        record.setEndDate(endDate);
+        record.setInitialCapital(initialCapital);
+        runOne(record);
+    }
+
+    /**
+     * 同步执行单只基金回测并把结果落库（V5.96 从 runBacktest 抽出，批量回测的线程池任务直接调用）。
+     * 成功/失败都写回记录行；调用方用返回值累计批次的成功/失败数。
+     *
+     * @param record 需要已带 id/fundCode/startDate/endDate/initialCapital（params/strategyType 从记录行读）
+     * @return true=成功 false=失败（失败原因已写 errorMsg）
+     */
+    public boolean runOne(BacktestRecord record) {
+        Long recordId = record.getId();
+        String fundCode = record.getFundCode();
+        LocalDate startDate = record.getStartDate();
+        LocalDate endDate = record.getEndDate();
+        BigDecimal initialCapital = record.getInitialCapital();
+        Strategy strategy = registry.getRequired(record.getStrategyType());
+        JsonNode params = JsonUtils.mapper().readTree(record.getParams());
         try {
             int warmupDays = warmupDaysOf(strategy.type(), params);
             MarketDataLoader.LoadedData loaded = dataLoader.load(fundCode, startDate, endDate, warmupDays);
@@ -177,6 +201,7 @@ public class BacktestServiceImpl implements BacktestService {
             }
             LOGGER.info("回测[{}]完成：{} 笔交易，总收益 {}%", recordId, metrics.tradeCount(),
                     metrics.totalReturnPct());
+            return true;
         } catch (Exception e) {
             LOGGER.error("回测[{}]失败", recordId, e);
             BacktestRecord fail = new BacktestRecord();
@@ -185,7 +210,43 @@ public class BacktestServiceImpl implements BacktestService {
             fail.setErrorMsg(e.getMessage() == null ? "未知错误" : e.getMessage().substring(0,
                     Math.min(e.getMessage().length(), 500)));
             recordMapper.updateById(fail);
+            return false;
         }
+    }
+
+    /**
+     * 策略预热天数（V5.97 公开给批量回测用）：批量"按成立日期自动修正开始日期"时，
+     * 用同一套预热启发式（最慢均线 ×1.6 + 30 自然日）把有效开始日往后推，保证首个决策日就有完整指标。
+     */
+    public int warmupDays(String strategyType, JsonNode params) {
+        return warmupDaysOf(strategyType, params);
+    }
+
+    /**
+     * 按基金自动算批量回测的初始资金（V5.96，口径与基金详情页 V5.76 一致）：
+     * 满仓份额（params.fullShare，缺省 100000）× 开始日期价 × 1.01（手续费与滑点缓冲，向上取整）。
+     * 价格口径与引擎一致：ETF 用前复权收盘价、场外用复权净值（缺失回退单位净值）；
+     * 开始日期当天休市时取其后首个交易日价（往后多取 21 个自然日窗口）。
+     *
+     * @return 初始资金；区间内完全无行情时抛业务异常（由调用方记为该基金失败）
+     */
+    public BigDecimal computeInitialCapital(String fundCode, String strategyType, JsonNode params, LocalDate startDate) {
+        double fullShare = params.path("fullShare").asDouble(0);
+        if (fullShare <= 0) {
+            fullShare = 100000;
+        }
+        LocalDate probeEnd = startDate.plusDays(21);
+        MarketDataLoader.LoadedData loaded = dataLoader.load(fundCode, startDate, probeEnd, 0);
+        MarketDataSeries series = loaded.series();
+        for (int i = 0; i < series.size(); i++) {
+            if (!series.get(i).date().isBefore(startDate)) {
+                java.math.BigDecimal price = series.get(i).close();
+                if (price != null && price.compareTo(BigDecimal.ZERO) > 0) {
+                    return BigDecimal.valueOf(Math.ceil(fullShare * price.doubleValue() * 1.01));
+                }
+            }
+        }
+        throw new BizException("开始日期[" + startDate + "]后 21 天内无行情数据，无法自动计算初始资金");
     }
 
     @Override

@@ -7,8 +7,8 @@
     <el-card shadow="never" class="filter-card">
       <div class="filter-bar">
         <el-input
-          v-model="filterFundCode"
-          placeholder="按基金代码筛选"
+          v-model="filterFundKeyword"
+          placeholder="基金名称或代码"
           clearable
           style="width: 170px"
           @clear="reload(1)"
@@ -95,13 +95,17 @@
         <el-card shadow="never" class="filter-card">
           <div class="filter-bar">
             <el-input
-              v-model="maFilterFundCode"
-              placeholder="按基金代码筛选"
+              v-model="maFilterFundKeyword"
+              placeholder="基金名称或代码"
               clearable
               style="width: 170px"
               @clear="loadMaSignals(1)"
               @keyup.enter="loadMaSignals(1)"
             />
+            <el-select v-model="maFilterDirection" clearable placeholder="全部方向" style="width: 130px" @change="loadMaSignals(1)" @clear="loadMaSignals(1)">
+              <el-option label="上穿" value="UP" />
+              <el-option label="下穿" value="DOWN" />
+            </el-select>
             <el-button type="primary" @click="loadMaSignals(1)">查询</el-button>
             <span class="muted">共 {{ maTotal }} 条 · 短期均线上穿/下穿长期均线时触发（每交易日 10:00 判定）</span>
           </div>
@@ -191,13 +195,15 @@ const maLoading = ref(false)
 const maPage = ref(1)
 const maSize = ref(10)
 const maTotal = ref(0)
-const maFilterFundCode = ref('')
+const maFilterFundKeyword = ref('')
+/** 方向筛选（V6.00）：UP=上穿 / DOWN=下穿，空 = 全部 */
+const maFilterDirection = ref<string | undefined>(undefined)
 const page = ref(1)
 const size = ref(10)
 const total = ref(0)
 
 /** 筛选条件：基金代码 / 方向 / 策略 / 日期区间（yyyy-MM-dd） */
-const filterFundCode = ref('')
+const filterFundKeyword = ref('')
 const filterDirection = ref<string | undefined>(undefined)
 const filterStrategy = ref<string | undefined>(undefined)
 const dateRange = ref<[string, string] | null>(null)
@@ -226,7 +232,7 @@ async function load() {
   loading.value = true
   try {
     const result = await signalsPage({
-      fundCode: filterFundCode.value.trim() || undefined,
+      keyword: filterFundKeyword.value.trim() || undefined,
       direction: filterDirection.value,
       strategyType: filterStrategy.value,
       startDate: dateRange.value?.[0],
@@ -253,7 +259,8 @@ async function loadMaSignals(targetPage = 1) {
   maPage.value = targetPage
   try {
     const result = await maSignalsPage({
-      fundCode: maFilterFundCode.value.trim() || undefined,
+      keyword: maFilterFundKeyword.value.trim() || undefined,
+      direction: maFilterDirection.value,
       page: targetPage,
       size: maSize.value
     })
@@ -273,7 +280,7 @@ watch(activeTab, (tab) => {
 
 /** 清空全部筛选条件 */
 function resetFilter() {
-  filterFundCode.value = ''
+  filterFundKeyword.value = ''
   filterDirection.value = undefined
   filterStrategy.value = undefined
   dateRange.value = null

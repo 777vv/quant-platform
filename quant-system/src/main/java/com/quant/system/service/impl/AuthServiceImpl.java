@@ -70,6 +70,8 @@ public class AuthServiceImpl implements AuthService {
         }
         recordLoginSuccess(user.getId());
         StpUtil.login(user.getId());
+        // 用户名存入会话（V5.96）：批量回测等跨模块功能记录"操作账号"用，免得各模块直查 sys_user
+        StpUtil.getSession().set("username", user.getUsername());
         // 成功日志放在 StpUtil.login 之后：至此才算真正登录成功
         loginLogService.record(request.getUsername(), true, null);
 

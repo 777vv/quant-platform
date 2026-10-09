@@ -7,7 +7,6 @@
           <span class="compare-slot-label" :style="{ color: slotColor(index - 1) }">基金{{ index }}</span>
           <el-select
             v-model="slots[index - 1]"
-            size="small"
             clearable
             filterable
             placeholder="选择基金"
@@ -23,7 +22,7 @@
             />
           </el-select>
         </div>
-        <el-select v-model="rangeDays" size="small" style="width: 120px" :disabled="!!dateRange" @change="onPresetChange">
+        <el-select v-model="rangeDays" style="width: 120px" :disabled="!!dateRange" @change="onPresetChange">
           <el-option :value="90" label="近3个月" />
           <el-option :value="365" label="近1年" />
           <el-option :value="1095" label="近3年" />
@@ -34,7 +33,6 @@
         <el-date-picker
           v-model="dateRange"
           type="daterange"
-          size="small"
           value-format="YYYY-MM-DD"
           start-placeholder="开始日期"
           end-placeholder="结束日期"
@@ -123,7 +121,7 @@ import { ElMessage } from 'element-plus'
 import type { EChartsOption } from 'echarts'
 import ChartPanel from '@/components/charts/ChartPanel.vue'
 import { annualizedReturnPct, annualizedVolatilityPct, maxDrawdownPct, rangeReturnPct } from '@/utils/metrics'
-import { fundKline, fundNav, watchlist, type SeriesPoint, type WatchItemVO } from '@/api/fund'
+import { fundKline, fundNav, fundOptions, type SeriesPoint, type FundOptionVO } from '@/api/fund'
 import { changeColorClass } from '@/utils/format'
 import { useEscToClose } from '@/utils/escClose'
 import { PIE_PALETTE, AXIS_LABEL, AXIS_LINE, SPLIT_LINE } from '@/utils/palette'
@@ -134,7 +132,7 @@ const MAX_FUNDS = 3
 const route = useRoute()
 const router = useRouter()
 
-const funds = ref<WatchItemVO[]>([])
+const funds = ref<FundOptionVO[]>([])
 /** 三个选择槽（空字符串表示未选） */
 const slots = ref<string[]>(['', '', ''])
 const rangeDays = ref(365)
@@ -320,7 +318,7 @@ const summaries = computed(() =>
 )
 
 onMounted(async () => {
-  funds.value = await watchlist()
+  funds.value = await fundOptions()
   // 从基金池列表"对比"按钮跳转时带 ?codes=510300,515080
   const codesParam = (route.query.codes as string | undefined) ?? ''
   const codes = codesParam.split(',').filter((c) => c !== '').slice(0, MAX_FUNDS)

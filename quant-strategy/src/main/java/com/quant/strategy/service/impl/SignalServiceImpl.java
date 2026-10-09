@@ -136,13 +136,27 @@ public class SignalServiceImpl implements SignalService {
     }
 
     @Override
-    public PageResult<SignalItemVO> page(String fundCode, String direction, String strategyType,
+    public PageResult<SignalItemVO> page(String fundCode, String keyword, String direction, String strategyType,
             LocalDate startDate, LocalDate endDate, long page, long size) {
+        // 关键词模糊查询（V6.02 用户口径）：按基金代码或名称模糊匹配——先查出命中的基金代码，
+        // 再按 fund_code IN 过滤信号（signal_record 只存代码）；精确 fundCode 参数保留给基金详情页。
+        List<String> keywordCodes = null;
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            keywordCodes = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                            .and(w -> w.like(FundBasic::getFundCode, kw).or().like(FundBasic::getFundName, kw)))
+                    .stream().map(FundBasic::getFundCode).toList();
+            if (keywordCodes.isEmpty()) {
+                return PageResult.of(0, List.of());
+            }
+        }
+
         // 每页条数上限收紧（防一次性拉全表），页码从 1 起
         Page<SignalRecord> result = signalRecordMapper.selectPage(
                 Page.of(Math.max(page, 1), Math.min(Math.max(size, 1), PAGE_SIZE_LIMIT)),
                 new LambdaQueryWrapper<SignalRecord>()
                         .eq(hasText(fundCode), SignalRecord::getFundCode, trimToNull(fundCode))
+                        .in(keywordCodes != null, SignalRecord::getFundCode, keywordCodes)
                         .eq(hasText(direction), SignalRecord::getDirection, trimToNull(direction))
                         .eq(hasText(strategyType), SignalRecord::getStrategyType, trimToNull(strategyType))
                         .ge(startDate != null, SignalRecord::getSignalDate, startDate)

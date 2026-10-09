@@ -15,15 +15,14 @@
           >
             <el-option v-for="t in tagOptions" :key="t" :value="t" :label="t" />
           </el-select>
-          <el-select
-            v-model="selectedFund"
-            filterable
+          <el-input
+            v-model="fundKeywordInput"
+            placeholder="基金名称或代码，回车查询"
             clearable
-            placeholder="全部基金"
-            style="width: 220px"
-          >
-            <el-option v-for="f in fundOptions" :key="f.fundCode" :value="f.fundCode" :label="`${f.fundName} ${f.fundCode}`" />
-          </el-select>
+            style="width: 240px"
+            @clear="applyFundKeyword"
+            @keyup.enter="applyFundKeyword"
+          />
           <span class="muted">全部指标由库内数据计算，只作参考不构成投资建议；各列数据截至日不同，见对应列</span>
           <el-button size="small" text :loading="loading" @click="load(true)">刷新</el-button>
           <span v-if="loadedAt" class="muted">数据时间 {{ loadedAt }}</span>
@@ -381,10 +380,11 @@ const tagOptions = computed(() => {
   return [...set].sort()
 })
 
-/** 全局筛选：基金下拉（选了就只看这一只）与标签筛选同时生效，均为空=不过滤 */
+/** 全局筛选：基金关键词（模糊匹配代码或名称，回车生效）与标签筛选同时生效，均为空=不过滤 */
 const filteredRows = computed(() => {
+  const kw = appliedFundKeyword.value.trim().toLowerCase()
   return rows.value.filter((row) => {
-    if (selectedFund.value && row.fundCode !== selectedFund.value) {
+    if (kw && !row.fundCode.toLowerCase().includes(kw) && !row.fundName.toLowerCase().includes(kw)) {
       return false
     }
     if (selectedTags.value.length > 0 && !row.tags.some((t) => selectedTags.value.includes(t))) {
@@ -394,15 +394,16 @@ const filteredRows = computed(() => {
   })
 })
 
-/** 基金下拉选项（按代码升序，与列表同序） */
-const fundOptions = computed(() =>
-  rows.value.map((row) => ({ fundCode: row.fundCode, fundName: row.fundName }))
-)
+/** 基金模糊查询：输入框值与已生效值分离——回车（或清空）才把输入值应用到筛选（V6.02 用户口径） */
+const fundKeywordInput = ref('')
+const appliedFundKeyword = ref('')
 
-const selectedFund = ref<string | null>(null)
+function applyFundKeyword() {
+  appliedFundKeyword.value = fundKeywordInput.value
+}
 
 // 筛选/换基金/换数据后所有页签页码回位，防越界空页（V5.36 持仓列表同款处理）
-watch(selectedFund, resetPages)
+watch(appliedFundKeyword, resetPages)
 watch(selectedTags, resetPages)
 
 // ===== 分页（V5.51 用户口径：每页条数可自选；三个页签的页码与条数各自独立，互不影响）=====
@@ -455,6 +456,13 @@ function ratioOf(row: FundMaRow, window: number): number | null {
  * 均价接口（fund_ma_daily 快照）**不带标签**，标签只能取自概览那份数据（同一自选池，overview 才带 tags）；
  * 因此概览里没有的基金视为"无标签"——不筛选时照常显示，只在按标签筛选时被排除（口径与其它页签一致）。
  */
+/** 概览里的 基金代码 → 名称（均价页签的数据来自另一接口、不带名称，模糊查询用它补名称） */
+const nameByCode = computed(() => {
+  const map = new Map<string, string>()
+  rows.value.forEach((row) => map.set(row.fundCode, row.fundName))
+  return map
+})
+
 const tagsByCode = computed(() => {
   const map = new Map<string, string[]>()
   rows.value.forEach((row) => map.set(row.fundCode, row.tags))
@@ -463,7 +471,9 @@ const tagsByCode = computed(() => {
 
 const maFilteredRows = computed(() => {
   return maRows.value.filter((row) => {
-    if (selectedFund.value && row.fundCode !== selectedFund.value) {
+    const kw = appliedFundKeyword.value.trim().toLowerCase()
+    if (kw && !row.fundCode.toLowerCase().includes(kw)
+        && !(nameByCode.value.get(row.fundCode) ?? '').toLowerCase().includes(kw)) {
       return false
     }
     if (selectedTags.value.length > 0 && !(tagsByCode.value.get(row.fundCode) ?? []).some((t) => selectedTags.value.includes(t))) {
@@ -580,7 +590,7 @@ const valRows = computed(() => paged(filteredRows.value, valPage.value, valSize.
 const premiumRows = computed(() => paged(sortByState(filteredRows.value, premiumSortState.value), premiumPage.value, premiumSize.value))
 
 // 筛选/换基金/换数据后所有页签页码回位，防越界空页（V5.36 持仓列表同款处理）
-watch(selectedFund, resetPages)
+watch(appliedFundKeyword, resetPages)
 watch(selectedTags, resetPages)
 
 /** 本次展示数据的取数时间（缓存命中时保持首次取数时间，便于判断新鲜度） */

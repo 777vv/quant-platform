@@ -26,6 +26,14 @@ public interface ProfitStatsService {
     ProfitCurveVO curve(String range);
 
     /**
+     * 收益日历（V6.07）：某个自然年的逐日收益（额 + 率）+ 自然月汇总 + 全年汇总。
+     * 不拉取沪深300 基准（日历用不到），因此不含任何外部数据源依赖。
+     *
+     * @param year 年份（如 2026）
+     */
+    com.quant.fund.dto.ProfitCalendarVO calendar(int year);
+
+    /**
      * 自选基金近 7 日涨跌幅榜（降序；区间两端缺行情的基金跳过）。
      */
     List<DashboardOverviewVO.MoverItem> movers();

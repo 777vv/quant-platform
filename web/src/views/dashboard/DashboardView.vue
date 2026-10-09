@@ -4,10 +4,11 @@
          副卡数量固定为 6，与主卡的 span=6 合计 24 栅格；间距/字号/阴影全部走 token -->
     <el-row :gutter="12" class="stat-row">
       <el-col :xs="24" :sm="12" :md="6">
-        <el-card shadow="never" class="stat-card stat-card--hero">
+        <!-- V6.07：整卡可点 → 弹出收益日历（原「转入/转出」按钮移除；转入转出仍可从新手引导第 2 步进入） -->
+        <el-card shadow="never" class="stat-card stat-card--hero stat-card--clickable" @click="calendarVisible = true">
           <div class="hero-top">
             <span class="hero-label">总资产（元）</span>
-            <el-button v-if="userStore.can(PERM.ACTION_TRADE)" link class="q-on-hero" @click="openEntry(4)">转入/转出</el-button>
+            <span class="hero-hint muted">点击查看收益日历</span>
           </div>
           <div class="hero-value num">{{ formatAmount(assets?.totalAssets) }}</div>
           <div class="hero-sub">
@@ -226,7 +227,7 @@
     </el-card>
 
     <!-- 速览区（M4-08）：未开始使用时不展示（信号/持仓/近 7 日收益此时必然为空） -->
-    <el-row v-if="!needGuide" :gutter="12">
+    <el-row v-if="!needGuide" :gutter="12" class="quick-row">
       <el-col :span="8" :xs="24">
         <el-card shadow="never" class="board-card">
           <template #header>
@@ -241,10 +242,9 @@
               v-for="signal in latestSignals"
               :key="signal.id"
               class="signal-item signal-item--clickable"
-              :title="signal.readFlag === 0 ? '点击标记为已读' : '已读'"
+              title="点击查看该基金详情"
               @click="openSignal(signal)"
             >
-              <span v-if="signal.readFlag === 0" class="unread-dot" />
               <el-tag :type="signal.direction === 'BUY' ? 'danger' : signal.direction === 'SELL' ? 'success' : 'info'"
                       size="small" effect="dark">
                 {{ directionName(signal.direction) }}
@@ -383,6 +383,8 @@
       </el-col>
     </el-row>
     <TradeEntryDialog v-model="entryVisible" :preset-type="entryType" @saved="onEntrySaved" />
+    <!-- 收益日历（V6.07）：只在点击总资产卡片后加载数据，仪表盘首屏不预取 -->
+    <ProfitCalendarDialog v-model="calendarVisible" />
   </div>
 </template>
 
@@ -405,9 +407,10 @@ import {
   type IndexQuoteVO,
   type ProfitCurveVO
 } from '@/api/dashboard'
-import { recentSignals, markSignalsRead, type SignalRecord } from '@/api/strategy'
+import { recentSignals, type SignalRecord } from '@/api/strategy'
 import TradeEntryDialog from '@/components/trade/TradeEntryDialog.vue'
-import { pageTrades, watchlist, type TradeFlow } from '@/api/fund'
+import ProfitCalendarDialog from '@/components/dashboard/ProfitCalendarDialog.vue'
+import { fundOptions, pageTrades, type TradeFlow } from '@/api/fund'
 import { changeColorClass, formatAmount, formatPercent } from '@/utils/format'
 import { changeColor, UP, DOWN } from '@/utils/palette'
 
@@ -435,6 +438,8 @@ const assets = ref<AssetSummaryVO | null>(null)
  * 两个入口共用同一个弹窗实例，避免挂载多份对话框。
  */
 const entryVisible = ref(false)
+/** 收益日历弹框（V6.07）：点总资产卡片才开，数据由弹框 @open 时懒加载 */
+const calendarVisible = ref(false)
 const entryType = ref(4)
 
 /** 打开记账弹窗并指定预设交易类型（4=转入/转出，1=买入） */
@@ -479,7 +484,7 @@ async function loadRecentTrades() {
 }
 
 async function loadFundNames() {
-  const funds = await watchlist().catch(() => [])
+  const funds = await fundOptions().catch(() => [])
   const map: Record<string, string> = {}
   funds.forEach((fund) => {
     map[fund.fundCode] = fund.fundName
@@ -827,11 +832,8 @@ async function loadSignals() {
 }
 
 /** 点击信号：标记已读并跳转该基金详情（FR1：未读红点 + 点击跳转详情） */
-async function openSignal(signal: SignalRecord) {
-  if (signal.readFlag === 0) {
-    await markSignalsRead([signal.id])
-    signal.readFlag = 1
-  }
+/** 点信号行 → 进该基金详情（V6.12：本卡不再展示未读标识，也不再顺手改"已读"状态） */
+function openSignal(signal: SignalRecord) {
   router.push(`/funds/${signal.fundCode}`)
 }
 
@@ -935,6 +937,44 @@ onUnmounted(() => {
   flex: none;
 }
 
+/* 速览区（最新信号 / 近 7 日收益 / 持仓概览）同排等高（V6.12 用户要求，以持仓概览为准）：
+   与 .data-row 同一手法——列拉伸为 flex、卡片撑满列高；信号列表与图表各自填满卡身剩余空间，
+   因此整排高度由最高的「持仓概览」决定，另两张自动跟齐。 */
+.quick-row :deep(.el-col) {
+  display: flex;
+}
+
+.quick-row :deep(.board-card) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.quick-row :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 近 7 日收益柱图：填满卡身剩余空间（不再固定 220px，随整排高度走） */
+.quick-row :deep(.el-card__body > .chart-panel) {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 最新信号：列表取剩余空间、各行均分（与涨跌榜同款视觉节奏） */
+.quick-row :deep(.signal-list) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.quick-row :deep(.signal-item) {
+  flex: 1;
+}
+
 /* KPI 行等高：el-row 是 flex，让列拉伸、卡片撑满列高，迷你线用 margin-top:auto 贴底，
    这样带走势线与不带走势线的副卡高度一致（无需写死 min-height） */
 .stat-row :deep(.el-col) {
@@ -982,6 +1022,20 @@ onUnmounted(() => {
 .stat-card--hero:hover {
   box-shadow: var(--q-shadow-hero);
   transform: none;
+}
+
+/* 可点击的主卡（V6.07）：鼠标变手型（用户要求）+ 悬停加深阴影表示可点 */
+.stat-card--clickable {
+  cursor: pointer;
+}
+/* 悬停反馈：沿用普通卡的同款"抬升 + 阴影"（主卡原本把悬停动效显式重置了，这里为可点性恢复） */
+.stat-card--clickable:hover {
+  box-shadow: var(--q-shadow-hover);
+  transform: translateY(-1px);
+}
+/* 卡头右侧的"点击查看收益日历"提示：主卡是浅红底，用其说明文字色 */
+.hero-hint {
+  color: var(--q-text-on-hero-sub) !important;
 }
 
 .stat-card :deep(.el-card__body) {
@@ -1315,14 +1369,6 @@ onUnmounted(() => {
 
 .signal-item--clickable {
   cursor: pointer;
-}
-
-.unread-dot {
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--q-color-up);
 }
 
 :deep(.sync-lagging-row) {

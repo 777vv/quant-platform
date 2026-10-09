@@ -627,3 +627,33 @@ CREATE TABLE IF NOT EXISTS ma_signal (
   UNIQUE KEY uk_fund_date_pair (fund_code, signal_date, ma_short, ma_long),
   KEY idx_date (signal_date)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '均线信号记录表';
+
+-- V5.96：批量回测批次表——【批量回测】菜单的批次列表（一批 = 一套策略参数 × N 只基金）；
+-- 每只基金的回测结果仍写 backtest_record（带 batch_id），本表只存批次级汇总与进度计数。
+CREATE TABLE IF NOT EXISTS backtest_batch (
+  id                BIGINT PRIMARY KEY AUTO_INCREMENT,
+  strategy_type     VARCHAR(32)  NOT NULL COMMENT '策略类型码（整批统一）',
+  params            JSON         NOT NULL COMMENT '策略参数快照 JSON（整批统一）',
+  start_date        DATE         NOT NULL COMMENT '回测开始日期（整批统一）',
+  end_date          DATE         NOT NULL COMMENT '回测结束日期（整批统一）',
+  initial_capital   DECIMAL(18,2) DEFAULT NULL COMMENT '统一初始资金（手填模式用；自动模式为 NULL）',
+  total_count       INT          DEFAULT 0 COMMENT '基金总数',
+  success_count     INT          DEFAULT 0 COMMENT '成功数（每完成一只即累加，实时进度）',
+  fail_count        INT          DEFAULT 0 COMMENT '失败数（每完成一只即累加，实时进度）',
+  status            TINYINT      DEFAULT 0 COMMENT '0运行中 1已完成',
+  created_by        VARCHAR(64)  DEFAULT NULL COMMENT '操作账号（用户名；取不到回退用户 ID）',
+  created_at        DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '发起时间（操作时间）',
+  finished_at       DATETIME     DEFAULT NULL COMMENT '完成时间（全部基金跑完）'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '批量回测批次表';
+
+-- V5.96 迁移：backtest_record 增加批量回测批次 ID（NULL = 单次发起；明细按 batch_id 归组到批次）
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND COLUMN_NAME = 'batch_id');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD COLUMN batch_id BIGINT DEFAULT NULL COMMENT ''批量回测批次ID（NULL=单次发起）''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backtest_record' AND INDEX_NAME = 'idx_batch');
+SET @sql := IF(@c = 0, 'ALTER TABLE backtest_record ADD INDEX idx_batch (batch_id)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+-- V5.96：initial_capital 放开为可空——批量回测"按基金自动"模式下，记录行先建（status=0）、
+-- 任务开始时按"满仓份额×开始日价×1.01"算出再回填；MODIFY 幂等，重复执行无副作用
+ALTER TABLE backtest_record MODIFY COLUMN initial_capital DECIMAL(18,2) DEFAULT NULL COMMENT '初始资金（批量自动模式在任务开始时回填）';
+

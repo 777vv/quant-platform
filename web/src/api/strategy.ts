@@ -50,6 +50,8 @@ export interface BacktestRecord {
   positionReturnPct: number | null
   status: number
   errorMsg: string | null
+  /** 批量回测批次 ID（V5.96，null = 单次发起） */
+  batchId: number | null
   equityCurve: string | null
   drawdownCurve: string | null
   benchmarkCurve: string | null
@@ -158,8 +160,10 @@ export interface SignalItem extends SignalRecord {
 
 /** 信号分页查询参数（筛选条件都可空 = 不限） */
 export interface SignalPageQuery {
-  /** 基金代码（精确匹配） */
+  /** 基金代码（精确匹配；基金详情页用） */
   fundCode?: string
+  /** 关键词（V6.02）：按基金代码或名称模糊匹配（列表页筛选用） */
+  keyword?: string
   /** 方向（BUY/SELL/HOLD） */
   direction?: string
   /** 策略类型（GRID/VAL_PERCENTILE） */

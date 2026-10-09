@@ -24,8 +24,8 @@ public interface TradeService {
      * @param size      每页条数
      * @return 分页结果（total 为满足条件的总条数）
      */
-    PageResult<TradeFlow> page(String fundCode, Integer tradeType, LocalDate startDate, LocalDate endDate,
-            long page, long size);
+    PageResult<TradeFlow> page(String fundCode, String keyword, Integer tradeType,
+            LocalDate startDate, LocalDate endDate, long page, long size);
 
     void add(TradeFlowRequest request);
 

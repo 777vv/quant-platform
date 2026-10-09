@@ -315,9 +315,12 @@
           <!-- 与下方参数网格同一套栅格 + 标签置顶（V5.78）：筛选字段与策略参数列列对齐、控件同列等宽 -->
           <div class="bt-grid">
             <el-form-item label="策略">
-              <el-select v-model="backtestForm.strategyType" @change="handleBacktestTypeChange">
-                <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
-              </el-select>
+              <div class="strategy-cell">
+                <el-select v-model="backtestForm.strategyType" @change="handleBacktestTypeChange">
+                  <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
+                </el-select>
+                <el-button v-if="typeHasSummary(backtestForm.strategyType)" link type="primary" size="small" @click="backtestParamFormRef?.openSummary()">策略逻辑速览</el-button>
+              </div>
             </el-form-item>
             <el-form-item label="开始日期">
               <el-date-picker v-model="backtestForm.startDate" type="date" value-format="YYYY-MM-DD" />
@@ -344,20 +347,26 @@
               <el-input-number v-model="backtestForm.initialCapital" :min="1000" :controls="false" :readonly="true" class="capital-field" />
             </el-form-item>
           </div>
-          <!-- :key 强制重挂载：参数表单只在首次挂载时读 modelValue，不换 key 时外部回填不会显示 -->
+          <!-- :key 强制重挂载：参数表单只在首次挂载时读 modelValue，不换 key 时外部回填不会显示；
+               速览 V5.99 起为按钮模式（不再渲染尾部卡片），按钮在上方策略下拉旁 -->
           <StrategyParamForm
+            ref="backtestParamFormRef"
             :key="`bt-${backtestForm.strategyType}-${paramFormKey}`"
             v-model="backtestForm.params"
             :type="backtestForm.strategyType"
+            summary-mode="button"
           />
           <div v-if="prefillHint" class="prefill-hint">{{ prefillHint }}</div>
           <el-button v-if="userStore.can(PERM.ACTION_STRATEGY)" type="primary" :loading="backtestRunning" @click="handleBacktest">开始回测</el-button>
         </el-card>
-        <!-- 列宽口径：数字列 min-width 均分富余宽度；失败原因等长文本列用省略号 + 悬浮全显 -->
+        <!-- 列宽口径：数字列 min-width 均分富余宽度（V5.99 起失败原因列移除，失败详情看批量回测明细/结果页） -->
         <el-table :data="backtestRecords" border size="small">
           <el-table-column prop="id" label="#" width="56" />
-          <el-table-column label="策略" min-width="92">
-            <template #default="{ row }">{{ strategyNameOf(row.strategyType) }}</template>
+          <el-table-column label="策略" min-width="110">
+            <template #default="{ row }">
+              {{ strategyNameOf(row.strategyType) }}
+              <el-tag v-if="row.batchId" size="small" type="info" effect="plain" class="batch-tag" :title="`来自批量回测批次 #${row.batchId}`">批#{{ row.batchId }}</el-tag>
+            </template>
           </el-table-column>
           <el-table-column label="区间" min-width="178">
             <template #default="{ row }">{{ row.startDate }} ~ {{ row.endDate }}</template>
@@ -388,6 +397,12 @@
             <el-table-column label="持有最大回撤%" min-width="112" align="right">
               <template #default="{ row }">{{ row.benchMaxDrawdownPct ?? '--' }}</template>
             </el-table-column>
+            <!-- 持有年化%（V5.96，与批量回测明细同列）：买入持有基准的收益折年化，作策略年化的对照 -->
+            <el-table-column label="持有年化%" min-width="92" align="right">
+              <template #default="{ row }">
+                <span :class="benchClassOf(row)">{{ annualizedFromPct(row.benchTotalReturnPct, row.startDate, row.endDate) ?? '--' }}</span>
+              </template>
+            </el-table-column>
           </el-table-column>
           <el-table-column label="仓位与资金效率" align="center">
             <el-table-column label="平均仓位份额" min-width="108" align="right">
@@ -404,14 +419,24 @@
                 <span :class="positionClassOf(row)">{{ row.positionReturnPct ?? '--' }}</span>
               </template>
             </el-table-column>
+            <!-- 持仓年化%（V5.95，用户口径）：(1+持仓资产收益率)^(365/区间自然日)−1，
+                 把"实际投出资金的收益"折算成年度可比口径；老记录缺 avgPositionCost 时无值显示 -- -->
+            <el-table-column label="持仓年化%" min-width="96" align="right">
+              <template #header>
+                持仓年化%
+                <el-tooltip content="(1+持仓资产收益率)^(365/区间天数)−1：按区间自然日把持仓资产收益率复利折算成年化，便于不同区间横向比较；持仓资产收益率为空（老记录）时无值" placement="top">
+                  <el-icon class="th-help"><QuestionFilled /></el-icon>
+                </el-tooltip>
+              </template>
+              <template #default="{ row }">
+                <span :class="positionClassOf(row)">{{ positionAnnualPctOf(row) ?? '--' }}</span>
+              </template>
+            </el-table-column>
           </el-table-column>
           <el-table-column label="策略详情" min-width="76">
             <template #default="{ row }">
               <el-button size="small" link type="primary" @click="openStrategyDetail(row)">详情</el-button>
             </template>
-          </el-table-column>
-          <el-table-column prop="errorMsg" label="失败原因" min-width="120" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.errorMsg || '--' }}</template>
           </el-table-column>
           <!-- 操作列宽度按按钮数给足（V5.93 实测）：三个 small 按钮 50×3 + 间距 12×2 = 174px，
                单元格还要吃掉内边距 16px + 边框 1px，所以 190px 仍差 1px → 「删除」被挤到第二行。
@@ -463,14 +488,19 @@
       <el-form label-position="top" class="strategy-form">
         <el-form-item label="策略类型">
           <!-- 编辑模式下禁切类型：类型是 (基金,类型) 唯一键的一半，换类型等于换策略，应删除重建 -->
-          <el-select v-model="newStrategyType" style="width: 100%" :disabled="!!editingStrategyId" @change="(t: string) => applyBacktestParams(t, 'dialog')">
-            <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
-          </el-select>
+          <div class="strategy-cell">
+            <el-select v-model="newStrategyType" style="flex: 1" :disabled="!!editingStrategyId" @change="(t: string) => applyBacktestParams(t, 'dialog')">
+              <el-option v-for="t in strategyTypeList" :key="t.type" :value="t.type" :label="t.name" />
+            </el-select>
+            <el-button v-if="typeHasSummary(newStrategyType)" link type="primary" size="small" @click="strategyParamFormRef?.openSummary()">策略逻辑速览</el-button>
+          </div>
         </el-form-item>
         <StrategyParamForm
+          ref="strategyParamFormRef"
           :key="`new-${newStrategyType}-${paramFormKey}`"
           v-model="newStrategyParams"
           :type="newStrategyType"
+          summary-mode="button"
         />
         <el-form-item label="备注">
           <el-input
@@ -530,6 +560,8 @@
 <script setup lang="ts">
 import { useUserStore } from '@/stores/user'
 import { PERM } from '@/utils/permissions'
+import { describeStrategyParams } from '@/utils/strategyParams'
+import { annualizedFromPct } from '@/utils/metrics'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -1591,109 +1623,10 @@ const strategyDetailVisible = ref(false)
 const strategyDetailRow = ref<BacktestRecord | null>(null)
 const strategyDetailItems = ref<{ label: string; value: string }[]>([])
 
-/** 各策略参数的中文名（与 StrategyParamForm 的界面名一致） */
-const PARAM_LABELS: Record<string, Record<string, string>> = {
-  // 已下线策略：仅保留标签让历史回测/旧配置还能读懂（V5.28 从平台移除，不再可选、不可回测）
-  GRID: {
-    mode: '网格模式(已下线)', upper: '网格上沿(已下线)', lower: '网格下沿(已下线)', grids: '格数(已下线)',
-    sharePerGrid: '每格份额(已下线)', basePosition: '底仓份额(已下线)', anchorPrice: '锚点价(已下线)'
-  },
-  VAL_PERCENTILE: {
-    lowPct: '低估阈值%(已下线)', highPct: '高估阈值%(已下线)', steps: '分档数(已下线)',
-    windowYears: '回看窗口(年)(已下线)', sharePerStep: '每档份额(已下线)', basePosition: '底仓份额(已下线)'
-  },
-  OSC_UP: {
-    initialShare: '初始仓位份额', baseShare: '底仓份额', fullShare: '满仓份额', windowDays: 'K线天数',
-    riseReducePct: '上涨减仓%', fallAddPct: '下跌加仓%',
-    buyShare: '买入份额', sellShare: '卖出份额',
-    sizingStepPct: '每档份额增减%', sizingBase: '档位基准', maxSizingMultiple: '单笔最大倍数'
-  },
-  MA_BREAK: {
-    initialShare: '初始仓位份额', baseShare: '底仓份额', fullShare: '满仓份额',
-    breakoutMaDays: '均线突破(日)', breakdownMaDays: '均线跌破(日)', cooldownDays: '冷静天数'
-  },
-  DIV_GRID: {
-    mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
-    perGridMode: '每格单位', sharePerGrid: '每格份额', amountPerGrid: '每格金额',
-    baseShare: '底仓份额', fullShare: '满仓份额', initialShare: '初始仓位份额',
-    breakoutMode: '涨破上沿', breakdownMode: '跌破下沿', maxGridsPerBar: '单根最多成交格数',
-    trendMaDays: '趋势均线天数', premiumBuyMaxPct: '溢价率买入上限%',
-    premiumStaleDays: '溢价率容忍滞后(天)', backtestPremiumPct: '回测假设溢价率%',
-    peBuyMax: 'PE 买入上限', peBuyMin: 'PE 买入下限', peBoostMultiplier: '低估买入倍数'
-  },
-  NDX_GRID: {
-    mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
-    perGridMode: '每格单位', sharePerGrid: '每格份额', amountPerGrid: '每格金额',
-    baseShare: '底仓份额', fullShare: '满仓份额', initialShare: '初始仓位份额',
-    breakoutMode: '涨破上沿', breakdownMode: '跌破下沿', maxGridsPerBar: '单根最多成交格数',
-    trendMaDays: '趋势均线天数', premiumBuyMaxPct: '溢价率买入上限%',
-    premiumStaleDays: '溢价率容忍滞后(天)', backtestPremiumPct: '回测假设溢价率%',
-    peBuyMax: 'PE 买入上限', peBuyMin: 'PE 买入下限', peBoostMultiplier: '低估买入倍数'
-  },
-  PYRAMID_GRID: {
-    mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
-    perGridMode: '每格单位', sharePerGrid: '每格份额', amountPerGrid: '每格金额', pyramidStep: '每格增减',
-    baseShare: '底仓份额', fullShare: '满仓份额', initialShare: '初始仓位份额',
-    breakoutMode: '涨破上沿', breakdownMode: '跌破下沿', maxGridsPerBar: '单根最多成交格数',
-    trendMaDays: '趋势均线天数', premiumBuyMaxPct: '溢价率买入上限%',
-    premiumStaleDays: '溢价率容忍滞后(天)', backtestPremiumPct: '回测假设溢价率%',
-    peBuyMax: 'PE 买入上限', peBuyMin: 'PE 买入下限', peBoostMultiplier: '低估买入倍数'
-  },
-  INV_PYRAMID_GRID: {
-    mode: '网格模式', lower: '网格下沿', upper: '网格上沿', grids: '格数',
-    perGridMode: '每格单位', sharePerGrid: '每格份额', amountPerGrid: '每格金额', pyramidStep: '每格增减',
-    baseShare: '底仓份额', fullShare: '满仓份额', initialShare: '初始仓位份额',
-    breakoutMode: '涨破上沿', breakdownMode: '跌破下沿', maxGridsPerBar: '单根最多成交格数',
-    trendMaDays: '趋势均线天数', premiumBuyMaxPct: '溢价率买入上限%',
-    premiumStaleDays: '溢价率容忍滞后(天)', backtestPremiumPct: '回测假设溢价率%',
-    peBuyMax: 'PE 买入上限', peBuyMin: 'PE 买入下限', peBoostMultiplier: '低估买入倍数'
-  }
-}
-
-/**
- * 按标签表的键序排列参数（标签表里有的排前面、保持阅读顺序，未知键排在后面）。
- */
-function orderByLabels(parsed: Record<string, unknown>, labels: Record<string, string>): [string, unknown][] {
-  const known = Object.keys(labels)
-  return Object.entries(parsed).sort((a, b) => {
-    const ia = known.indexOf(a[0])
-    const ib = known.indexOf(b[0])
-    return (ia < 0 ? Number.MAX_SAFE_INTEGER : ia) - (ib < 0 ? Number.MAX_SAFE_INTEGER : ib)
-  })
-}
-
-/** 枚举型参数的展示文案（列表摘要与详情弹框共用）：值 → 中文，未命中回退原值 */
-const ENUM_LABELS: Record<string, Record<string, string>> = {
-  mode: { arithmetic: '等差', geometric: '等比' },
-  perGridMode: { share: '按份额', amount: '按金额' },
-  breakoutMode: { shift: '区间上移', hold: '保留底仓不动', clear: '清到只剩底仓' },
-  breakdownMode: { hold: '买 1 格后观望', buy: '区间下方继续按格买入' },
-  sizingBase: { anchor: '锚点窗口', window: 'K线窗口' }
-}
-
-/** 参数值展示：枚举值翻中文，其余原样 */
-function displayValue(key: string, value: unknown): string {
-  const text = String(value)
-  return ENUM_LABELS[key]?.[text] ?? text
-}
-
-
-
-/** 打开策略配置详情弹框：解析 params JSON → 带中文标签的键值列表（未知键回退原始键名） */
+/** 打开策略配置详情弹框：解析 params JSON → 带中文标签的键值列表（公共工具单源，V5.96 起批量回测页共用） */
 function openStrategyDetail(row: BacktestRecord) {
   strategyDetailRow.value = row
-  const labels = PARAM_LABELS[row.strategyType] ?? {}
-  let parsed: Record<string, unknown> = {}
-  try {
-    parsed = JSON.parse(row.params) as Record<string, unknown>
-  } catch {
-    parsed = {}
-  }
-  strategyDetailItems.value = orderByLabels(parsed, labels)
-    .map(([key, value]: [string, unknown]) => ({
-      label: labels[key] ?? key,
-      value: displayValue(key, value)
-    }))
+  strategyDetailItems.value = describeStrategyParams(row.strategyType, row.params)
   strategyDetailVisible.value = true
 }
 
@@ -1711,6 +1644,21 @@ function positionClassOf(row: BacktestRecord): string {
     return ''
   }
   return row.positionReturnPct >= 0 ? 'text-up' : 'text-down'
+}
+
+/**
+ * 持仓年化%（V5.95 用户口径）：(1+持仓资产收益率%)^(365/区间自然日)−1。
+ * V5.96 起走公共助手 metrics.annualizedFromPct（批量回测明细的持仓/持有年化同源，避免两处各写一份）。
+ */
+function positionAnnualPctOf(row: BacktestRecord): number | null {
+  return annualizedFromPct(row.positionReturnPct, row.startDate, row.endDate)
+}
+/** 参数表单组件引用：速览按钮触发表单内部的速览弹框（V5.99 按钮模式） */
+const backtestParamFormRef = ref<{ openSummary: () => void } | null>(null)
+const strategyParamFormRef = ref<{ openSummary: () => void } | null>(null)
+/** 该策略类型是否有速览内容（有速览卡片的七种类型；其余隐藏按钮） */
+function typeHasSummary(type: string): boolean {
+  return ['MA_BREAK', 'MA_TP_GRID', 'OSC_UP', 'DIV_GRID', 'NDX_GRID', 'PYRAMID_GRID', 'INV_PYRAMID_GRID'].includes(type)
 }
 const strategyDialogVisible = ref(false)
 /** 编辑中的配置 id（null = 新增模式）——V5.34 详情按钮改为编辑后弹框双模式 */
@@ -2332,5 +2280,25 @@ onMounted(() => {
 
 .label-help:hover {
   color: var(--q-color-primary);
+}
+
+/* 策略下拉 + 速览按钮同一行（发起回测与新增/编辑策略弹窗共用） */
+.strategy-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  width: 100%;
+}
+.strategy-cell .el-select {
+  flex: 1;
+}
+
+/* 批量回测来源标识（批#N 小标签）与基金代码小字的间距 */
+.batch-tag {
+  margin-left: var(--q-space-1);
+}
+
+.fund-code {
+  margin-left: var(--q-space-2);
 }
 </style>

@@ -15,10 +15,12 @@ export const PERM = {
   MENU_MANUAL: 'menu:manual',
   MENU_PLATFORM_CONFIG: 'menu:platformConfig',
   MENU_LOGIN_LOGS: 'menu:loginLogs',
+  MENU_BATCH_BACKTEST: 'menu:batchBacktest',
   ACTION_SYNC: 'action:sync',
   ACTION_IMPORT_FUND: 'action:importFund',
   ACTION_TRADE: 'action:trade',
   ACTION_TAG: 'action:tag',
   ACTION_STRATEGY: 'action:strategy',
-  ACTION_AI_CHAT: 'action:aiChat'
+  ACTION_AI_CHAT: 'action:aiChat',
+  ACTION_BATCH_BACKTEST: 'action:batchBacktest'
 } as const

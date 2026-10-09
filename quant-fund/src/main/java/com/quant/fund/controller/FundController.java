@@ -59,6 +59,12 @@ public class FundController {
         return R.ok(fundQueryService.watchlist());
     }
 
+    /** 基金下拉选项（V6.01）：仅代码+名称、服务端 15 分钟缓存——筛选下拉/名称映射等轻量场景专用 */
+    @GetMapping("/options")
+    public R<List<com.quant.fund.dto.FundOptionVO>> fundOptions() {
+        return R.ok(fundQueryService.fundOptions());
+    }
+
     /**
      * 自选基金分页列表（服务端分页 + 服务端筛选：关键词/标签）。
      *

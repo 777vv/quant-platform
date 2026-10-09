@@ -119,12 +119,27 @@ public class MaSignalServiceImpl implements MaSignalService {
     }
 
     @Override
-    public PageResult<MaSignalItemVO> page(String fundCode, int page, int size) {
+    public PageResult<MaSignalItemVO> page(String fundCode, String keyword, String direction, int page, int size) {
         int pageNo = Math.max(page, 1);
         int pageSize = Math.max(size, 1);
         LambdaQueryWrapper<MaSignal> query = new LambdaQueryWrapper<>();
         if (fundCode != null && !fundCode.isBlank()) {
             query.eq(MaSignal::getFundCode, fundCode.trim());
+        }
+        // 关键词模糊查询（V6.02 用户口径）：按基金代码或名称模糊匹配（ma_signal 只存代码）
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            List<String> codes = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                            .and(w -> w.like(FundBasic::getFundCode, kw).or().like(FundBasic::getFundName, kw)))
+                    .stream().map(FundBasic::getFundCode).toList();
+            if (codes.isEmpty()) {
+                return PageResult.of(0, List.of());
+            }
+            query.in(MaSignal::getFundCode, codes);
+        }
+        // 方向过滤（V6.00）：只认 UP/DOWN 两个值，其他输入一律当作"不过滤"
+        if ("UP".equals(direction) || "DOWN".equals(direction)) {
+            query.eq(MaSignal::getDirection, direction);
         }
         long total = maSignalMapper.selectCount(query);
         List<MaSignal> rows = maSignalMapper.selectList(query

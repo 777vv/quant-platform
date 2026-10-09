@@ -72,7 +72,8 @@ public class TradeController {
     /**
      * 交易流水分页查询（全部筛选条件可选）。
      *
-     * @param fundCode  基金代码，为空表示不限
+     * @param fundCode  基金代码（精确；基金详情页用），为空表示不限
+     * @param keyword   关键词（V6.02）：按基金代码或名称模糊匹配，为空表示不限（列表页筛选用）
      * @param tradeType 交易类型（1 买入 / 2 卖出 / 3 分红 / 4 转入 / 5 转出），为空表示不限
      * @param startDate 交易日期下限（yyyy-MM-dd，含）
      * @param endDate   交易日期上限（yyyy-MM-dd，含）
@@ -81,11 +82,12 @@ public class TradeController {
      */
     @GetMapping("/trades")
     public R<PageResult<TradeFlow>> page(@RequestParam(required = false) String fundCode,
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer tradeType,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "10") long size) {
-        return R.ok(tradeService.page(fundCode, tradeType, startDate, endDate, page, size));
+        return R.ok(tradeService.page(fundCode, keyword, tradeType, startDate, endDate, page, size));
     }
 
     /** 新增交易流水（自动触发该基金持仓重算） */

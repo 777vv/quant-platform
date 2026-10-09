@@ -56,3 +56,23 @@ export function annualizedReturnPct(values: number[], fromDate: string, toDate: 
   }
   return Number(((Math.pow(last / first, 365 / naturalDays) - 1) * 100).toFixed(2))
 }
+
+/**
+ * 由区间收益率（%）直接折算年化收益率（%）：(1+r)^(365/自然日数)−1（V5.96）。
+ * 回测记录列表的「持仓年化%」「持有年化%」用——分子是已算好的收益率而非价格序列，
+ * 与 annualizedReturnPct（价格序列版）同一复利口径。无收益率/区间无效/1+r≤0（无复利意义）返回 null。
+ */
+export function annualizedFromPct(returnPct: number | null, fromDate: string, toDate: string): number | null {
+  if (returnPct == null || !Number.isFinite(returnPct)) {
+    return null
+  }
+  const days = Math.round((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000)
+  if (!Number.isFinite(days) || days <= 0) {
+    return null
+  }
+  const ratio = 1 + returnPct / 100
+  if (ratio <= 0) {
+    return null
+  }
+  return Number(((Math.pow(ratio, 365 / days) - 1) * 100).toFixed(2))
+}

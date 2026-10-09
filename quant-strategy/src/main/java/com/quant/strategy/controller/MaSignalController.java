@@ -32,9 +32,11 @@ public class MaSignalController {
     @GetMapping("/page")
     public R<PageResult<MaSignalItemVO>> page(
             @RequestParam(required = false) String fundCode,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String direction,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
-        return R.ok(maSignalService.page(fundCode, page, size));
+        return R.ok(maSignalService.page(fundCode, keyword, direction, page, size));
     }
 
     /** 某基金的全部均线信号（基金详情【信号查询】页签用，不分页） */

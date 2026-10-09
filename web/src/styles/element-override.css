@@ -180,6 +180,17 @@
   font-size: var(--q-font-sm);
 }
 
+/* 下拉菜单项（操作列的「更多」等）与选择器选项统一：等高 34px、左右内边距一致，
+   三项逐行等距排列（不再用 divided——它插入的分隔元素会撑出不等的行距） */
+.el-dropdown-menu__item {
+  height: 34px;
+  line-height: 34px;
+  padding: 0 var(--q-space-3);
+  font-size: var(--q-font-sm);
+  display: flex;
+  align-items: center;
+}
+
 /* 日期选择器输入框沿用输入框高度 */
 .el-date-editor.el-input__wrapper {
   min-height: var(--el-component-size-small);

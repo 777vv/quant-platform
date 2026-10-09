@@ -75,6 +75,36 @@ public class FundQueryServiceImpl implements FundQueryService {
         this.dividendYieldService = dividendYieldService;
     }
 
+    /** 下拉选项缓存（V6.01）：15 分钟过期回源；单用户系统本地缓存即可，重启失效无妨 */
+    private static final long OPTIONS_CACHE_MINUTES = 15;
+    private volatile List<com.quant.fund.dto.FundOptionVO> optionsCache;
+    private volatile java.time.LocalDateTime optionsLoadedAt;
+
+    @Override
+    public List<com.quant.fund.dto.FundOptionVO> fundOptions() {
+        List<com.quant.fund.dto.FundOptionVO> cached = optionsCache;
+        if (cached != null && optionsLoadedAt != null
+                && optionsLoadedAt.plusMinutes(OPTIONS_CACHE_MINUTES).isAfter(java.time.LocalDateTime.now())) {
+            return cached;
+        }
+        List<com.quant.fund.dto.FundOptionVO> fresh = fundBasicMapper.selectList(
+                        new LambdaQueryWrapper<com.quant.fund.entity.FundBasic>()
+                                .eq(com.quant.fund.entity.FundBasic::getStatus, 1)
+                                .orderByAsc(com.quant.fund.entity.FundBasic::getFundCode))
+                .stream()
+                .map(fund -> {
+                    com.quant.fund.dto.FundOptionVO vo = new com.quant.fund.dto.FundOptionVO();
+                    vo.setFundCode(fund.getFundCode());
+                    vo.setFundName(fund.getFundName());
+                    vo.setFundType(fund.getFundType());
+                    return vo;
+                })
+                .toList();
+        optionsCache = fresh;
+        optionsLoadedAt = java.time.LocalDateTime.now();
+        return fresh;
+    }
+
     @Override
     public List<WatchItemVO> watchlist() {
         Set<String> holdings = holdingCodes();

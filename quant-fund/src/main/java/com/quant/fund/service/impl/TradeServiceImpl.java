@@ -55,11 +55,26 @@ public class TradeServiceImpl implements TradeService {
     }
 
     @Override
-    public PageResult<TradeFlow> page(String fundCode, Integer tradeType, LocalDate startDate, LocalDate endDate,
-            long page, long size) {
+    public PageResult<TradeFlow> page(String fundCode, String keyword, Integer tradeType, LocalDate startDate,
+            LocalDate endDate, long page, long size) {
+        // 关键词模糊查询（V6.02 用户口径）：按"基金代码或基金名称"模糊匹配——先把命中的基金代码捞出来，
+        // 再按 fund_code IN 过滤流水（trade_flow 只存代码，名称在 fund_basic）；
+        // 与精确 fundCode 参数并存：基金详情页要的是"这一只"的精确流水。
+        List<String> keywordCodes = null;
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            keywordCodes = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                            .and(w -> w.like(FundBasic::getFundCode, kw).or().like(FundBasic::getFundName, kw)))
+                    .stream().map(FundBasic::getFundCode).toList();
+            if (keywordCodes.isEmpty()) {
+                // 没命中任何基金：直接返回空页（避免 IN () 这种非法 SQL）
+                return PageResult.of(0, List.of());
+            }
+        }
         IPage<TradeFlow> result = tradeFlowMapper.selectPage(new Page<>(page, size),
                 new LambdaQueryWrapper<TradeFlow>()
                         .eq(fundCode != null && !fundCode.isBlank(), TradeFlow::getFundCode, fundCode)
+                        .in(keywordCodes != null, TradeFlow::getFundCode, keywordCodes)
                         .eq(tradeType != null, TradeFlow::getTradeType, tradeType)
                         .ge(startDate != null, TradeFlow::getTradeDate, startDate)
                         .le(endDate != null, TradeFlow::getTradeDate, endDate)

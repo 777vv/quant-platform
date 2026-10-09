@@ -50,17 +50,7 @@
         <template #label><ParamLabel text="单笔最大倍数" help="深档时的倍数上限（默认 3）：防止「越跌越多」在深跌里把单笔买到过大。份额最终仍受满仓上限夹取。" /></template>
         <el-input-number v-model="form.maxSizingMultiple" :precision="1" :min="1" :max="10" :controls="false" />
       </el-form-item>
-      <div class="osc-summary">
-        <div class="osc-title">策略逻辑速览</div>
-        <ul>
-          <li><b>对比区间</b>：从「K线天数那根」或「上次实际交易那根」中<b>更靠近今天</b>的一根开始，到今天为止。</li>
-          <li><b>上涨减仓</b>：现价较区间<b>最低点</b>涨幅超过阈值 → 卖出「卖出份额」份（不会低于底仓）。</li>
-          <li><b>下跌加仓</b>：现价较区间<b>最高点</b>跌幅超过阈值 → 买入「买入份额」份（不会超过满仓）。</li>
-          <li><b>同时满足</b>时<b>买入优先</b>；夹取后可交易份额为 0（已满仓/已到底仓）不出信号。</li>
-          <li><b>2 个交易日冷却</b>：距上次<b>实际交易</b>不足 2 个交易日时只提示不交易；信号没照做（无交易流水）不算数，次日照样重新提示。</li>
-          <li v-if="Number(form.sizingStepPct ?? 0) !== 0"><b>分档份额</b>：{{ sizingSummary }}——深档的份额变化会写在建议说明里，便于核对。</li>
-        </ul>
-      </div>
+      <SummaryList v-if="showCard" title="策略逻辑速览" :items="oscSummaryItems" />
     </template>
 
     <!-- 均线突破买入（V5.73）：趋势策略——收盘价上穿突破均线买入至满仓、下穿跌破均线卖出至底仓 -->
@@ -103,17 +93,7 @@
         <template #label><ParamLabel text="冷静天数" help="最近一次交易后的 N 个交易日内不调仓（0=不冷静）。状态每天按最新收盘重评，冷却期满当天按最新目标执行。" /></template>
         <el-input-number v-model="form.cooldownDays" :min="0" :max="500" :controls="false" />
       </el-form-item>
-      <div class="osc-summary">
-        <div class="osc-title">策略逻辑速览</div>
-        <ul>
-          <li><b>目标仓位模型（全状态驱动）</b>：收盘在「均线突破」线上方 → 执行突破操作（买入=买至<b>满仓份额</b> / 卖出=只留<b>底仓份额</b>）；收盘在「均线跌破」线下方 → 执行跌破操作（恒相反）；均按次日开盘价成交，仓位已在目标则不动。</li>
-          <li><b>双线同触、快线优先</b>：价格夹在两线之间时两侧同时触发（如收盘在 120 日线上方、同时已跌破 90 日线），按<b>周期较小的快线</b>执行——快线反应更快，代表最新状态。</li>
-          <li><b>中性区</b>：收盘低于突破线又高于跌破线（下降趋势形态的两线之间）方向不明 → 维持现仓位不动。</li>
-          <li><b>冷静天数</b>：最近一次交易后 N 个交易日内不调仓；状态每天按最新收盘重评，期满当天按最新目标执行。</li>
-          <li><b>均线周期越长</b>状态切换越少越迟（250 日均线一年只上下穿一两次）；周期太小（如 5 日）调仓频繁、噪音多。</li>
-          <li><b>均线周期越大</b>，回测所需的历史预热数据越多——请把回测起始日期往前留足（250 日均线约需 1 年以上历史）。</li>
-        </ul>
-      </div>
+      <SummaryList v-if="showCard" title="策略逻辑速览" :items="maBreakSummaryItems" />
     </template>
     <template v-else-if="type === 'MA_TP_GRID'">
       <el-form-item>
@@ -148,17 +128,7 @@
         <template #label><ParamLabel text="冷静天数" help="最近一次实际交易后的 N 个交易日内不调仓（0=不冷静）。状态每天重新评估，冷静期一满就按当天最新状态执行，信号不会丢。" /></template>
         <el-input-number v-model="form.cooldownDays" :min="0" :max="500" :controls="false" />
       </el-form-item>
-      <div class="osc-summary">
-        <div class="osc-title">策略逻辑速览</div>
-        <ul>
-          <li><b>三条带、三种目标仓位</b>：收盘 <b>≥ 上沿</b>（基准均线 ×(1+上限%)）→ 卖出至<b>底仓</b>；收盘 <b>≤ 下沿</b>（基准均线 ×(1−下限%)）→ 买入至<b>满仓</b>；<b>回踩到回踩均线</b>（收盘 ≤ 回踩均线值）→ 调回<b>初始份额</b>。</li>
-          <li><b>上下沿之间、仍在回踩均线上方</b>：维持现仓位不动（不加仓也不减仓）。</li>
-          <li><b>每天按收盘状态判定</b>（不要求"上穿/下穿"动作），信号次日开盘价执行；已在目标仓位则不再发信号。</li>
-          <li><b>回踩均线可独立于基准均线</b>：如基准 120 / 回踩 60 = 回踩到 60 日线就补回初始份额，比等 120 日线更早；两者相同则行为等同"回到均线即归位"。</li>
-          <li><b>冷静天数</b>：最近一次实际交易后 N 个交易日内不调仓；状态每天按最新收盘重评，冷却期满当天按最新状态执行，信号不会丢。</li>
-          <li><b>均线周期越大越迟钝</b>、回测所需的历史预热越多（250 日均线约需一年）——区间开头预热不足时上下沿信号会推迟甚至为空。</li>
-        </ul>
-      </div>
+      <SummaryList v-if="showCard" title="策略逻辑速览" :items="maTpSummaryItems" />
     </template>
 
     <!-- 网格族（V5.27 红利/纳指网格；V5.28 金字塔/倒金字塔网格）：四个类型共用同一套参数与规则，
@@ -261,23 +231,22 @@
         <template #label><ParamLabel text="低估买入倍数" help="PE 低于买入下限时的买入格数倍数（1 = 不加倍），例如填 2 表示低估时买双倍格数。" /></template>
         <el-input-number v-model="form.peBoostMultiplier" :precision="1" :min="1" :controls="false" />
       </el-form-item>
-      <div class="osc-summary">
-        <div class="osc-title">网格逻辑速览</div>
-        <ul>
-          <li><b>格线固定</b>：由下沿/上沿/格数/模式一次算出，不随成交漂移；实盘与回测同一套口径，回测调好的参数可直接套实盘。</li>
-          <li><b>格位锚点</b>：以<b>最近一次实际成交价</b>为基准（没有成交记录时用上一根收盘），跨几格就买卖几格；信号没照做（无交易流水）次日会重新提示。</li>
-          <li><b>一天跨多格</b>：跳空跌穿 2 格就买 2 格份额（受「单根最多成交格数」与满仓上限夹取）。</li>
-          <li><b>买入闸门</b>：趋势均线 → 溢价率 → 估值，任一拦截即不出买入建议；<b>卖出不受闸门限制</b>。</li>
-          <li><b>收益来自差价</b>：每上穿一格卖出的份额，等于之前每下穿一格买入的份额，来回震荡反复兑现。</li>
-          <li v-if="isPyramidType"><b>逐格阶梯</b>：{{ pyramidSummary }}——一天跨多格时按各格单位<b>逐格累加</b>；深跌/急涨会显著加大单次成交额，靠「满仓份额」兜底。</li>
-        </ul>
-      </div>
+      <SummaryList v-if="showCard" title="网格逻辑速览" :items="gridSummaryItems" />
     </template>
+
+    <!-- 速览弹框（按钮模式 V5.97→V5.98）：触发按钮由宿主放置（如批量弹窗把它与策略类型下拉排同一行），
+         经 defineExpose(openSummary) 打开本弹框；内容与卡片模式同一份 -->
+    <el-dialog v-model="summaryOpen" title="策略逻辑速览" width="560px" append-to-body>
+      <SummaryList :title="activeSummary.title" :items="activeSummary.items" />
+      <template #footer>
+        <el-button @click="summaryOpen = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted, reactive, watch } from 'vue'
+import { computed, h, onMounted, reactive, ref, watch } from 'vue'
 import { ElIcon, ElTooltip } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 
@@ -311,7 +280,12 @@ const ParamLabel = (props: { text: string; help: string }) =>
     )
   ])
 
-const props = defineProps<{ type: string; modelValue: Record<string, unknown> }>()
+const props = defineProps<{
+  type: string
+  modelValue: Record<string, unknown>
+  /** 速览展示模式：card=表单尾部卡片（默认，基金详情弹窗在用）；button=顶部小按钮 + 弹框查看（批量回测弹窗在用，V5.97） */
+  summaryMode?: 'card' | 'button'
+}>()
 const emit = defineEmits<{ 'update:modelValue': [value: Record<string, unknown>] }>()
 
 /** 网格族类型（共用同一套参数模板）：红利网格 / 纳指网格 / 金字塔网格 / 倒金字塔网格 */
@@ -327,6 +301,102 @@ const isGridType = computed(() => GRID_TYPES.includes(props.type))
 const isPyramidType = computed(() => PYRAMID_TYPES.includes(props.type))
 
 /** 震荡向上分档说明（表单内展示档位与份额变化，与后端同一口径） */
+/**
+ * 速览列表渲染函数组件（V5.97）：速览文案数据化后统一在这里渲染（粗体用 **标记** 描述）。
+ * 卡片模式直接渲染；按钮模式渲染进弹框。
+ */
+const SummaryList = (listProps: { title: string; items: string[] }) => {
+  const children = [
+    h('div', { class: 'osc-title' }, listProps.title),
+    h('ul', listProps.items.map((item) => h('li', { key: item, innerHTML: renderBold(item) })))
+  ]
+  return h('div', { class: 'osc-summary' }, children)
+}
+
+/** 把 `**文字**` 标记转成 <b>（内容全是组件内部常量/数字插值，先转义再替换，保证 v-html 安全） */
+function renderBold(text: string): string {
+  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return escaped.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+}
+
+/** 卡片模式才在表单尾部渲染速览卡；按钮模式的速览走顶部按钮 + 弹框 */
+const showCard = computed(() => props.summaryMode !== 'button')
+
+const summaryOpen = ref(false)
+
+/** 宿主自定义触发按钮调用：打开速览弹框（按钮模式下本组件不再内置触发器） */
+function openSummary() {
+  summaryOpen.value = true
+}
+defineExpose({ openSummary })
+
+/** 当前类型的速览（按钮模式的弹框内容） */
+const activeSummary = computed<{ title: string; items: string[] }>(() => {
+  if (props.type === 'MA_BREAK') {
+    return { title: '策略逻辑速览', items: maBreakSummaryItems.value }
+  }
+  if (props.type === 'MA_TP_GRID') {
+    return { title: '策略逻辑速览', items: maTpSummaryItems.value }
+  }
+  if (isGridType.value) {
+    return { title: '网格逻辑速览', items: gridSummaryItems.value }
+  }
+  if (props.type === 'OSC_UP') {
+    return { title: '策略逻辑速览', items: oscSummaryItems.value }
+  }
+  return { title: '策略逻辑速览', items: [] }
+})
+
+/** 震荡向上速览（V5.97 从模板文案数据化，内容不变） */
+const oscSummaryItems = computed<string[]>(() => {
+  const items = [
+    '**对比区间**：从「K线天数那根」或「上次实际交易那根」中**更靠近今天**的一根开始，到今天为止。',
+    '**上涨减仓**：现价较区间**最低点**涨幅超过阈值 → 卖出「卖出份额」份（不会低于底仓）。',
+    '**下跌加仓**：现价较区间**最高点**跌幅超过阈值 → 买入「买入份额」份（不会超过满仓）。',
+    '**同时满足**时**买入优先**；夹取后可交易份额为 0（已满仓/已到底仓）不出信号。',
+    '**2 个交易日冷却**：距上次**实际交易**不足 2 个交易日时只提示不交易；信号没照做（无交易流水）不算数，次日照样重新提示。'
+  ]
+  if (Number(form.sizingStepPct ?? 0) !== 0) {
+    items.push(`**分档份额**：${sizingSummary.value}——深档的份额变化会写在建议说明里，便于核对。`)
+  }
+  return items
+})
+
+/** 均线突破速览（内容不变） */
+const maBreakSummaryItems = computed<string[]>(() => [
+  '**目标仓位模型（全状态驱动）**：收盘在「均线突破」线上方 → 执行突破操作（买入=买至**满仓份额** / 卖出=只留**底仓份额**）；收盘在「均线跌破」线下方 → 执行跌破操作（恒相反）；均按次日开盘价成交，仓位已在目标则不动。',
+  '**双线同触、快线优先**：价格夹在两线之间时两侧同时触发（如收盘在 120 日线上方、同时已跌破 90 日线），按**周期较小的快线**执行——快线反应更快，代表最新状态。',
+  '**中性区**：收盘低于突破线又高于跌破线（下降趋势形态的两线之间）方向不明 → 维持现仓位不动。',
+  '**冷静天数**：最近一次交易后 N 个交易日内不调仓；状态每天按最新收盘重评，期满当天按最新目标执行。',
+  '**均线周期越长**状态切换越少越迟（250 日均线一年只上下穿一两次）；周期太小（如 5 日）调仓频繁、噪音多。',
+  '**均线周期越大**，回测所需的历史预热数据越多——请把回测起始日期往前留足（250 日均线约需 1 年以上历史）。'
+])
+
+/** 均线止盈/加仓速览（内容不变） */
+const maTpSummaryItems = computed<string[]>(() => [
+  '**三条带、三种目标仓位**：收盘 **≥ 上沿**（基准均线 ×(1+上限%)）→ 卖出至**底仓**；收盘 **≤ 下沿**（基准均线 ×(1−下限%)）→ 买入至**满仓**；**回踩到回踩均线**（收盘 ≤ 回踩均线值）→ 调回**初始份额**。',
+  '**上下沿之间、仍在回踩均线上方**：维持现仓位不动（不加仓也不减仓）。',
+  '**每天按收盘状态判定**（不要求"上穿/下穿"动作），信号次日开盘价执行；已在目标仓位则不再发信号。',
+  '**回踩均线可独立于基准均线**：如基准 120 / 回踩 60 = 回踩到 60 日线就补回初始份额，比等 120 日线更早；两者相同则行为等同"回到均线即归位"。',
+  '**冷静天数**：最近一次实际交易后 N 个交易日内不调仓；状态每天按最新收盘重评，冷却期满当天按最新状态执行，信号不会丢。',
+  '**均线周期越大越迟钝**、回测所需的历史预热越多（250 日均线约需一年）——区间开头预热不足时上下沿信号会推迟甚至为空。'
+])
+
+/** 网格族速览（内容不变） */
+const gridSummaryItems = computed<string[]>(() => {
+  const items = [
+    '**格线固定**：由下沿/上沿/格数/模式一次算出，不随成交漂移；实盘与回测同一套口径，回测调好的参数可直接套实盘。',
+    '**格位锚点**：以**最近一次实际成交价**为基准（没有成交记录时用上一根收盘），跨几格就买卖几格；信号没照做（无交易流水）次日会重新提示。',
+    '**一天跨多格**：跳空跌穿 2 格就买 2 格份额（受「单根最多成交格数」与满仓上限夹取）。',
+    '**买入闸门**：趋势均线 → 溢价率 → 估值，任一拦截即不出买入建议；**卖出不受闸门限制**。',
+    '**收益来自差价**：每上穿一格卖出的份额，等于之前每下穿一格买入的份额，来回震荡反复兑现。'
+  ]
+  if (isPyramidType.value) {
+    items.push(`**逐格阶梯**：${pyramidSummary.value}——一天跨多格时按各格单位**逐格累加**；深跌/急涨会显著加大单次成交额，靠「满仓份额」兜底。`)
+  }
+  return items
+})
+
 const sizingSummary = computed(() => {
   const step = Number(form.sizingStepPct ?? 0)
   const buy = Number(form.buyShare ?? 0)

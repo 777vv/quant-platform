@@ -55,6 +55,7 @@ const SIDEBAR_WIDTH = '200px'
 const MENUS = [
   { path: '/', label: '仪表盘', icon: 'Odometer', perm: '' },
   { path: '/funds', label: '基金池', icon: 'Coin', perm: PERM.MENU_FUNDS },
+  { path: '/batch-backtest', label: '批量回测', icon: 'VideoPlay', perm: PERM.MENU_BATCH_BACKTEST },
   { path: '/trades', label: '交易流水', icon: 'Tickets', perm: PERM.MENU_TRADES },
   { path: '/signals', label: '信号查询', icon: 'Bell', perm: PERM.MENU_SIGNALS },
   { path: '/market-signals', label: '市场信号', icon: 'Histogram', perm: PERM.MENU_MARKET_SIGNALS },

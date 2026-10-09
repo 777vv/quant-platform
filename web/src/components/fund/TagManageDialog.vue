@@ -17,7 +17,8 @@
       <el-button size="small" type="primary" :loading="saving" @click="create">新建标签</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="tags" size="small" class="tag-table">
+    <!-- 限高（V5.99）：标签多时表格内部滚动（表头固定），弹框高度不再随标签数量增长 -->
+    <el-table v-loading="loading" :data="tags" size="small" max-height="320" class="tag-table">
       <el-table-column label="标签" min-width="160">
         <template #default="{ row }">
           <template v-if="editingId === row.id">

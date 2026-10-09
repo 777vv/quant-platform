@@ -46,13 +46,14 @@ public class SignalController {
     @GetMapping("/signals/page")
     public R<PageResult<SignalItemVO>> page(
             @RequestParam(required = false) String fundCode,
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String direction,
             @RequestParam(required = false) String strategyType,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "10") long size) {
-        return R.ok(signalService.page(fundCode, direction, strategyType, startDate, endDate, page, size));
+        return R.ok(signalService.page(fundCode, keyword, direction, strategyType, startDate, endDate, page, size));
     }
 
     /** 手动触发一轮信号计算（调试/补算用；与定时任务共用 Redisson 锁） */

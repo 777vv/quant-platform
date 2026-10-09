@@ -20,6 +20,12 @@ public interface FundQueryService {
     List<WatchItemVO> watchlist();
 
     /**
+     * 基金下拉选项（V6.01）：代码+名称+类型（整数），status=1 自选池按代码升序；
+     * 服务端 15 分钟缓存，过期再查库——给筛选下拉/名称映射这类轻量场景用，别再拉重量级 watchlist。
+     */
+    List<com.quant.fund.dto.FundOptionVO> fundOptions();
+
+    /**
      * 自选池分页查询（服务端分页 + 服务端筛选）。
      * 分页后关键词与标签筛选必须在服务端完成，否则只能筛到当前页的数据。
      *

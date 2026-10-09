@@ -4,8 +4,8 @@
     <el-card shadow="never" class="filter-card">
       <div class="filter-bar">
         <el-input
-          v-model="filterFundCode"
-          placeholder="按基金代码筛选"
+          v-model="filterFundKeyword"
+          placeholder="基金名称或代码"
           clearable
           style="width: 180px"
           @clear="reload(1)"
@@ -107,7 +107,7 @@
 import { useUserStore } from '@/stores/user'
 import { PERM } from '@/utils/permissions'
 import { onMounted, ref } from 'vue'
-import { pageTrades, watchlist, type TradeFlow } from '@/api/fund'
+import { fundOptions, pageTrades, type TradeFlow, type FundOptionVO } from '@/api/fund'
 import { formatAmount } from '@/utils/format'
 import TradeEntryDialog from '@/components/trade/TradeEntryDialog.vue'
 
@@ -134,7 +134,7 @@ const size = ref(10)
 const total = ref(0)
 
 /** 筛选条件：基金代码 / 交易类型 / 日期区间（yyyy-MM-dd） */
-const filterFundCode = ref('')
+const filterFundKeyword = ref('')
 const filterType = ref<number | undefined>(undefined)
 const dateRange = ref<[string, string] | null>(null)
 
@@ -175,7 +175,7 @@ async function load() {
   loading.value = true
   try {
     const result = await pageTrades({
-      fundCode: filterFundCode.value.trim() || undefined,
+      keyword: filterFundKeyword.value.trim() || undefined,
       tradeType: filterType.value,
       startDate: dateRange.value?.[0],
       endDate: dateRange.value?.[1],
@@ -197,7 +197,7 @@ function reload(targetPage: number) {
 
 /** 清空全部筛选条件 */
 function resetFilter() {
-  filterFundCode.value = ''
+  filterFundKeyword.value = ''
   filterType.value = undefined
   dateRange.value = null
   reload(1)
@@ -212,8 +212,8 @@ function onSaved() {
 }
 
 onMounted(async () => {
-  // 基金名称映射：自选池（含已移出但仍有流水的基金取不到名称，属预期）
-  const funds = await watchlist().catch(() => [])
+  // 基金名称映射：轻量选项接口（V6.01，仅代码+名称；含已移出但仍有流水的基金取不到名称，属预期）
+  const funds: FundOptionVO[] = await fundOptions().catch(() => [])
   const map: Record<string, string> = {}
   funds.forEach((fund) => {
     map[fund.fundCode] = fund.fundName

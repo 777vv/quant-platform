@@ -12,17 +12,16 @@
         <span class="muted">筛选</span>
         <el-input
           v-model="username"
-          size="small"
           placeholder="用户名"
           clearable
           style="width: 160px"
           @keyup.enter="reload()"
         />
-        <el-select v-model="successFilter" size="small" clearable placeholder="全部结果" style="width: 130px" @change="reload()">
+        <el-select v-model="successFilter" clearable placeholder="全部结果" style="width: 130px" @change="reload()">
           <el-option :value="1" label="仅成功" />
           <el-option :value="0" label="仅失败" />
         </el-select>
-        <el-button size="small" @click="reload()">查询</el-button>
+        <el-button @click="reload()">查询</el-button>
         <span class="muted">共 {{ total }} 条</span>
       </div>
 

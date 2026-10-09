@@ -129,6 +129,59 @@ export function profitCurve(range: string) {
   return get<ProfitCurveVO>('/dashboard/profit/curve', { range })
 }
 
+/** 收益日历：单日收益 */
+export interface ProfitCalendarDay {
+  /** 日期（yyyy-MM-dd） */
+  date: string
+  /** 当日收益（元） */
+  pnl: number
+  /** 当日收益率（%）；无基准（前一日无持仓市值）时为 null */
+  pct: number | null
+  /** 当日持仓市值（元） */
+  marketValue: number
+}
+
+/** 收益日历：自然月汇总 */
+export interface ProfitCalendarMonth {
+  /** 月份（yyyy-MM） */
+  month: string
+  /** 当月收益（元） */
+  pnl: number
+  /** 当月收益率（%）；无基准时为 null */
+  pct: number | null
+  /** 当月有数据的天数 */
+  dayCount: number
+}
+
+/** 收益日历（V6.07）：某个自然年的逐日 + 月度 + 全年收益 */
+export interface ProfitCalendarVO {
+  year: number
+  /** 是否有可用数据（无持仓流水时 false） */
+  hasData: boolean
+  days: ProfitCalendarDay[]
+  months: ProfitCalendarMonth[]
+  yearPnl: number
+  yearPct: number | null
+  yearDayCount: number
+}
+
+/**
+ * 收益日历（后端按年缓存 5 分钟）。**只在用户点开总资产卡片时才调用**——仪表盘首屏不预取。
+ * 前端按年再做一层模块级缓存：切月/切指标零请求，切回已看过的年份也零请求（与 fundOptions 同款写法）。
+ */
+const CALENDAR_CACHE_TTL_MS = 5 * 60 * 1000
+const calendarCache = new Map<number, { at: number; data: ProfitCalendarVO }>()
+
+export async function profitCalendar(year: number, force = false): Promise<ProfitCalendarVO> {
+  const hit = calendarCache.get(year)
+  if (!force && hit && Date.now() - hit.at < CALENDAR_CACHE_TTL_MS) {
+    return hit.data
+  }
+  const data = await get<ProfitCalendarVO>('/dashboard/profit/calendar', { year })
+  calendarCache.set(year, { at: Date.now(), data })
+  return data
+}
+
 /** 速览区数据 */
 export function dashboardOverview() {
   return get<DashboardOverviewVO>('/dashboard/overview')

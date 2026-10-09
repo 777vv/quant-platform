@@ -19,6 +19,7 @@ const router = createRouter({
       children: [
         { path: '', name: 'dashboard', component: () => import('@/views/dashboard/DashboardView.vue'), meta: { title: '仪表盘' } },
         { path: 'funds', name: 'funds', component: () => import('@/views/fund/FundListView.vue'), meta: { title: '基金池', permission: PERM.MENU_FUNDS } },
+        { path: 'batch-backtest', name: 'batchBacktest', component: () => import('@/views/batch/BatchBacktestView.vue'), meta: { title: '批量回测', permission: PERM.MENU_BATCH_BACKTEST } },
         { path: 'funds/:code', name: 'fundDetail', component: () => import('@/views/fund/FundDetailView.vue'), meta: { title: '基金详情', permission: PERM.MENU_FUNDS } },
         { path: 'backtest/:id', name: 'backtestResult', component: () => import('@/views/fund/BacktestResultView.vue'), meta: { title: '回测结果', permission: PERM.MENU_FUNDS } },
         { path: 'trades', name: 'trades', component: () => import('@/views/trade/TradeListView.vue'), meta: { title: '交易流水', permission: PERM.MENU_TRADES } },

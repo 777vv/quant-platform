@@ -38,6 +38,7 @@ public final class PermissionCodes {
     public static final String MENU_MANUAL = "menu:manual";
     public static final String MENU_PLATFORM_CONFIG = "menu:platformConfig";
     public static final String MENU_LOGIN_LOGS = "menu:loginLogs";
+    public static final String MENU_BATCH_BACKTEST = "menu:batchBacktest";
 
     // ===== 操作码 =====
     public static final String ACTION_SYNC = "action:sync";
@@ -46,6 +47,7 @@ public final class PermissionCodes {
     public static final String ACTION_TAG = "action:tag";
     public static final String ACTION_STRATEGY = "action:strategy";
     public static final String ACTION_AI_CHAT = "action:aiChat";
+    public static final String ACTION_BATCH_BACKTEST = "action:batchBacktest";
 
     /** 「一键只读访客」默认模板（用户拍板）：仪表盘 + 基金池 + 信号查询 + 基金对比 + 使用手册 */
     public static final List<String> GUEST_DEFAULT = Collections.unmodifiableList(Arrays.asList(
@@ -55,7 +57,9 @@ public final class PermissionCodes {
     public static final List<String> ALL = Collections.unmodifiableList(Arrays.asList(
             MENU_DASHBOARD, MENU_FUNDS, MENU_TRADES, MENU_SIGNALS, MENU_MARKET_SIGNALS,
             MENU_COMPARE, MENU_IMPORT, MENU_AI_USAGE, MENU_MANUAL, MENU_PLATFORM_CONFIG, MENU_LOGIN_LOGS,
-            ACTION_SYNC, ACTION_IMPORT_FUND, ACTION_TRADE, ACTION_TAG, ACTION_STRATEGY, ACTION_AI_CHAT));
+            MENU_BATCH_BACKTEST,
+            ACTION_SYNC, ACTION_IMPORT_FUND, ACTION_TRADE, ACTION_TAG, ACTION_STRATEGY, ACTION_AI_CHAT,
+            ACTION_BATCH_BACKTEST));
 
     private PermissionCodes() {
     }
@@ -93,6 +97,8 @@ public final class PermissionCodes {
                 return "平台配置";
             case MENU_LOGIN_LOGS:
                 return "登录日志";
+            case MENU_BATCH_BACKTEST:
+                return "批量回测（批次列表与批次明细）";
             case ACTION_SYNC:
                 return "手动同步（基金池/详情/指数看板/批量同步入口）";
             case ACTION_IMPORT_FUND:
@@ -105,6 +111,8 @@ public final class PermissionCodes {
                 return "策略与回测（新增/编辑/删除策略、发起回测）";
             case ACTION_AI_CHAT:
                 return "AI 对话（消耗全局 AI 额度）";
+            case ACTION_BATCH_BACKTEST:
+                return "批量回测（发起批次、删除批次内记录）";
             default:
                 return code;
         }

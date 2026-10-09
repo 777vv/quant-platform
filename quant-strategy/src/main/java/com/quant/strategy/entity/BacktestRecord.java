@@ -109,6 +109,9 @@ public class BacktestRecord {
     /** 基准（买入持有）曲线 JSON [[date,value],...] */
     private String benchmarkCurve;
 
+    /** 批量回测批次 ID（V5.96，NULL = 单次发起） */
+    private Long batchId;
+
     /** 创建时间（库默认值） */
     private LocalDateTime createdAt;
 }

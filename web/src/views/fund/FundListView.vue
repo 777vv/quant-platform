@@ -5,7 +5,6 @@
         <span class="muted">筛选</span>
         <el-input
           v-model="keyword"
-          size="small"
           placeholder="代码或名称"
           clearable
           style="width: 170px"
@@ -15,7 +14,6 @@
         />
         <el-select
           v-model="tagFilter"
-          size="small"
           clearable
           placeholder="全部标签"
           style="width: 150px"
@@ -24,12 +22,12 @@
         >
           <el-option v-for="tag in tagLibraryList" :key="tag.id" :value="tag.name" :label="tag.name" />
         </el-select>
-        <el-button size="small" @click="reloadWatch(1)">查询</el-button>
-        <el-button v-if="userStore.can(PERM.ACTION_TAG)" size="small" @click="tagManageVisible = true">标签管理</el-button>
+        <el-button @click="reloadWatch(1)">查询</el-button>
+        <el-button v-if="userStore.can(PERM.ACTION_TAG)" @click="tagManageVisible = true">标签管理</el-button>
       </div>
       <div class="toolbar-right">
         <span class="muted">已选 {{ selectedFunds.length }}/3</span>
-        <el-button size="small" :disabled="selectedFunds.length < 2" @click="gotoCompare">对比走势</el-button>
+        <el-button :disabled="selectedFunds.length < 2" @click="gotoCompare">对比走势</el-button>
       </div>
     </el-row>
     <el-tabs v-model="activeTab">
@@ -148,7 +146,9 @@
                   <el-dropdown-menu>
                     <el-dropdown-item v-if="userStore.can(PERM.ACTION_SYNC)" command="sync">同步</el-dropdown-item>
                     <el-dropdown-item v-if="userStore.can(PERM.ACTION_TAG)" command="tag">标签</el-dropdown-item>
-                    <el-dropdown-item v-if="userStore.can(PERM.ACTION_IMPORT_FUND)" command="remove" divided>删除</el-dropdown-item>
+                    <!-- 不加 divided（V6.06 用户反馈）：EP 的 divided 会额外插一个 1px 分隔元素（上下各 6px 外边距），
+                         使"删除"与上面两项看着不等高、且有横线；三项直接等距排列更整齐 -->
+                    <el-dropdown-item v-if="userStore.can(PERM.ACTION_IMPORT_FUND)" command="remove">删除</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>

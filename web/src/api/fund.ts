@@ -258,6 +258,31 @@ export function batchImportProgress(taskId: string) {
   return get<BatchImportProgress>('/funds/import/batch/progress', { taskId })
 }
 
+/** 基金下拉选项（V6.01）：仅代码+名称——筛选下拉/名称映射这类轻量场景专用 */
+export interface FundOptionVO {
+  fundCode: string
+  fundName: string
+  /** 1=场内ETF 2=场外指数基金 */
+  fundType: number
+}
+
+/**
+ * 基金下拉选项（后端同样有 15 分钟缓存）。缓存放在**这个 .ts 模块**而不是页面里：
+ * SFC 的 script setup 每次实例化都会重新求值，模块级变量才是页面生命周期内的单例
+ * （与 marketSignals 的缓存同一教训与做法）——菜单往返 15 分钟内不再发请求。
+ */
+const FUND_OPTIONS_TTL_MS = 15 * 60 * 1000
+let fundOptionsCache: { at: number; data: FundOptionVO[] } | null = null
+
+export async function fundOptions(): Promise<FundOptionVO[]> {
+  if (fundOptionsCache && Date.now() - fundOptionsCache.at < FUND_OPTIONS_TTL_MS) {
+    return fundOptionsCache.data
+  }
+  const data = await get<FundOptionVO[]>('/funds/options')
+  fundOptionsCache = { at: Date.now(), data }
+  return data
+}
+
 export function watchlist() {
   return get<WatchItemVO[]>('/funds/watchlist')
 }
@@ -363,8 +388,10 @@ export function removeFund(code: string) {
 
 /** 交易流水查询条件（全部可选；服务端分页与筛选） */
 export interface TradeQuery {
-  /** 基金代码；为空表示不限（账户级划转没有基金） */
+  /** 基金代码（精确；基金详情页用）；为空表示不限（账户级划转没有基金） */
   fundCode?: string
+  /** 关键词（V6.02）：按基金代码或名称模糊匹配；为空表示不限（列表页筛选用） */
+  keyword?: string
   /** 交易类型（1 买 / 2 卖 / 3 分红 / 4 转入 / 5 转出）；为空表示不限 */
   tradeType?: number
   /** 交易日期下限（yyyy-MM-dd，含） */

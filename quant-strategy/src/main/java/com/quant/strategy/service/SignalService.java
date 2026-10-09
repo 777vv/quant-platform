@@ -36,7 +36,7 @@ public interface SignalService {
      * @param size         每页条数（上限 200，防一次性拉全表）
      * @return 分页结果（已带基金名称与策略展示名）
      */
-    PageResult<SignalItemVO> page(String fundCode, String direction, String strategyType,
+    PageResult<SignalItemVO> page(String fundCode, String keyword, String direction, String strategyType,
             LocalDate startDate, LocalDate endDate, long page, long size);
 
     /**

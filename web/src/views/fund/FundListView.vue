@@ -26,7 +26,7 @@
         <el-button v-if="userStore.can(PERM.ACTION_TAG)" @click="tagManageVisible = true">标签管理</el-button>
       </div>
       <div class="toolbar-right">
-        <span class="muted">已选 {{ selectedFunds.length }}/3</span>
+        <span class="muted">已选 {{ selectedFunds.length }}/{{ MAX_COMPARE }}</span>
         <el-button :disabled="selectedFunds.length < 2" @click="gotoCompare">对比走势</el-button>
       </div>
     </el-row>
@@ -46,7 +46,7 @@
           border
           stripe
         >
-          <!-- reserve-selection：翻页/换筛选后保留已勾选（最多 3 只用于走势对比） -->
+          <!-- reserve-selection：翻页/换筛选后保留已勾选（最多 MAX_COMPARE 只用于走势对比） -->
           <el-table-column type="selection" width="40" reserve-selection :selectable="selectableFund" />
           <el-table-column prop="fundName" label="名称" min-width="170">
             <template #default="{ row }">
@@ -75,6 +75,12 @@
               <div class="sync-time">{{ formatSyncTime(row.lastSyncAt) }}</div>
             </template>
           </el-table-column>
+          <!-- 成立日期（V6.13 用户要求）：紧随「最后同步」之后；f10 未解析到时显示 -- -->
+          <el-table-column label="成立日期" min-width="104">
+            <template #default="{ row }">
+              <span class="num">{{ row.inceptionDate || '--' }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="标签" min-width="100">
             <template #default="{ row }">
               <template v-if="fundTagMap[row.fundCode]?.length">
@@ -100,8 +106,10 @@
           </el-table-column>
           <el-table-column label="规模(亿)" min-width="88" align="right">
             <template #default="{ row }">
-              <el-tooltip v-if="row.fundScale != null" :content="`净资产规模，截止 ${row.fundScaleDate ?? '未知'}`" placement="top">
-                <span class="num">{{ row.fundScale.toFixed(2) }}</span>
+              <!-- 优先展示"每日估算规模"（V6.15：场内 ETF 份额×当日净值，每个交易日更新）；
+                   没有估算的（场外基金）回退定期报告披露值，悬浮说明口径 -->
+              <el-tooltip v-if="scaleTextOf(row)" :content="scaleTipOf(row)" placement="top">
+                <span class="num">{{ scaleTextOf(row) }}</span>
               </el-tooltip>
               <span v-else class="num">--</span>
             </template>
@@ -247,8 +255,8 @@ import FundTagEditDialog from '@/components/fund/FundTagEditDialog.vue'
 
 const userStore = useUserStore()
 
-/** 走势对比最多选择数 */
-const MAX_COMPARE = 3
+/** 走势对比最多选择数（V6.22：3 → 5，与对比页的五个槽位一致） */
+const MAX_COMPARE = 5
 
 const activeTab = ref('watch')
 /** 关键词筛选（服务端 like 匹配代码/名称） */
@@ -320,11 +328,11 @@ const tagManageVisible = ref(false)
 const tagEditVisible = ref(false)
 const tagEditFund = ref('')
 
-/** 自选列表勾选的基金（最多 3 只，用于走势对比） */
+/** 自选列表勾选的基金（最多 MAX_COMPARE 只，用于走势对比） */
 const selectedFunds = ref<string[]>([])
 
 function onSelectionChange(rows: WatchItemVO[]) {
-  // 超选时保留前 3 只（配合 selectableFund 限制，正常不会超）
+  // 超选时保留前 MAX_COMPARE 只（配合 selectableFund 限制，正常不会超）
   selectedFunds.value = rows.map((r) => r.fundCode).slice(0, MAX_COMPARE)
 }
 
@@ -403,6 +411,22 @@ function reloadWatch(targetPage: number) {
 }
 
 /** 关键词输入防抖（300ms）后回到第 1 页查询，避免每敲一个字都打接口 */
+/** 规模展示值（V6.15）：优先"每日估算规模"，无估算时回退定期报告披露值 */
+function scaleTextOf(row: WatchItemVO): string | null {
+  if (row.dailyScale != null) {
+    return row.dailyScale.toFixed(2)
+  }
+  return row.fundScale != null ? row.fundScale.toFixed(2) : null
+}
+
+/** 规模的悬浮口径说明：估算值标"每日估算（净值日）"，披露值标"季报截止日" */
+function scaleTipOf(row: WatchItemVO): string {
+  if (row.dailyScale != null) {
+    return `每日估算规模 = 当日份额 × 当日单位净值（数据日 ${row.dailyScaleDate ?? '未知'}）；定期报告披露值 ${row.fundScale?.toFixed(2) ?? '--'} 亿元（截止 ${row.fundScaleDate ?? '未知'}）`
+  }
+  return `净资产规模（定期报告披露），截止 ${row.fundScaleDate ?? '未知'}；场内 ETF 才有每日估算值`
+}
+
 /** 最后同步动作时间：取时分秒部分（后端 LocalDateTime 序列化为 yyyy-MM-ddTHH:mm:ss） */
 function formatSyncTime(time: string | null): string {
   if (!time) {

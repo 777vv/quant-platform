@@ -1,5 +1,5 @@
 #!/bin/sh
-# 停止本机正在运行的个人量化投资助手应用（释放 quant-web-1.0.0.jar 的文件锁，解决 mvn clean 删不掉的问题）
+# 停止本机正在运行的策略数据研究平台应用（释放 quant-web-1.0.0.jar 的文件锁，解决 mvn clean 删不掉的问题）
 # 用法：sh stop-app.sh   （Git Bash / WSL / Linux 通用）
 PORT="${1:-8080}"
 PIDS=$(netstat -ano 2>/dev/null | grep ":$PORT.*LISTENING" | awk '{print $5}' | sort -u)

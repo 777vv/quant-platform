@@ -20,8 +20,9 @@
       </div>
     </el-card>
 
-    <el-card shadow="never" class="block">
-      <el-descriptions :column="5" border size="small" title="回测概况">
+    <!-- 四个模块均可收起/展开（默认全展开）；标题条点击切换 -->
+    <CollapseCard title="回测概况" class="block">
+      <el-descriptions :column="5" border size="small">
         <el-descriptions-item label="基金">{{ record.fundCode }}</el-descriptions-item>
         <el-descriptions-item label="策略">{{ strategyName }}</el-descriptions-item>
         <el-descriptions-item label="区间">{{ record.startDate }} ~ {{ record.endDate }}</el-descriptions-item>
@@ -66,14 +67,14 @@
         </el-descriptions-item>
         <el-descriptions-item label="参数">{{ record.params }}</el-descriptions-item>
       </el-descriptions>
-    </el-card>
-    <el-card shadow="never" class="block" header="资金曲线（策略 vs 买入持有基准）">
+    </CollapseCard>
+    <CollapseCard title="资金曲线（策略 vs 买入持有基准）" class="block">
       <ChartPanel v-if="equityOption" :option="equityOption as EChartsOption" height="340px" />
-    </el-card>
-    <el-card shadow="never" class="block" header="回撤曲线（%）">
+    </CollapseCard>
+    <CollapseCard title="回撤曲线（%）" class="block">
       <ChartPanel v-if="drawdownOption" :option="drawdownOption as EChartsOption" height="240px" />
-    </el-card>
-    <el-card shadow="never" class="block" header="交易明细">
+    </CollapseCard>
+    <CollapseCard title="交易明细" class="block">
       <!-- 列宽全部用 min-width 参与均分（合计约 900px）：表格恒 100% 铺满、窄容器也不出横向滚动条，富余宽度由信号理由吸收 -->
       <el-table :data="tradeRows" border size="small" max-height="420">
         <el-table-column prop="tradeDate" label="日期" min-width="100" />
@@ -102,7 +103,7 @@
         <el-table-column prop="positionAfter" label="成交后份额" min-width="82" align="right" />
         <el-table-column prop="reason" label="信号理由" min-width="110" show-overflow-tooltip />
       </el-table>
-    </el-card>
+    </CollapseCard>
   </div>
 </template>
 
@@ -114,6 +115,7 @@ import type { EChartsOption, ScatterSeriesOption } from 'echarts'
 import { DOWN, UP } from '@/utils/palette'
 import { changeColorClass } from '@/utils/format'
 import ChartPanel from '@/components/charts/ChartPanel.vue'
+import CollapseCard from '@/components/common/CollapseCard.vue'
 import { backtestDetail, backtestTrades } from '@/api/strategy'
 import type { BacktestRecord, BacktestTrade } from '@/api/strategy'
 

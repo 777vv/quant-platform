@@ -32,6 +32,9 @@ public class FundScaleHistory {
     /** 规模数据截止日（东财披露，通常为季末） */
     private LocalDate scaleDate;
 
+    /** 口径：DISCLOSED=定期报告披露值（值随季报变）；ESTIMATED=每日估算（场内 ETF：份额 × 当日单位净值） */
+    private String source;
+
     /** 创建时间（库默认值） */
     private LocalDateTime createdAt;
 }

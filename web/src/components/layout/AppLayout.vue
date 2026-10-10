@@ -1,7 +1,7 @@
 <template>
   <el-container class="app-layout">
     <el-aside :width="SIDEBAR_WIDTH" class="app-aside">
-      <div class="app-logo">个人量化投资助手</div>
+      <div class="app-logo">策略数据研究平台</div>
       <el-menu
 router
         :default-active="route.path"

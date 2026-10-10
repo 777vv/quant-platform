@@ -30,6 +30,8 @@ import com.quant.ai.prompt.PromptGuard;
 import com.quant.ai.prompt.SystemPrompts;
 import com.quant.ai.service.AiChatService;
 import com.quant.ai.service.AiUsageService;
+import cn.dev33.satoken.stp.StpUtil;
+
 import com.quant.common.exception.BizException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -239,7 +241,9 @@ public class AiChatServiceImpl implements AiChatService {
 
     @Override
     public List<AiSessionVO> sessions() {
+        // V6.21 会话按账号隔离：列表只返回当前登录用户自己的会话
         return sessionMapper.selectList(new LambdaQueryWrapper<AiChatSession>()
+                        .eq(AiChatSession::getUserId, currentUserId())
                         .orderByDesc(AiChatSession::getUpdatedAt).orderByDesc(AiChatSession::getId))
                 .stream()
                 .map(row -> new AiSessionVO(row.getSessionId(), row.getTitle(), row.getUpdatedAt()))
@@ -250,6 +254,10 @@ public class AiChatServiceImpl implements AiChatService {
     public List<AiMessageVO> messages(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new BizException("会话 ID 不能为空");
+        }
+        // V6.21 会话按账号隔离：不是自己的会话一律当作"没有消息"（不泄露存在性，也不回别人内容）
+        if (!ownedByCurrentUser(sessionId)) {
+            return List.of();
         }
         return messageMapper.selectList(new LambdaQueryWrapper<AiChatMessage>()
                         .eq(AiChatMessage::getSessionId, sessionId)
@@ -263,6 +271,10 @@ public class AiChatServiceImpl implements AiChatService {
     public void deleteSession(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new BizException("会话 ID 不能为空");
+        }
+        // V6.21 会话按账号隔离：只能删自己的会话（别人的会话静默跳过，不泄露存在性）
+        if (!ownedByCurrentUser(sessionId)) {
+            return;
         }
         messageMapper.delete(new LambdaQueryWrapper<AiChatMessage>().eq(AiChatMessage::getSessionId, sessionId));
         sessionMapper.delete(new LambdaQueryWrapper<AiChatSession>().eq(AiChatSession::getSessionId, sessionId));
@@ -316,13 +328,21 @@ public class AiChatServiceImpl implements AiChatService {
      * 准备会话：无会话 ID 则新建（标题取提问摘要），并把本轮提问落入 MySQL 全量历史。
      */
     private String prepareSession(String sessionId, String question) {
+        long userId = currentUserId();
         String id = sessionId == null || sessionId.isBlank()
                 ? UUID.randomUUID().toString().replace("-", "") : sessionId;
         AiChatSession session = sessionMapper.selectOne(new LambdaQueryWrapper<AiChatSession>()
                 .eq(AiChatSession::getSessionId, id));
+        // V6.21 会话按账号隔离：会话 ID 存在但属于别人（旧本地缓存、手工构造）时另起一个新会话，
+        // 避免把消息写进别人的历史；memory 的 conversationId 也随之换成新 ID。
+        if (session != null && !userIdEquals(session.getUserId(), userId)) {
+            id = UUID.randomUUID().toString().replace("-", "");
+            session = null;
+        }
         if (session == null) {
             session = new AiChatSession();
             session.setSessionId(id);
+            session.setUserId(userId);
             session.setTitle(question.length() <= TITLE_MAX_LEN ? question
                     : question.substring(0, TITLE_MAX_LEN) + "…");
             session.setUpdatedAt(LocalDateTime.now());
@@ -333,6 +353,23 @@ public class AiChatServiceImpl implements AiChatService {
         }
         insertMessage(id, ROLE_USER, question);
         return id;
+    }
+
+    /** 当前登录用户 ID（会话归属判定的唯一来源） */
+    private long currentUserId() {
+        return StpUtil.getLoginIdAsLong();
+    }
+
+    /** 会话是否属于当前登录用户（会话不存在也算"不是自己的"） */
+    private boolean ownedByCurrentUser(String sessionId) {
+        AiChatSession session = sessionMapper.selectOne(new LambdaQueryWrapper<AiChatSession>()
+                .eq(AiChatSession::getSessionId, sessionId));
+        return session != null && userIdEquals(session.getUserId(), currentUserId());
+    }
+
+    /** 归属比较：库里未迁移的老值（null/0）不算任何人的 */
+    private boolean userIdEquals(Long sessionUserId, long currentUserId) {
+        return sessionUserId != null && sessionUserId == currentUserId;
     }
 
     /** 回答落库（空回答不落，避免污染历史） */

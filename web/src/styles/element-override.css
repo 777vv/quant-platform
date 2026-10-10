@@ -196,6 +196,15 @@
   min-height: var(--el-component-size-small);
 }
 
+/* ---------- 日期区间（daterange）在筛选工具条里被撑大（V6.24 修复） ----------
+   EP 把区间选择器的根节点自己也挂上了 el-input__wrapper 类，而 wrapper 自带 flex-grow: 1；
+   放进 display:flex 的筛选工具条后它就成了可伸缩项，被撑到"内容最大宽"——实测页面声明
+   width: 250px、实际渲染 307px（两侧输入框各被拉到 120px）。这里收回伸缩权，让页面给的宽度
+   真正生效；表单里靠 width: 100% 铺满的日期控件不受影响（宽度由 width 决定，与伸缩无关）。 */
+.el-date-editor.el-range-editor.el-input__wrapper {
+  flex: none;
+}
+
 /* ---------- 表单 ---------- */
 .el-form-item__label {
   font-size: var(--q-font-sm);
@@ -215,6 +224,20 @@
 
 .el-alert {
   border-radius: var(--q-radius-sm);
+}
+
+/* ---------- 提示浮层（tooltip）：长文案限宽换行（V6.19） ----------
+   EP 浮层默认不限宽：长中文会被渲染成横跨屏幕的**一整行**（实测 63 字的信号理由 619px、
+   80 字的口径说明 1107px，都是 32px 高的单行），很难看。这里统一限宽 420px，超出即换行；
+   浮层宽度由内容决定，短文案（"收起""刷新"等）够不到上限、观感不变。
+   ⚠️ 必须排除下拉/选择器的浮层：EP 的 select / dropdown 内部就是拿 tooltip 渲染的，其浮层同时带
+   `el-tooltip` 与 `is-pure` / `el-select__popper` 等类，一起限宽会把宽触发器的下拉压窄。
+   真正的提示气泡不带 `is-pure`、也不带 `*__popper` 面板类。 */
+.el-popper.el-tooltip:not(.is-pure):not([class*='__popper']) {
+  max-width: 420px;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.6;
 }
 
 /* ---------- 主卡（hero）上的次要链接按钮 ----------

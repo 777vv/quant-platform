@@ -122,7 +122,7 @@ public class NotifyServiceImpl implements NotifyService {
         model.put("to", to);
         // 一次性发送器：不读也不写 mailConfigService 的缓存，测试全程不落库
         sendVia(mailConfigService.senderFor(effective), from, to,
-                "【个人量化投资助手】测试邮件", TEMPLATE_TEST, model);
+                "【策略数据研究平台】测试邮件", TEMPLATE_TEST, model);
         // 测试发送是同步接口，成功必须落日志：便于用户在日志里自查是发出去了还是被上游拒了
         LOGGER.info("测试邮件发送成功: to={}（按界面当前填写测试，未改变已存配置）", to);
     }
@@ -169,7 +169,7 @@ public class NotifyServiceImpl implements NotifyService {
         Map<String, Object> model = new HashMap<>();
         model.put("date", date);
         model.put("signals", toRows(actionable));
-        boolean sent = sendWithRetry("【个人量化投资助手】" + date + " 交易信号", TEMPLATE_DIGEST, model);
+        boolean sent = sendWithRetry("【策略数据研究平台】" + date + " 交易信号", TEMPLATE_DIGEST, model);
         if (sent) {
             markNotified(actionable);
         }
@@ -194,7 +194,7 @@ public class NotifyServiceImpl implements NotifyService {
         Map<String, Object> model = new HashMap<>();
         model.put("time", TIME_FMT.format(java.time.LocalDateTime.now()));
         model.put("lagging", rows);
-        sendWithRetry("【个人量化投资助手】数据同步异常告警（" + lagging.size() + " 只）", TEMPLATE_SYNC_ALERT, model);
+        sendWithRetry("【策略数据研究平台】数据同步异常告警（" + lagging.size() + " 只）", TEMPLATE_SYNC_ALERT, model);
     }
 
     @Override
@@ -218,7 +218,7 @@ public class NotifyServiceImpl implements NotifyService {
             rows.add(m);
         }
         model.put("rows", rows);
-        sendWithRetry("【个人量化投资助手】仓位配置偏离告警（" + violations.size() + " 类越界）",
+        sendWithRetry("【策略数据研究平台】仓位配置偏离告警（" + violations.size() + " 类越界）",
                 TEMPLATE_ALLOCATION, model);
     }
 

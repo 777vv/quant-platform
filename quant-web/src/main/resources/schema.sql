@@ -1,5 +1,5 @@
 -- =====================================================
--- 个人量化投资助手 建表脚本（技术文档 4.2，V1.1 口径）
+-- 策略数据研究平台 建表脚本（技术文档 4.2，V1.1 口径）
 -- 全部 IF NOT EXISTS，配合 spring.sql.init.mode=always 幂等启动
 -- 变更说明：position 为 MySQL 关键字，表名调整为 fund_position
 -- =====================================================
@@ -340,15 +340,28 @@ CREATE TABLE IF NOT EXISTS sync_log (
   KEY idx_start_time (start_time)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '同步日志表';
 
--- 15. AI 会话
+-- 15. AI 会话（V6.21 起按账号隔离：user_id 记归属，列表/读取/删除都只认自己那条）
 CREATE TABLE IF NOT EXISTS ai_chat_session (
   id         BIGINT PRIMARY KEY AUTO_INCREMENT,
   session_id VARCHAR(64) NOT NULL COMMENT '会话UUID',
+  user_id    BIGINT      NOT NULL DEFAULT 0 COMMENT '所属用户ID（sys_user.id；0=升级前历史会话，迁移时归管理员）',
   title      VARCHAR(128) DEFAULT '' COMMENT '会话标题',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  UNIQUE KEY uk_session_id (session_id)
+  UNIQUE KEY uk_session_id (session_id),
+  KEY idx_user_updated (user_id, updated_at)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = 'AI会话表';
+
+-- V6.21：老库补 user_id 列与索引（幂等），并把升级前的历史会话归到管理员——
+-- 此前会话是全局共享的，无法逐条还原归属；平台历史上只有管理员真正在用，故归 admin，
+-- 若名单里没有 admin 则保持 0（这些行对任何账号都不可见）。
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ai_chat_session' AND COLUMN_NAME = 'user_id');
+SET @sql := IF(@c = 0, 'ALTER TABLE ai_chat_session ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0 COMMENT ''所属用户ID（sys_user.id；0=升级前历史会话，迁移时归管理员）''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ai_chat_session' AND INDEX_NAME = 'idx_user_updated');
+SET @sql := IF(@c = 0, 'ALTER TABLE ai_chat_session ADD INDEX idx_user_updated (user_id, updated_at)', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+UPDATE ai_chat_session s JOIN sys_user u ON u.username = 'admin' SET s.user_id = u.id WHERE s.user_id = 0;
 
 -- 16. AI 消息
 CREATE TABLE IF NOT EXISTS ai_chat_message (
@@ -518,6 +531,12 @@ CREATE TABLE IF NOT EXISTS fund_scale_history (
   created_at  DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   UNIQUE KEY uk_fund_date (fund_code, stat_date)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '基金规模历史表';
+
+-- V6.15：规模快照加「口径」列——DISCLOSED＝定期报告披露值（原逻辑，值随季报变），
+-- ESTIMATED＝每日估算（场内 ETF：当日份额 × 当日单位净值，与披露同口径但每日可得）。
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_scale_history' AND COLUMN_NAME = 'source');
+SET @sql := IF(@c = 0, 'ALTER TABLE fund_scale_history ADD COLUMN source VARCHAR(12) NOT NULL DEFAULT ''DISCLOSED'' COMMENT ''口径：DISCLOSED=定期报告披露 / ESTIMATED=每日估算（份额×净值）''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- V5.24 市场休市日名单（交易日判定）：把"今天是不是交易日"从"周一到周五"修正为
 -- "工作日且不在休市名单"——定时任务（信号推送/盘中同步）据此在节假日不动作。

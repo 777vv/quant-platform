@@ -101,6 +101,10 @@ public class EastmoneyClient {
             "https://push2.eastmoney.com/api/qt/stock/get?secid={secid}"
                     + "&fields=f57,f58,f43,f60,f170,f107&fltt=2";
 
+    /** 场内 ETF 份额（f84）：东财行情"总股本"字段对 ETF 即份额（实测 f84 × 最新价 = f116 总市值 ✓） */
+    private static final String URL_ETF_SHARE =
+            "https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f84&fltt=2";
+
     private static final String URL_ETF_KLINE_PATH =
             "/api/qt/stock/kline/get?secid={secid}"
                     + "&klt=101&fqt={fqt}&beg={beg}&end={end}"
@@ -321,6 +325,22 @@ public class EastmoneyClient {
                 decimal(data.path("f43")),
                 decimal(data.path("f60")),
                 decimal(data.path("f170"))));
+    }
+
+    /**
+     * 场内 ETF 当日份额（份，V6.15）：取东财行情的 f84（对 ETF 即"总股本"＝份额）。
+     * 走与行情同一条链路（主域 + 备用域、带重试），失败返回 empty 由调用方跳过（次日重试）。
+     */
+    public Optional<BigDecimal> fetchEtfShare(int market, String code) {
+        String url = URL_ETF_SHARE.replace("{secid}", market + "." + code);
+        try {
+            JsonNode data = getJson(url, "https://quote.eastmoney.com/").path("data");
+            BigDecimal shares = data.isMissingNode() || data.isNull() ? null : decimal(data.path("f84"));
+            return shares == null || shares.compareTo(BigDecimal.ZERO) <= 0 ? Optional.empty() : Optional.of(shares);
+        } catch (Exception e) {
+            LOGGER.error("场内份额获取失败[{}]（规模估算跳过，次日重试）", code, e);
+            return Optional.empty();
+        }
     }
 
     /** 单次限频请求：非 2xx/连接异常返回 null（用于场内探测，push2 对无效 secid 会直接断连） */

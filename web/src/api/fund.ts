@@ -114,10 +114,18 @@ export interface WatchItemVO {
   valuationPercentile: number | null
   /** 本地最新数据日期 */
   lastSyncDate: string | null
-  /** 净资产规模（亿元） */
+  /** 最后同步动作时间（含时分秒，V5.49；老数据无此值时为 null） */
+  lastSyncAt: string | null
+  /** 成立日期（V6.13：列表"最后同步"右侧展示；未解析到时为 null） */
+  inceptionDate: string | null
+  /** 净资产规模（亿元）：定期报告披露值（值随季报变） */
   fundScale: number | null
   /** 规模数据截止日 */
   fundScaleDate: string | null
+  /** 每日估算规模（亿元，V6.15）：场内 ETF = 当日份额 × 当日单位净值；场外恒为 null */
+  dailyScale: number | null
+  /** 每日估算规模的数据日（净值日） */
+  dailyScaleDate: string | null
   /** 运作费率（%/年）= 管理费 + 托管费 + 销售服务费 */
   opFeeRate: number | null
   /** 管理费率（%/年） */
@@ -161,10 +169,14 @@ export interface FundDetailVO {
   indexName: string | null
   inceptionDate: string | null
   fundCompany: string | null
-  /** 净资产规模（亿元） */
+  /** 净资产规模（亿元）：定期报告披露值（值随季报变） */
   fundScale: number | null
   /** 规模数据截止日 */
   fundScaleDate: string | null
+  /** 每日估算规模（亿元，V6.15）：场内 ETF = 当日份额 × 当日单位净值；场外恒为 null */
+  dailyScale: number | null
+  /** 每日估算规模的数据日（净值日） */
+  dailyScaleDate: string | null
   /** 运作费率（%/年）= 管理费 + 托管费 + 销售服务费 */
   opFeeRate: number | null
   /** 管理费率（%/年） */
@@ -340,10 +352,12 @@ export function fundDividendYield(code: string, range = 3650) {
 
 /** 基金规模历史点（每日档案刷新成功后逐日积累，自 V5.3 上线日起） */
 export interface FundScalePoint {
-  /** 统计日期（档案刷新成功那天） */
+  /** 统计日期（档案刷新/估算成功那天） */
   date: string
   /** 净资产规模（亿元） */
   scale: number
+  /** 口径：DISCLOSED=定期报告披露值 / ESTIMATED=每日估算（V6.15，场内 ETF 份额×净值）；副图优先画估算 */
+  source: 'DISCLOSED' | 'ESTIMATED'
 }
 
 /** 查询基金规模历史（按日期升序；行情图「规模副图」数据源） */

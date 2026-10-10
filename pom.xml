@@ -16,7 +16,7 @@
     <version>1.0.0</version>
     <packaging>pom</packaging>
     <name>quant-platform</name>
-    <description>个人量化投资助手（单应用多模块）</description>
+    <description>策略数据研究平台（单应用多模块）</description>
 
     <modules>
         <module>quant-common</module>

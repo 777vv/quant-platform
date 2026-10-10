@@ -8,8 +8,7 @@
       title="AI 投资助手（可拖动）"
       @mousedown="startBallDrag"
     >
-      <el-icon :size="22"><ChatDotRound /></el-icon>
-      <span class="ai-ball-text">AI</span>
+      <AiAvatar :size="30" animated class="ai-ball-logo" />
     </div>
 
     <!-- 对话面板 -->
@@ -22,11 +21,18 @@
     >
       <div class="ai-header" @mousedown="startDrag">
         <div class="ai-title">
-          <el-icon><ChatDotRound /></el-icon>
+          <span class="ai-title-badge"><AiAvatar :size="17" /></span>
           <span>AI 投资助手</span>
         </div>
         <div class="ai-header-actions" @mousedown.stop>
-          <el-button link size="small" title="历史会话" @click="toggleSidebar">
+          <!-- 历史会话：再点一次收起侧栏；侧栏展开时按钮保持高亮（可感知当前状态） -->
+          <el-button
+            link
+            size="small"
+            :class="{ 'is-on': sidebarOpen }"
+            :title="sidebarOpen ? '收起历史会话' : '历史会话'"
+            @click="toggleSidebar"
+          >
             <el-icon><Clock /></el-icon>
           </el-button>
           <el-button link size="small" title="新会话" @click="newSession">
@@ -70,10 +76,25 @@
         <!-- 消息区 -->
         <div ref="listEl" class="ai-messages">
           <div v-if="messages.length === 0" class="ai-welcome">
-            <p>可以问我：</p>
-            <ul>
-              <li v-for="tip in SUGGESTIONS" :key="tip" @click="applySuggestion(tip)">{{ tip }}</li>
-            </ul>
+            <!-- 首屏问候：头像 + 一句话定位，避免"只有一个空输入框"的冷启动观感 -->
+            <div class="ai-welcome-hero">
+              <span class="ai-welcome-avatar"><AiAvatar :size="26" animated /></span>
+              <div>
+                <div class="ai-welcome-title">你好，我是 AI 投资助手</div>
+                <div class="ai-welcome-sub">只给买卖建议、不做自动交易；可以从下面这些问题开始</div>
+              </div>
+            </div>
+            <div class="ai-welcome-chips">
+              <button
+                v-for="tip in SUGGESTIONS"
+                :key="tip"
+                type="button"
+                class="ai-chip"
+                @click="applySuggestion(tip)"
+              >
+                {{ tip }}
+              </button>
+            </div>
             <el-alert
               v-if="config && !config.configured"
               type="warning"
@@ -84,7 +105,10 @@
           </div>
 
           <div v-for="(message, index) in messages" :key="index" class="ai-message" :class="`ai-message--${message.role}`">
-            <div class="ai-message-role">{{ message.role === 'user' ? '我' : 'AI' }}</div>
+            <div class="ai-message-role">
+              <AiAvatar v-if="message.role === 'assistant'" :size="15" />
+              <template v-else>我</template>
+            </div>
             <div class="ai-message-content">
               <!-- 用户消息按纯文本渲染；助手回答经 Markdown 渲染并做 XSS 过滤 -->
               <template v-if="message.role === 'user'">{{ message.content }}</template>
@@ -118,6 +142,7 @@
           :disabled="overLimit"
           :placeholder="overLimit ? '今日额度已用完，明日 00:00 自动恢复' : '输入问题，Enter 发送 / Shift+Enter 换行'"
           @keydown.enter.exact.prevent="send"
+          @focus="onInputFocus"
         />
         <div class="ai-input-actions">
           <span class="ai-hint" :class="{ 'is-over': overLimit }">
@@ -154,7 +179,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ChatDotRound, Clock, Delete, Loading, Minus, Plus } from '@element-plus/icons-vue'
+import { Clock, Delete, Loading, Minus, Plus } from '@element-plus/icons-vue'
+import AiAvatar from './AiAvatar.vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
@@ -176,7 +202,13 @@ import { PERM } from '@/utils/permissions'
 const userStore = useUserStore()
 
 /** 首屏引导问题 */
-const SUGGESTIONS = ['我的持仓现在怎么样？', '510300 现在什么价位？', '最近有什么买卖信号？', '沪深300 估值贵不贵？']
+const SUGGESTIONS = [
+  '我的持仓现在怎么样？',
+  '现在平台配置了哪些策略？',
+  '510300 现在什么价位？',
+  '最近有什么买卖信号？',
+  '沪深300 估值贵不贵？'
+]
 
 /** 工具名 → 中文过程提示 */
 const TOOL_LABELS: Record<string, string> = {
@@ -193,8 +225,11 @@ const TOOL_LABELS: Record<string, string> = {
   getIndexQuoteByName: '查询指数行情'
 }
 
-/** 会话 ID 本地留存键（刷新后仍可继续同一会话） */
-const SESSION_KEY = 'quant_ai_session'
+/**
+ * 会话 ID 本地留存键：**按账号分键**（V6.21 会话隔离）。
+ * 同一浏览器换账号登录时各读各的键，不会把上一个账号的会话带进新账号。
+ */
+const sessionKey = computed(() => `quant_ai_session::${userStore.userInfo?.username ?? 'anonymous'}`)
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -210,7 +245,7 @@ const question = ref('')
 const messages = ref<ChatMessage[]>([])
 const sessions = ref<AiSessionVO[]>([])
 const config = ref<AiConfigVO | null>(null)
-const sessionId = ref<string>(localStorage.getItem(SESSION_KEY) ?? '')
+const sessionId = ref<string>('')
 const streaming = ref(false)
 const toolHint = ref('')
 /** 今日用量与额度（用量条 + 超限拦截的依据；查询失败不阻塞对话） */
@@ -353,12 +388,50 @@ function renderMarkdown(text: string): string {
   return DOMPurify.sanitize(html)
 }
 
+/**
+ * 读回"本账号"上次的会话 ID（刷新后继续同一会话）。
+ * 按需读取而不是 setup 顶层读一次：userInfo 由路由守卫拉取，可能在组件挂载之后才就绪。
+ * 兼容升级前的全局键 `quant_ai_session`（V6.21 前不分账号）：仅管理员继承一次并清掉旧键，
+ * 避免升级后"当前会话突然没了"；其他账号不继承，防止串会话。
+ */
+function restoreSession() {
+  if (sessionId.value) {
+    return
+  }
+  const stored = localStorage.getItem(sessionKey.value)
+  const legacyKey = 'quant_ai_session'
+  const legacy = userStore.userInfo?.username === 'admin' ? localStorage.getItem(legacyKey) : null
+  sessionId.value = stored ?? legacy ?? ''
+  if (!stored && legacy) {
+    localStorage.setItem(sessionKey.value, legacy)
+    localStorage.removeItem(legacyKey)
+  }
+}
+
 async function openPanel() {
   open.value = true
+  restoreSession()
   if (!config.value) {
     await loadConfig()
   }
   await loadUsage()
+  await restoreMessages()
+}
+
+/** 恢复上次会话的消息（无本地会话 ID 时不动） */
+async function restoreMessages() {
+  if (!sessionId.value || messages.value.length > 0) {
+    return
+  }
+  try {
+    const rows = await aiMessages(sessionId.value)
+    messages.value = rows.map((row) => ({ role: row.role as 'user' | 'assistant', content: row.content }))
+    scrollToBottom()
+  } catch {
+    // 会话不存在或不属于当前账号（服务端已按账号隔离）：丢弃本地 ID，回到新会话状态
+    sessionId.value = ''
+    localStorage.removeItem(sessionKey.value)
+  }
 }
 
 async function loadConfig() {
@@ -376,7 +449,7 @@ async function loadSessions() {
 /** 载入某个历史会话的消息 */
 async function loadSession(id: string) {
   sessionId.value = id
-  localStorage.setItem(SESSION_KEY, id)
+  localStorage.setItem(sessionKey.value, id)
   const rows = await aiMessages(id)
   messages.value = rows.map((row) => ({ role: row.role as 'user' | 'assistant', content: row.content }))
   scrollToBottom()
@@ -385,7 +458,7 @@ async function loadSession(id: string) {
 /** 新建会话：清空当前消息与本地会话 ID（下一条提问会自动建会话） */
 function newSession() {
   sessionId.value = ''
-  localStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(sessionKey.value)
   messages.value = []
   toolHint.value = ''
 }
@@ -405,11 +478,19 @@ async function removeSession(id: string) {
   await loadSessions()
 }
 
+/**
+ * 历史会话开关：展开时拉一次列表，**再点一次即收起**（按钮同步给出高亮态）。
+ */
 async function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
   if (sidebarOpen.value) {
     await loadSessions()
   }
+}
+
+/** 输入框获得焦点：自动收起历史会话侧栏，把宽度让给对话（用户要求） */
+function onInputFocus() {
+  sidebarOpen.value = false
 }
 
 function applySuggestion(text: string) {
@@ -457,7 +538,7 @@ async function send() {
         switch (event.type) {
           case 'session':
             sessionId.value = event.sessionId
-            localStorage.setItem(SESSION_KEY, event.sessionId)
+            localStorage.setItem(sessionKey.value, event.sessionId)
             break
           case 'tool':
             toolHint.value = `${TOOL_LABELS[event.name] ?? '查询数据'}…`
@@ -598,18 +679,9 @@ function startResize(event: MouseEvent, dir: ResizeDir) {
 onMounted(() => {
   loadConfig()
   loadUsage()
-  // 刷新后恢复上次会话的历史（FR6：刷新后会话保留）
-  if (sessionId.value) {
-    aiMessages(sessionId.value)
-      .then((rows) => {
-        messages.value = rows.map((row) => ({ role: row.role as 'user' | 'assistant', content: row.content }))
-        scrollToBottom()
-      })
-      .catch(() => {
-        sessionId.value = ''
-        localStorage.removeItem(SESSION_KEY)
-      })
-  }
+  // 刷新后恢复本账号上次会话的历史（FR6：刷新后会话保留；V6.21 起按账号取键）
+  restoreSession()
+  restoreMessages()
 })
 </script>
 
@@ -619,26 +691,66 @@ onMounted(() => {
   /* 位置由 ballStyle 的 left/top 决定（可拖拽，默认右下角） */
   z-index: 2000;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--q-color-primary), var(--q-color-primary-active));
+  background: var(--q-ai-ball-bg);
   color: var(--q-text-inverse);
   cursor: pointer;
-  box-shadow: var(--q-shadow-primary);
-  transition: transform 0.15s;
+  box-shadow: var(--q-shadow-primary), var(--q-ai-ball-inner-ring);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* 球面高光：左上柔光叠在渐变之上，做出玻璃球的立体感 */
+.ai-ball::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--q-ai-ball-sheen);
+  pointer-events: none;
+}
+
+/* 呼吸光环：向外扩散的两圈脉冲，提示"助手在线"（纯 box-shadow，不占布局） */
+.ai-ball::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 0 var(--q-ai-ball-halo);
+  animation: ai-ball-pulse 2.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes ai-ball-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--q-ai-ball-halo);
+  }
+
+  70%,
+  100% {
+    box-shadow: 0 0 0 14px var(--q-ai-ball-halo-fade);
+  }
 }
 
 .ai-ball:hover {
   transform: scale(1.06);
+  box-shadow: var(--q-ai-ball-shadow-hover), var(--q-ai-ball-inner-ring);
 }
 
-.ai-ball-text {
-  font-size: 12px;
-  line-height: 1;
+/* 图标压在高光/光环之上（两者都是定位元素，不给 z-index 会盖住内容） */
+.ai-ball-logo {
+  position: relative;
+  z-index: 1;
+}
+
+/* 尊重系统"减弱动态效果"设置：关掉呼吸光环 */
+@media (prefers-reduced-motion: reduce) {
+  .ai-ball::after {
+    animation: none;
+  }
 }
 
 .ai-panel {
@@ -647,7 +759,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--q-bg-card);
-  border-radius: var(--q-radius-md);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-lg);
   box-shadow: var(--q-shadow-float);
   overflow: hidden;
 }
@@ -656,12 +769,14 @@ onMounted(() => {
   user-select: none;
 }
 
+/* 标题栏：深色侧栏色 → 品牌深蓝的渐变，底部一条半透明分隔线 */
 .ai-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: var(--q-space-2) var(--q-space-3);
-  background: var(--q-sidebar-bg-deep);
+  background: var(--q-ai-head-bg);
+  border-bottom: 1px solid var(--q-ai-head-line);
   color: var(--q-text-inverse);
   cursor: move;
 }
@@ -674,8 +789,30 @@ onMounted(() => {
   font-weight: 600;
 }
 
+/* 头像角标：深底上给头像一个半透明圆形底座，避免线稿"飘"在渐变上 */
+.ai-title-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--q-ai-head-badge);
+}
+
 .ai-header-actions :deep(.el-button) {
-  color: var(--q-border);
+  color: var(--q-sidebar-text);
+}
+
+.ai-header-actions :deep(.el-button:hover) {
+  color: var(--q-text-inverse);
+  background: var(--q-ai-head-badge);
+}
+
+/* 历史会话展开中：按钮保持高亮，明确"再点一次是收起" */
+.ai-header-actions :deep(.el-button.is-on) {
+  color: var(--q-text-inverse);
+  background: var(--q-ai-head-badge);
 }
 
 /* 今日用量条（V3.9）：一行文字 + 细进度条；三档配色见 --normal/--warn/--over */
@@ -684,7 +821,7 @@ onMounted(() => {
   flex: none;
   align-items: center;
   gap: var(--q-space-2);
-  padding: 4px 10px;
+  padding: var(--q-space-1) var(--q-space-3);
   font-size: var(--q-font-xs);
   color: var(--q-text-secondary);
   background: var(--q-bg-subtle);
@@ -734,10 +871,10 @@ onMounted(() => {
 
 /* 单条回答的用量脚注 */
 .ai-usage-note {
-  margin-top: 6px;
-  padding-top: 4px;
+  margin-top: var(--q-space-1);
+  padding-top: var(--q-space-1);
   border-top: 1px dashed var(--q-border);
-  font-size: 12px;
+  font-size: var(--q-font-xs);
   color: var(--q-text-muted);
 }
 
@@ -748,7 +885,7 @@ onMounted(() => {
 }
 
 .ai-sidebar {
-  width: 150px;
+  width: 152px;
   flex: none;
   border-right: 1px solid var(--q-border);
   display: flex;
@@ -757,16 +894,20 @@ onMounted(() => {
 }
 
 .ai-sidebar-head {
-  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--q-space-2) var(--q-space-3);
   font-size: var(--q-font-xs);
+  font-weight: 600;
   color: var(--q-text-secondary);
-  border-bottom: 1px solid var(--q-border);
+  border-bottom: 1px solid var(--q-border-light);
 }
 
 .ai-session-list {
   flex: 1;
   margin: 0;
-  padding: 4px 0;
+  padding: var(--q-space-1) 0;
   list-style: none;
   overflow-y: auto;
 }
@@ -776,7 +917,7 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: var(--q-space-1);
-  padding: 7px 10px;
+  padding: var(--q-space-2) var(--q-space-3);
   font-size: var(--q-font-xs);
   cursor: pointer;
 }
@@ -802,7 +943,7 @@ onMounted(() => {
 }
 
 .ai-session-empty {
-  padding: 10px;
+  padding: var(--q-space-3);
   font-size: var(--q-font-xs);
   color: var(--q-text-muted);
   text-align: center;
@@ -811,7 +952,7 @@ onMounted(() => {
 .ai-messages {
   flex: 1;
   min-width: 0;
-  padding: 12px;
+  padding: var(--q-space-3);
   overflow-y: auto;
   background: var(--q-bg-subtle);
 }
@@ -821,15 +962,68 @@ onMounted(() => {
   color: var(--q-text-regular);
 }
 
-.ai-welcome ul {
-  margin: 8px 0 12px;
-  padding-left: 18px;
+/* 首屏问候：圆形头像底座 + 标题 + 一句定位说明 */
+.ai-welcome-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  padding: var(--q-space-3);
+  border: 1px solid var(--q-border-light);
+  border-radius: var(--q-radius-md);
+  background: var(--q-bg-card);
 }
 
-.ai-welcome li {
-  margin: 4px 0;
-  color: var(--q-color-primary);
+.ai-welcome-avatar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--q-text-inverse);
+  background: var(--q-ai-ball-bg);
+  box-shadow: var(--q-ai-ball-inner-ring);
+}
+
+.ai-welcome-title {
+  font-size: var(--q-font-base);
+  font-weight: 600;
+  color: var(--q-text-primary);
+}
+
+.ai-welcome-sub {
+  margin-top: 2px;
+  font-size: var(--q-font-xs);
+  color: var(--q-text-muted);
+}
+
+/* 建议问题：药丸按钮（可悬停、可键盘聚焦），比纯文字链接更"可点" */
+.ai-welcome-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--q-space-2);
+  margin: var(--q-space-3) 0;
+}
+
+.ai-chip {
+  padding: var(--q-space-1) var(--q-space-3);
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-lg);
+  background: var(--q-bg-card);
+  color: var(--q-text-regular);
+  font-family: inherit;
+  font-size: var(--q-font-xs);
+  line-height: 1.7;
   cursor: pointer;
+  transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.ai-chip:hover {
+  color: var(--q-color-primary);
+  border-color: var(--q-color-primary-border);
+  background: var(--q-color-primary-soft);
+  transform: translateY(-1px);
 }
 
 .ai-message {
@@ -838,32 +1032,46 @@ onMounted(() => {
   margin-bottom: var(--q-space-3);
 }
 
+/* 我的角标：中性灰底圆片 */
 .ai-message-role {
+  display: flex;
   flex: none;
+  align-items: center;
+  justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: var(--q-radius-sm);
+  border-radius: 50%;
   font-size: var(--q-font-xs);
-  line-height: 24px;
-  text-align: center;
-  color: var(--q-text-inverse);
-  background: var(--q-text-secondary);
+  color: var(--q-text-secondary);
+  background: var(--q-bg-hover);
 }
 
+/* 助手角标：与浮球同款渐变球 + 白色头像，强化"始终是同一个助手" */
 .ai-message--assistant .ai-message-role {
-  background: var(--q-color-primary);
+  color: var(--q-text-inverse);
+  background: var(--q-ai-ball-bg);
+  box-shadow: var(--q-ai-ball-inner-ring);
 }
 
 .ai-message-content {
   flex: 1;
   min-width: 0;
-  padding: 8px 10px;
-  border-radius: var(--q-radius-sm);
+  padding: var(--q-space-2) var(--q-space-3);
+  border: 1px solid var(--q-border-light);
+  border-radius: var(--q-radius-md);
+  /* 靠近角标的一角收小，气泡"朝向"说话人 */
+  border-top-left-radius: var(--q-radius-sm);
   background: var(--q-bg-card);
   font-size: var(--q-font-sm);
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 我的消息：品牌浅底 + 品牌描边，与助手的白底气泡一眼分开 */
+.ai-message--user .ai-message-content {
+  background: var(--q-color-primary-soft);
+  border-color: var(--q-color-primary-border);
 }
 
 .ai-message--assistant .ai-message-content {
@@ -918,16 +1126,22 @@ onMounted(() => {
 
 .ai-input {
   flex: none;
-  padding: 8px 10px;
-  border-top: 1px solid var(--q-border);
+  padding: var(--q-space-3);
+  border-top: 1px solid var(--q-border-light);
   background: var(--q-bg-card);
+}
+
+/* 聚焦时给输入框一圈品牌柔光，明确"现在可以打字" */
+.ai-input :deep(.el-textarea__inner:focus) {
+  border-color: var(--q-color-primary);
+  box-shadow: 0 0 0 3px var(--q-color-primary-soft);
 }
 
 .ai-input-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 6px;
+  margin-top: var(--q-space-2);
 }
 
 .ai-hint {
@@ -940,10 +1154,34 @@ onMounted(() => {
 }
 
 .ai-disclaimer {
-  margin-top: 6px;
-  font-size: 12px;
+  margin-top: var(--q-space-1);
+  font-size: var(--q-font-xs);
   color: var(--q-text-muted);
   line-height: 1.5;
+}
+
+/* 细滚动条：默认滑块偏粗偏亮，换成令牌灰的窄条，长列表也不刺眼 */
+.ai-messages,
+.ai-session-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--q-border) transparent;
+}
+
+.ai-messages::-webkit-scrollbar,
+.ai-session-list::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ai-messages::-webkit-scrollbar-thumb,
+.ai-session-list::-webkit-scrollbar-thumb {
+  border-radius: var(--q-radius-sm);
+  background: var(--q-border);
+}
+
+.ai-messages::-webkit-scrollbar-track,
+.ai-session-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* 四角缩放手柄：基类只定尺寸，位置与对角线光标由方向修饰类给出 */

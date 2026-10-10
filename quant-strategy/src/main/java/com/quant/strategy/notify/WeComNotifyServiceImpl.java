@@ -134,7 +134,7 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
         if (!isConfigured(row)) {
             throw new BizException("微信通知配置不完整：请先填写企业 ID、AgentId 与 Secret 再测试");
         }
-        String content = "【个人量化投资助手】微信通知测试成功（" + DATE_FMT.format(LocalDate.now()) + "）。"
+        String content = "【策略数据研究平台】微信通知测试成功（" + DATE_FMT.format(LocalDate.now()) + "）。"
                 + "后续交易信号将推送到此会话。";
         sendText(row, content);
         LOGGER.info("微信测试消息发送成功：touser={}（按界面当前填写测试，未改变已存配置）", row.getTouser());
@@ -150,7 +150,7 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
         }
         try {
             String nl = System.lineSeparator();
-            StringBuilder sb = new StringBuilder("【个人量化投资助手】仓位配置偏离告警");
+            StringBuilder sb = new StringBuilder("【策略数据研究平台】仓位配置偏离告警");
             sb.append(nl).append("总资产 ").append(result.totalAssets())
                     .append(" 元（现金 ").append(result.cashBalance()).append(" 元）");
             for (com.quant.fund.dto.AllocationCheckVO.Row v : violations) {
@@ -192,7 +192,7 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
     /** 组装当日买卖信号文本（一条消息容纳全部，超长截断） */
     private String buildDigestText(List<SignalRecord> actionable) {
         LocalDate date = actionable.get(0).getSignalDate();
-        StringBuilder sb = new StringBuilder("【个人量化投资助手】交易信号 ")
+        StringBuilder sb = new StringBuilder("【策略数据研究平台】交易信号 ")
                 .append(DATE_FMT.format(date)).append('\n');
         for (SignalRecord signal : actionable) {
             sb.append('\n')

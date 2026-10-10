@@ -1,6 +1,6 @@
 ---
 name: frontend-ui
-description: 本项目（个人量化投资助手）前端 UI 开发与样式改造的强制规范。当需要新增/修改 web/ 下的任何 Vue 页面、组件、样式，或调整配色、间距、图表、表格、卡片外观时，必须先读本规范并按其执行。包含设计 token 体系、颜色使用禁令、组件模式、图表调色板、检查脚本用法。触发词：前端、样式、UI、配色、Vue 组件、页面美化、ECharts 配置、Element Plus 覆盖。
+description: 本项目（策略数据研究平台）前端 UI 开发与样式改造的强制规范。当需要新增/修改 web/ 下的任何 Vue 页面、组件、样式，或调整配色、间距、图表、表格、卡片外观时，必须先读本规范并按其执行。包含设计 token 体系、颜色使用禁令、组件模式、图表调色板、检查脚本用法。触发词：前端、样式、UI、配色、Vue 组件、页面美化、ECharts 配置、Element Plus 覆盖。
 ---
 
 # 前端 UI 规范（数据驾驶舱风格 · V2.0）
@@ -80,6 +80,7 @@ description: 本项目（个人量化投资助手）前端 UI 开发与样式改
 - **需要"置顶某类行"时在服务端分段取数**（如"持仓优先"= 持仓段一次性取出 + 其余段按偏移量取），不要依赖数据库方言的布尔排序（`FIELD()`/`CASE` 之类），否则换库即坏、也难审查。
 - 派生字段（合计、比率）由后端算好放进 VO，前端只做展示与悬浮明细，避免同一算法在前后端各写一份。
 - 表头文案用 2-4 个字（如「市值」「占比」「当日盈亏」），列宽固定数值列、名称列 `min-width` + `show-overflow-tooltip`。
+- **长文本列（信号理由/说明/备注/失败原因）必须给 `show-overflow-tooltip`**：单元格里省略号截断、悬浮看全文；悬浮框的限宽换行由全局规则兜底（见 3.5），**不要为某一列单独写 popper 样式**。
 
 ### 3.2.0 尺寸校正与后台标签页 ⚠️
 - **后台标签页会冻结 `requestAnimationFrame` 与 `ResizeObserver`**（实测：标签在后台时容器高度变了、画布不跟）。凡是靠它们做尺寸校正的代码（图表 resize、进入动画等）都不可靠，**必须有定时器或普通事件兜底**。
@@ -90,6 +91,12 @@ description: 本项目（个人量化投资助手）前端 UI 开发与样式改
 - 标记渲染成独立 `scatter` 系列，**交给 ECharts 按可见窗口自动裁剪**，前端不要再算一遍可见集合；同一日同类型在后端或前端合并。
 - 标记**不要进 tooltip**（`series.tooltip.show = false`）：避免用"日期对应的价格"污染原有悬停信息，识别靠字母气泡 + 图上的文字说明（如「标记：b 买入 / s 卖出 / q 分红除息」）。
 - 颜色从 `@/utils/palette` 取（买=涨色、卖=跌色、事件=品牌蓝），字母颜色用 `TEXT_INVERSE`，不要在页面里写 `#ffffff`（`check:style` 会拦）。
+
+### 3.2.2 可收起/展开的卡片（`CollapseCard`，V6.18）
+- 长页面的模块卡（回测结果页的概况/资金曲线/回撤曲线/交易明细）用 `@/components/common/CollapseCard.vue` 包裹：**默认展开**，标题条整条可点（含键盘 Enter/空格）收起/展开，收起后只留标题条，减少滚动距离。
+- 用法：`<CollapseCard title="交易明细" class="block"><el-table … /></CollapseCard>`——卡片本体是 `el-card`，`class`/样式照常透传；标题由 `title` prop 给，**不要**再在内容里写一份同名小标题（会重复）。
+- **收起必须用 `v-show`（组件内部已如此）而不是 `v-if`**：卡内图表/表格的 DOM 与 ECharts 实例要保留，重新展开时 `ChartPanel` 内置的 ResizeObserver 会按恢复后的尺寸自动 resize；用 `v-if` 会重建画布并丢 dataZoom 等交互状态。
+- 收起态左右箭头：展开为向下、收起为向右（`CaretBottom` 旋转 -90°），悬停变品牌蓝——这是"该点哪里"的唯一提示，别省。
 
 ### 3.3.1 指标/统计表的展示口径
 - **"区间表现"这类统计表，口径 = 图上当前可见的那一段**（所见即所测）：页面把图表的可见窗口（`dataZoom` 的 start/end 百分比或框选索引）换算成日期区间与序列切片，再算涨跌幅/最大回撤/年化波动率，缩放或框选后自动重算，不再请求接口。指标函数放 `utils/metrics.ts` 共用，前后两处各写一份必然走散。
@@ -118,7 +125,10 @@ description: 本项目（个人量化投资助手）前端 UI 开发与样式改
 - **录入页与更正页分离**：新增走统一录入组件（口径一致），更正历史数据用可全字段手改的独立表单——历史数据可能本就不满足新口径（如金额 ≠ 价×量），套用派生规则会把数据改坏。
 - **多字段参数表单用「自适应网格」，不要竖向一列到底**：一个表单里有 6~8 个短字段（策略参数、回测配置这类）时，逐项竖排会在宽容器里"每个字段独占一整行、输入框固定 150px、右侧大片空白"，又长又空。做法：外层 `display: grid; grid-template-columns: repeat(auto-fill, minmax(下限, 1fr))`（列数随**容器**宽度自适应，比 `el-col` 的视口断点更合适，因为同一个组件会同时出现在宽卡片与窄弹窗里），**列宽下限按内容取**：数字/日期等短控件取 `200px`（一行 5~6 个——V5.79 用户拍板的密度，340px 时一行只有 3~4 个会显得空旷）、标签或说明很长的取 `340px`；控件 `width: 100%` 铺满格子，跨行的说明块（`el-alert`/提示）加 `grid-column: 1 / -1`。实测收益：回测区 6 个参数 292px 高 → 86px（6 行 → 4+2 两行）、弹窗 7 个参数 → 2+2+2+1 四行。
 - **网格单元一律「标签置顶」，不要标签与控件左右排**（V5.78 用户反馈：左右排时标签文字长短不齐——同列里"初始仓位份额"6 字挤、"底仓份额"4 字松，控件左边缘参差、宽度有长有短，整片看着乱）。做法：`:deep(.el-form-item){display:block}` + `:deep(.el-form-item__label){display:flex;width:100%;height:auto;justify-content:flex-start;margin-bottom:var(--q-space-1)}`；铺满后的数字框内容改左对齐（居中在大宽框里没锚点）；单选按钮组同样铺满并均分（`:deep(.el-radio-group){display:flex;width:100%}` + `:deep(.el-radio-button){flex:1}`），与输入框同宽保持整列节奏。同一卡片里的**筛选字段与参数网格用同一套栅格**（相同 minmax 与 gap），两区块列列对齐。
-- **字段说明用问号 + 限宽浮层**：参数含义长（一句话 50~80 字）时，挂在标签后的问号上。浮层必须**限宽并允许换行**，否则 Element Plus 会把它渲染成一条很长的单行。做法：`ElTooltip` 用 `content` 插槽放一个 `<div class="param-help-text">`，并给 `popperClass` 加样式——浮层被 teleport 到 `body`，**scoped 样式命中不到**，需单独一段非 scoped 样式（类名带前缀）：`.param-help-text { max-width: 316px; white-space: normal; line-height: 1.7; }`。
+- **筛选工具条里的控件要"给宽度、不伸缩"（V6.24 实测踩坑）**：EP 的**日期区间选择器**（`el-date-picker type="daterange"`）根节点自带 `el-input__wrapper` 类，而 wrapper 有 `flex-grow: 1`——放进 `display:flex` 的筛选工具条后它会被撑到"内容最大宽"：页面声明 `width: 250px`、**实际渲染 307px**（两侧日期输入框各被拉到 120px），看起来"莫名其妙很宽"。已在 `element-override.css` 统一收回伸缩权（`.el-date-editor.el-range-editor.el-input__wrapper { flex: none }`），页面照常声明宽度即可；**daterange 的最小可用宽度约 220px**（两个 10 位日期各 75.6px + 分隔符 25px + 日历图标 14px + 内边距 20px ≈ 224px），再窄日期会被截断——本项在基金对比页按 220px 定型。
+- **字段说明用问号 + 限宽浮层**：参数含义长（一句话 50~80 字）时，挂在标签后的问号上。**浮层限宽换行已由全局兜底（V6.19）**——`element-override.css` 里有 `.el-popper.el-tooltip:not(.is-pure):not([class*='__popper']) { max-width: 420px; white-space: normal; word-break: break-word; line-height: 1.6 }`，覆盖 `el-tooltip`（含问号帮助）、表格 `show-overflow-tooltip`、以及任何 `content` 属性和插槽写法；**新增提示不要自己写换行样式**。只有需要**特殊宽度/排版**的浮层才用 `popper-class` + 单独一段**非 scoped**样式（浮层被 teleport 到 `body`，scoped 命中不到；类名带前缀）——既有特例：`.param-help-text` 316px、`.profit-calendar-help-popper` 336px。
+  - ⚠️ **选择器必须排除下拉/选择器面板**：EP 的 `select` / `dropdown` **内部就是用 tooltip 渲染的**，其浮层同时带 `el-tooltip` 与 `is-pure` / `el-select__popper` 等类——只写 `.el-popper.el-tooltip` 会把宽触发器的下拉也压到 420px（V6.19 实测踩到）。判据：提示气泡不带 `is-pure`、也不带 `*__popper` 面板类；也**不要**写裸 `.el-popper`（那是所有浮层的基类）。
+  - 反面实例（V6.19 实测）：不加限宽时，63 字的「信号理由」浮层 619px、80 字的口径说明 **1107px**，全是 32px 高的单行、横跨整个视口——用户反馈"全部在一行，很难看"。
 
 ### 3.6.0 页面宽度（避免宽屏留白）
 - 设置类页面给 `max-width` 时**必须同时 `margin: 0 auto`**：否则在宽屏上左对齐、右侧空出一大块，观感就是"缺了一块"。
@@ -138,6 +148,8 @@ description: 本项目（个人量化投资助手）前端 UI 开发与样式改
 
 ### 3.6 页面骨架
 - **浮动组件的拖拽**：面板类浮窗（如 AI 助手）给标题栏绑定 `mousedown` 拖动；**折叠态的那个圆形入口也必须能拖**（只给面板标题栏绑拖拽，用户拖球没反应会被当成"不能拖"）。拖动与点击要按位移阈值区分（本项 < 5px 视为点击），并把位置写入共享状态，让面板展开时贴着球所在角落；默认位置固定在**右下角**（边距 24px）。
+- **AI 助手浮球的外观（V6.20 起，V6.21 改人像）**：球体 = `--q-ai-ball-bg`（左上高光的品牌蓝径向渐变）+ `--q-ai-ball-inner-ring` 内侧 1px 亮边做出玻璃球质感；`::before` 叠一层 `--q-ai-ball-sheen` 高光，`::after` 是 2.6s 向外扩散的**呼吸光环**（`--q-ai-ball-halo` → `--q-ai-ball-halo-fade`，纯 `box-shadow`、不占布局、`pointer-events:none` 所以不影响拖拽与点击）；悬停放大 1.06 + 加深光晕。
+- **AI 助手头像与面板（V6.21，标记与色值都是单一来源；V6.22 改圆脸表情）**：头像 `components/ai/AiAvatar.vue` 走"**球体即脸、只画表情**"的画法——两只椭圆眼 + 微笑弧 + 两片低透明度腮红（`opacity: .45`，不抢眼睛）+ 右上角一枚小火花点出"AI 生成"语义；`size` / `animated` 两个 prop，**浮球、面板标题角标、助手消息角标三处共用同一枚**（不要一处自绘、一处用 EP 图标，也别照搬任何现成产品的标识形状）。动画三条：整枚 3.4s 上下起伏（呼吸）、眼睛 4.6s 眨动（`transform-box: fill-box` 按眼睛自身中心 `scaleY`）、火花 2.6s 明暗闪动，全部要在 `prefers-reduced-motion: reduce` 下关闭。面板质感的口径：标题栏用 `--q-ai-head-bg` 品牌渐变 + `--q-ai-head-badge` 半透明头像底座，工具栏按钮要有**当前状态高亮**（历史会话展开时 `is-on`）；首屏问候＝圆头像底座 + 标题 + 一句定位说明，建议问题用**药丸 chips**（可悬停可键盘聚焦，不要用裸文字链接）；消息气泡我方=品牌浅底+品牌描边、助手=白底+浅描边，靠近角标的一角收小；输入框聚焦给品牌柔光（`--q-color-primary-soft` 3px）；长列表用细滚动条。半透明色值只允许写在 `tokens.css` 的 `--q-ai-*` 一组里。
 - 页面骨架见下方小节。**深色/玻璃底页面（登录页等）**：容器加 `.q-on-dark`，输入框/表单标签/卡片配色由 `element-override.css` 统一提供（`--q-login-*` 一组 token），不得在页面里逐个 `:deep()` 改内置组件；装饰图形（K 线剪影、网格、光晕）用内联 SVG + 固定数组生成，`fill/stroke` 取 token，且容器加 `aria-hidden="true"`。
 - 装饰性图形的图案要**手工固定**（数组常量），不要随机生成，否则每次渲染形态都在变。
 
@@ -146,7 +158,9 @@ description: 本项目（个人量化投资助手）前端 UI 开发与样式改
 
 ## 4. 图表调色板（`src/utils/palette.ts`）
 
-`UP` `DOWN` `FLAT`（涨跌）· `PRIMARY` `BENCHMARK` `PE_LINE` `VOLUME`（序列）· `AXIS_LINE` `AXIS_LABEL` `SPLIT_LINE`（坐标轴）· `TEXT_PRIMARY` `TEXT_SECONDARY`（图例）· `CANDLE_UP` `CANDLE_DOWN`（K 线）· `PIE_PALETTE`（饼图按序取色）· `SIDEBAR_*`（el-menu props）· `changeColor(v)` 取涨跌色。
+`UP` `DOWN` `FLAT`（涨跌）· `PRIMARY` `BENCHMARK` `PE_LINE` `VOLUME`（序列）· `AXIS_LINE` `AXIS_LABEL` `SPLIT_LINE`（坐标轴）· `TEXT_PRIMARY` `TEXT_SECONDARY`（图例）· `CANDLE_UP` `CANDLE_DOWN`（K 线）· `PIE_PALETTE`（饼图按序取色）· `COMPARE_COLORS`（多基金对比，5 色）· `MA_COLORS`（6 条均线）· `SIDEBAR_*`（el-menu props）· `changeColor(v)` 取涨跌色。
+
+> **多序列"身份色"的选色口径（V6.22）**：一条线代表一个实体（基金/资产）而不是状态时，**必须避开 `UP`/`DOWN` 红绿**（红涨绿跌在本站是语义色，拿去当基金身份会被误读成涨跌），并且**色相要拉开**（蓝/琥珀/青绿/紫/玫红这样跨色相），相邻槽位一眼能分；颜色与槽位绑定（`slotColor(index)`），某条序列取数失败被跳过时**颜色不跟着挪位**，图和表（色点）用同一个来源。
 
 > `palette.ts` 与 `tokens.css` 的色值必须保持镜像：改一处必须同步另一处（改色只改这两个文件）。
 
@@ -195,6 +209,11 @@ export async function fetchCached(key: string, force = false): Promise<{ data: T
 <el-tag :type="delta > 0 ? 'danger' : 'success'">
 
 <!-- ✓ 涨跌用语义色，标签语义用 EP 类型（如下单方向可继续用 danger/success） -->
+
+<!-- ✗ 长文案浮层不管宽度：EP 会把它渲染成横跨屏幕的一整行（实测 1107px） -->
+<el-tooltip content="很长的一段口径说明……"><el-icon><QuestionFilled /></el-icon></el-tooltip>
+<!-- ✓ 全局已兜底（element-override.css 的 .el-popper.el-tooltip:not(.is-pure):not([class*='__popper'])，
+        限宽 420px 并换行），直接用即可；只有需要特殊宽度/排版时才配 popper-class + 非 scoped 样式 -->
 
 <!-- ✗ 用涨跌色表达"完成"（绿色=跌，语义冲突） -->
 .guide-step--done .guide-no { background: var(--q-color-down-soft); color: var(--q-color-down); }

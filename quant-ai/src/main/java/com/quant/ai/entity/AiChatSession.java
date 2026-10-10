@@ -22,6 +22,9 @@ public class AiChatSession {
     /** 会话 UUID（前端持有，同时作为 ChatMemory 的 conversationId） */
     private String sessionId;
 
+    /** 所属用户 ID（V6.21 会话按账号隔离：建会话时写当前登录用户，列表/读取/删除均按它过滤） */
+    private Long userId;
+
     /** 会话标题：取首条提问前若干字符，便于侧栏识别 */
     private String title;
 

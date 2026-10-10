@@ -1,6 +1,6 @@
 <template>
   <div class="compare-page">
-    <!-- 对比配置：最多 3 只基金 + 区间 -->
+    <!-- 对比配置：最多 5 只基金 + 区间（V6.22 从 3 只扩到 5 只） -->
     <el-card shadow="never">
       <div class="compare-toolbar">
         <div class="compare-picker" v-for="index in MAX_FUNDS" :key="index">
@@ -10,7 +10,7 @@
             clearable
             filterable
             placeholder="选择基金"
-            style="width: 220px"
+            style="width: 200px"
             @change="onSlotChange"
           >
             <el-option
@@ -37,7 +37,7 @@
           start-placeholder="开始日期"
           end-placeholder="结束日期"
           unlink-panels
-          style="width: 250px"
+          style="width: 220px"
           @change="onDateRangeChange"
         />
         <span class="muted">双击图表全屏查看</span>
@@ -53,10 +53,10 @@
       <template #header>
         <div class="card-header">
           <span>走势对比（起点归一为 100）</span>
-          <span class="muted">{{ loadedCount }}/3 只已选</span>
+          <span class="muted">{{ loadedCount }}/{{ MAX_FUNDS }} 只已选</span>
         </div>
       </template>
-      <el-empty v-if="loadedCount === 0" description="请选择 2-3 只基金进行对比" :image-size="60" />
+      <el-empty v-if="loadedCount === 0" description="请选择 2-5 只基金进行对比" :image-size="60" />
       <div v-else @dblclick="fullscreen = true">
         <ChartPanel :option="compareOption" height="480px" :brush="true" @brush-end="onBrushRange" />
       </div>
@@ -68,7 +68,13 @@
       <el-table :data="summaries" size="small">
         <!-- 各列都用 min-width：剩余宽度由所有列均匀分摊，避免某一列（原来只有"基金"是弹性列）
              被撑到内容的数倍宽（实测基金列占满余量） -->
-        <el-table-column prop="fundName" label="基金" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="fundName" label="基金" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <!-- 色点与曲线同色：表格与图上的线一一对应（V6.22） -->
+            <span class="fund-color-dot" :style="{ background: row.color }" />
+            {{ row.fundName }}
+          </template>
+        </el-table-column>
         <el-table-column prop="startDate" label="起始日" min-width="120" />
         <el-table-column prop="endDate" label="截止日" min-width="120" />
         <el-table-column prop="dayCount" label="交易日" min-width="100" align="right">
@@ -124,17 +130,17 @@ import { annualizedReturnPct, annualizedVolatilityPct, maxDrawdownPct, rangeRetu
 import { fundKline, fundNav, fundOptions, type SeriesPoint, type FundOptionVO } from '@/api/fund'
 import { changeColorClass } from '@/utils/format'
 import { useEscToClose } from '@/utils/escClose'
-import { PIE_PALETTE, AXIS_LABEL, AXIS_LINE, SPLIT_LINE } from '@/utils/palette'
+import { COMPARE_COLORS, AXIS_LABEL, AXIS_LINE, SPLIT_LINE } from '@/utils/palette'
 
-/** 最多对比的基金数 */
-const MAX_FUNDS = 3
+/** 最多对比的基金数（V6.22：3 → 5，配合五色区分） */
+const MAX_FUNDS = 5
 
 const route = useRoute()
 const router = useRouter()
 
 const funds = ref<FundOptionVO[]>([])
-/** 三个选择槽（空字符串表示未选） */
-const slots = ref<string[]>(['', '', ''])
+/** 选择槽（空字符串表示未选；槽位数与 MAX_FUNDS 一致） */
+const slots = ref<string[]>(Array.from({ length: MAX_FUNDS }, () => ''))
 const rangeDays = ref(365)
 
 /** 自定义日期区间（[start, end]；非空时优先于预设区间，二者互斥） */
@@ -176,6 +182,8 @@ useEscToClose(fullscreen)
 interface CompareSeries {
   fundCode: string
   fundName: string
+  /** 槽位配色（V6.22）：按槽位固定，跳过某只基金时颜色不跟着挪位 */
+  color: string
   dates: string[]
   /** 归一化值（首日=100） */
   normalized: number[]
@@ -189,9 +197,9 @@ const seriesList = ref<CompareSeries[]>([])
 
 const loadedCount = computed(() => seriesList.value.length)
 
-/** 槽位配色（与图表序列顺序一致） */
+/** 槽位配色（五只基金各一色，避开涨跌红绿；见 palette.COMPARE_COLORS） */
 function slotColor(index: number): string {
-  return PIE_PALETTE[index % PIE_PALETTE.length]
+  return COMPARE_COLORS[index % COMPARE_COLORS.length]
 }
 
 /** 已被其它槽选中的基金不可重复选择 */
@@ -207,14 +215,17 @@ function onSlotChange() {
 async function load() {
   // 过滤必须用 falsy 判断：EP 可清空下拉点 × 后 v-model 是 undefined 而非 ''，
   // 只排除 '' 会让 undefined 混进取数列表，弹「undefined 不在自选池中」（V5.62 用户反馈）
-  const codes = slots.value.filter((c) => c)
-  if (codes.length === 0) {
+  // 带上槽位下标一起取数：颜色按槽位固定，某只基金取数失败被跳过时不会串色
+  const picked = slots.value
+    .map((code, index) => ({ code, index }))
+    .filter((item) => item.code)
+  if (picked.length === 0) {
     seriesList.value = []
     return
   }
   const results: CompareSeries[] = []
   compareDates.value = []
-  for (const fundCode of codes) {
+  for (const { code: fundCode, index: slotIndex } of picked) {
     const fund = funds.value.find((f) => f.fundCode === fundCode)
     if (!fund) {
       // 可能已移出自选池：明确提示而不是静默跳过，避免"选了却没画出来"的困惑
@@ -243,6 +254,7 @@ async function load() {
       results.push({
         fundCode,
         fundName: fund.fundName,
+        color: slotColor(slotIndex),
         dates: points.map((p) => p.date),
         normalized: values.map((v) => Number(((v / base) * 100).toFixed(3))),
         returnPct: rangeReturnPct(values),
@@ -286,14 +298,14 @@ const compareOption = computed<EChartsOption>(() => {
       { type: 'inside', start: 0, end: 100 },
       { type: 'slider', height: 16, bottom: 4 }
     ],
-    series: seriesList.value.map((item, index) => ({
+    series: seriesList.value.map((item) => ({
       type: 'line',
       name: item.fundName,
       smooth: true,
       showSymbol: false,
       connectNulls: true,
-      itemStyle: { color: PIE_PALETTE[index % PIE_PALETTE.length] },
-      lineStyle: { width: 1.6, color: PIE_PALETTE[index % PIE_PALETTE.length] },
+      itemStyle: { color: item.color },
+      lineStyle: { width: 1.8, color: item.color },
       // 按并集日期轴对齐：该基金当日无数据则留空（connectNulls 处理停牌/非交易日）
       data: allDates.map((date) => {
         const i = item.dates.indexOf(date)
@@ -307,6 +319,7 @@ const compareOption = computed<EChartsOption>(() => {
 const summaries = computed(() =>
   seriesList.value.map((item) => ({
     fundName: `${item.fundCode} ${item.fundName}`,
+    color: item.color,
     startDate: item.dates[0] ?? '--',
     endDate: item.dates[item.dates.length - 1] ?? '--',
     dayCount: item.dates.length,
@@ -361,6 +374,16 @@ onMounted(async () => {
 .compare-or {
   font-size: var(--q-font-xs);
   color: var(--q-text-muted);
+}
+
+/* 区间表现表里的基金色点：与曲线同色（色值由 palette 传入行数据，不写死） */
+.fund-color-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--q-space-1);
+  border-radius: 50%;
+  vertical-align: middle;
 }
 
 .compare-tip {

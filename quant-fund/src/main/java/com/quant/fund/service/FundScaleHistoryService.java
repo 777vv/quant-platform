@@ -1,5 +1,7 @@
 package com.quant.fund.service;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 import com.quant.fund.dto.FundScaleHistoryVO;
@@ -27,4 +29,28 @@ public interface FundScaleHistoryService {
      * @return 日期 + 规模（亿元）列表
      */
     List<FundScaleHistoryVO> history(String fundCode);
+
+    /**
+     * 落一行"每日估算"规模（V6.15，场内 ETF：份额 × 当日单位净值）。
+     * 幂等键与披露值一致（基金 + stat_date），同一交易日重复跑覆盖。
+     *
+     * @param statDate 统计日（交易日；净值日）
+     */
+    void recordEstimated(String fundCode, LocalDate statDate, BigDecimal scale);
+
+    /**
+     * 多只基金的"最新每日估算"（供列表/详情展示，一次查询批量取）。
+     *
+     * @return 基金代码 → 最新估算（含数据日）；无估算的基金不在 map 中
+     */
+    java.util.Map<String, EstimatedScale> latestEstimated(java.util.Collection<String> fundCodes);
+
+    /**
+     * 最新每日估算（单只）。
+     */
+    EstimatedScale latestEstimated(String fundCode);
+
+    /** 每日估算规模（亿元）+ 数据日 */
+    record EstimatedScale(BigDecimal scale, LocalDate date) {
+    }
 }

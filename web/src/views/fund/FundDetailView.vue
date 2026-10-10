@@ -34,8 +34,9 @@
         <el-descriptions-item label="成立日期">{{ detail.inceptionDate || '--' }}</el-descriptions-item>
         <el-descriptions-item label="基金公司">{{ detail.fundCompany || '--' }}</el-descriptions-item>
         <el-descriptions-item label="规模(亿)">
-          <el-tooltip v-if="detail.fundScale != null" :content="`净资产规模，截止 ${detail.fundScaleDate ?? '未知'}`" placement="top">
-            <span class="num">{{ detail.fundScale.toFixed(2) }}</span>
+          <!-- 优先"每日估算规模"（V6.15：场内 ETF 份额×当日净值），无估算时回退季报披露值 -->
+          <el-tooltip v-if="detailScaleText" :content="detailScaleTip" placement="top">
+            <span class="num">{{ detailScaleText }}</span>
           </el-tooltip>
           <span v-else class="num">--</span>
         </el-descriptions-item>
@@ -103,7 +104,7 @@
           <el-checkbox v-model="showScale" size="small" @change="loadChart">规模副图</el-checkbox>
           <el-checkbox v-model="showValuation" size="small" @change="onValuationToggle">估值副图</el-checkbox>
           <span v-if="showScale && scaleData && scaleData.length === 0" class="muted">
-            规模历史自 V5.3 上线日起逐日积累（数据源只披露当前规模，无法回补）
+            规模历史自 V5.3 上线日起逐日积累，无法回补；V6.15 起场内 ETF 每个交易日写一行“每日估算”（份额×当日净值），场外基金仍是季报披露值
           </span>
           <span v-else-if="showScale && scaleData && scaleData.length > 0 && scaleData.length < 10" class="muted">
             规模历史已积累 {{ scaleData.length }} 天（自 {{ scaleData[0].date }} 起，每个交易日 +1），数据较少时副图仅右端可见
@@ -855,10 +856,7 @@ function appendScaleSubChart(
     name: '基金规模',
     xAxisIndex: gridIndex,
     yAxisIndex: gridIndex,
-    data: fillLatestByDate(
-      dates,
-      (scaleData.value ?? []).map((p) => ({ date: p.date, value: Number(p.scale) }))
-    ),
+    data: fillLatestByDate(dates, scalePointsForChart()),
     step: 'end',
     connectNulls: false,
     // 数据点本身显示圆标：积累初期只有少数几天，仅画细线几乎看不见（V5.18 用户反馈"副图没加载出来"实为此因）
@@ -1622,6 +1620,48 @@ function strategyNameOf(type: string): string {
 const strategyDetailVisible = ref(false)
 const strategyDetailRow = ref<BacktestRecord | null>(null)
 const strategyDetailItems = ref<{ label: string; value: string }[]>([])
+
+/**
+ * 规模副图的数据点（V6.15）：有"每日估算"行时**只画估算行**，
+ * 并把第一个估算行之前的最近一条披露行接上（口径切换点），避免两种口径混画出现假跳变
+ * ——例如估算日 10-09 记 1056 亿、次日（估算失败只落了季报平值）又回到 948 亿的那种"假跌"。
+ * 没有任何估算行时（场外基金 / 功能上线前）保持原样：只画披露快照的台阶线。
+ */
+function scalePointsForChart(): { date: string; value: number }[] {
+  const rows = scaleData.value ?? []
+  const firstEstimated = rows.findIndex((r) => r.source === 'ESTIMATED')
+  const kept = firstEstimated < 0
+    ? rows
+    : [
+        // 切换点：第一个估算行之前最后一条披露行（台阶线的终点）
+        ...rows.slice(0, firstEstimated).filter((r) => r.source === 'DISCLOSED').slice(-1),
+        // 其后全部按估算行画（每日连续）
+        ...rows.slice(firstEstimated)
+      ]
+  return kept.map((p) => ({ date: p.date, value: Number(p.scale) }))
+}
+
+/** 规模展示值（V6.15）：优先每日估算，回退季报披露值 */
+const detailScaleText = computed<string | null>(() => {
+  if (!detail.value) {
+    return null
+  }
+  if (detail.value.dailyScale != null) {
+    return detail.value.dailyScale.toFixed(2)
+  }
+  return detail.value.fundScale != null ? detail.value.fundScale.toFixed(2) : null
+})
+
+/** 规模口径提示：估算标数据日与公式，披露值标截止日 */
+const detailScaleTip = computed(() => {
+  if (!detail.value) {
+    return ''
+  }
+  if (detail.value.dailyScale != null) {
+    return `每日估算规模 = 当日份额 × 当日单位净值（数据日 ${detail.value.dailyScaleDate ?? '未知'}）；定期报告披露值 ${detail.value.fundScale?.toFixed(2) ?? '--'} 亿元（截止 ${detail.value.fundScaleDate ?? '未知'}）`
+  }
+  return `净资产规模（定期报告披露），截止 ${detail.value.fundScaleDate ?? '未知'}；场内 ETF 才有每日估算值`
+})
 
 /** 打开策略配置详情弹框：解析 params JSON → 带中文标签的键值列表（公共工具单源，V5.96 起批量回测页共用） */
 function openStrategyDetail(row: BacktestRecord) {

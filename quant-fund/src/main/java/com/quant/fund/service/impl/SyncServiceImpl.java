@@ -434,6 +434,8 @@ public class SyncServiceImpl implements SyncService {
         refreshDividendsIfNeeded(fund, forceProfile);
         if (fund.getFundType() != null && fund.getFundType() == FundTypeEnum.ETF.getCode()) {
             refreshPremiumRate(fund);
+            // 每日估算规模（V6.15）：份额 × 当日单位净值——与季报披露同口径、但每个交易日可得
+            estimateEtfDailyScale(fund);
         }
     }
 
@@ -495,6 +497,43 @@ public class SyncServiceImpl implements SyncService {
         } catch (Exception e) {
             LOGGER.error("基金[{}]分红记录刷新失败（股息率可能缺失/滞后，下次同步自动重试）",
                     fund.getFundCode(), e);
+        }
+    }
+
+    /**
+     * 每日估算规模（V6.15，用户口径）：**场内 ETF 规模 = 当日份额 × 当日单位净值**（亿元）。
+     *
+     * <p>为什么需要：东财 f10 的「净资产规模」是**定期报告口径**（如截止 6/30），一个季度才变一次，
+     * 列表/副图看着像"数据不动"；而场内 ETF 的**份额每交易日公布**（东财行情 f84），
+     * 乘当日单位净值（与溢价率同一净值来源）即可得到与披露口径一致、但每日更新的规模估算。
+     *
+     * <p>落库：写进 fund_scale_history（source=ESTIMATED，stat_date=净值日），与披露值(DISCLOSED)区分；
+     * 份额或净值取不到时**跳过并记日志**（不影响同步主流程，次日重试）。
+     * 场外基金（无每日份额数据源）不参与，继续用季报口径。
+     */
+    private void estimateEtfDailyScale(FundBasic fund) {
+        try {
+            Integer market = "SH".equals(fund.getMarket()) ? 1 : 0;
+            java.util.Optional<BigDecimal> shares = client.fetchEtfShare(market, fund.getFundCode());
+            if (shares.isEmpty()) {
+                return;
+            }
+            List<EastmoneyClient.NavItem> navs =
+                    client.fetchOtcNavPage(fund.getFundCode(), 1, 1, null, null).items();
+            if (navs.isEmpty() || navs.get(0).unitNav() == null
+                    || navs.get(0).unitNav().compareTo(BigDecimal.ZERO) <= 0) {
+                return;
+            }
+            EastmoneyClient.NavItem latest = navs.get(0);
+            // 规模（亿元）= 份额（份） × 单位净值（元） ÷ 1e8
+            BigDecimal scaleYi = shares.get().multiply(latest.unitNav())
+                    .divide(BigDecimal.valueOf(100000000L), 2, RoundingMode.HALF_UP);
+            scaleHistoryService.recordEstimated(fund.getFundCode(), latest.date(), scaleYi);
+            LOGGER.info("基金[{}]每日规模估算：份额 {} 份 × 净值 {}（{}） = {} 亿元",
+                    fund.getFundCode(), shares.get().toPlainString(), latest.unitNav().toPlainString(),
+                    latest.date(), scaleYi.toPlainString());
+        } catch (Exception e) {
+            LOGGER.error("基金[{}]每日规模估算失败（次日重试）", fund.getFundCode(), e);
         }
     }
 

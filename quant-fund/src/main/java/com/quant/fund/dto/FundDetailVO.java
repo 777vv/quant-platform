@@ -29,6 +29,10 @@ public record FundDetailVO(
         BigDecimal fundScale,
         /** 规模数据截止日 */
         LocalDate fundScaleDate,
+        /** 每日估算规模（亿元，V6.15）：场内 ETF = 当日份额 × 当日单位净值；场外为 null */
+        BigDecimal dailyScale,
+        /** 每日估算规模对应的数据日（净值日） */
+        LocalDate dailyScaleDate,
         /** 运作费率（%/年）= 管理费 + 托管费 + 销售服务费 */
         BigDecimal opFeeRate,
         /** 管理费率（%/年） */

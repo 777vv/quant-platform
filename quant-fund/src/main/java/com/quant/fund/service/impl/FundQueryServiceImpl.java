@@ -5,6 +5,8 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,6 +34,7 @@ import com.quant.fund.mapper.FundNavMapper;
 import com.quant.fund.mapper.FundPositionMapper;
 import com.quant.fund.mapper.IndexValuationMapper;
 import com.quant.fund.service.FundQueryService;
+import com.quant.fund.service.FundScaleHistoryService;
 import com.quant.fund.service.DividendYieldService;
 import com.quant.fund.service.FundTagService;
 import org.springframework.stereotype.Service;
@@ -62,10 +65,13 @@ public class FundQueryServiceImpl implements FundQueryService {
     /** 分红股息率（列表列的 TTM 口径；批量计算避免逐只查询） */
     private final DividendYieldService dividendYieldService;
 
+    /** 规模历史（V6.15）：列表/详情展示"每日估算规模"用 */
+    private final FundScaleHistoryService scaleHistoryService;
+
     public FundQueryServiceImpl(FundBasicMapper fundBasicMapper, FundEtfKlineMapper klineMapper,
                                 FundNavMapper navMapper, IndexValuationMapper valuationMapper,
                                 FundPositionMapper positionMapper, FundTagService fundTagService,
-                                DividendYieldService dividendYieldService) {
+                                DividendYieldService dividendYieldService, FundScaleHistoryService scaleHistoryService) {
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
         this.navMapper = navMapper;
@@ -73,6 +79,7 @@ public class FundQueryServiceImpl implements FundQueryService {
         this.positionMapper = positionMapper;
         this.fundTagService = fundTagService;
         this.dividendYieldService = dividendYieldService;
+        this.scaleHistoryService = scaleHistoryService;
     }
 
     /** 下拉选项缓存（V6.01）：15 分钟过期回源；单用户系统本地缓存即可，重启失效无妨 */
@@ -111,7 +118,11 @@ public class FundQueryServiceImpl implements FundQueryService {
         List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
                 .eq(FundBasic::getStatus, 1).orderByAsc(FundBasic::getFundCode));
         Map<String, BigDecimal> ttmYields = dividendYieldService.currentTtmYields(funds);
-        return funds.stream().map(fund -> toWatchItem(fund, holdings, ttmYields)).toList();
+        Map<String, FundScaleHistoryService.EstimatedScale> estimated = scaleHistoryService.latestEstimated(
+                funds.stream().map(FundBasic::getFundCode).toList());
+        return funds.stream()
+                .map(fund -> toWatchItem(fund, holdings, ttmYields, estimated.get(fund.getFundCode())))
+                .toList();
     }
 
     @Override
@@ -130,12 +141,44 @@ public class FundQueryServiceImpl implements FundQueryService {
         long total = fundBasicMapper.selectCount(baseWrapper(keyword, tagCodes));
         // 持仓段：持仓基金数量很少，直接一次取出（同样受关键词/标签条件约束），
         // 这样"持仓优先"不依赖数据库方言的布尔排序，翻页也只需拼接两段
-        List<FundBasic> held = holdings.isEmpty() ? List.of() : fundBasicMapper.selectList(
-                baseWrapper(keyword, tagCodes).in(FundBasic::getFundCode, holdings)
-                        .orderByAsc(FundBasic::getFundCode));
+        List<FundBasic> held = holdings.isEmpty() ? List.of() : sortHeldByMarketValueDesc(
+                fundBasicMapper.selectList(baseWrapper(keyword, tagCodes).in(FundBasic::getFundCode, holdings)));
         List<FundBasic> records = slicePage(keyword, tagCodes, holdings, held, (safePage - 1) * safeSize, safeSize);
         Map<String, BigDecimal> ttmYields = dividendYieldService.currentTtmYields(records);
-        return PageResult.of(total, records.stream().map(fund -> toWatchItem(fund, holdings, ttmYields)).toList());
+        // 每日估算规模（V6.15）：本页基金一次批量查（场外基金本来就没有估算行，自然为空）
+        Map<String, FundScaleHistoryService.EstimatedScale> estimated = scaleHistoryService.latestEstimated(
+                records.stream().map(FundBasic::getFundCode).toList());
+        return PageResult.of(total, records.stream()
+                .map(fund -> toWatchItem(fund, holdings, ttmYields, estimated.get(fund.getFundCode())))
+                .toList());
+    }
+
+    /**
+     * 持仓段排序（V6.13 用户口径）：**持仓市值（最新价 × 份额）从大到小**，同市值按基金代码升序。
+     * 持仓只占少数几只，这里在内存排序（每只一次"最近两根 K 线/净值"查询，与列表渲染同一取数口径）。
+     */
+    private List<FundBasic> sortHeldByMarketValueDesc(List<FundBasic> held) {
+        if (held.size() <= 1) {
+            return held;
+        }
+        Map<String, BigDecimal> shares = new HashMap<>();
+        for (FundPosition position : positionMapper.selectList(new LambdaQueryWrapper<FundPosition>()
+                .in(FundPosition::getFundCode, held.stream().map(FundBasic::getFundCode).toList()))) {
+            shares.put(position.getFundCode(),
+                    position.getTotalShare() == null ? BigDecimal.ZERO : position.getTotalShare());
+        }
+        Map<String, BigDecimal> marketValues = new HashMap<>();
+        for (FundBasic fund : held) {
+            LastQuote quote = lastQuote(fund);
+            BigDecimal share = shares.getOrDefault(fund.getFundCode(), BigDecimal.ZERO);
+            marketValues.put(fund.getFundCode(), quote == null || quote.price() == null
+                    ? BigDecimal.ZERO : quote.price().multiply(share));
+        }
+        return held.stream()
+                .sorted(Comparator.comparing((FundBasic f) -> marketValues.getOrDefault(f.getFundCode(), BigDecimal.ZERO))
+                        .reversed()
+                        .thenComparing(FundBasic::getFundCode))
+                .toList();
     }
 
     /** 自选筛选条件（状态正常 + 关键词 + 标签），每次调用返回新实例（MP 的 wrapper 会被就地修改） */
@@ -153,9 +196,10 @@ public class FundQueryServiceImpl implements FundQueryService {
 
     /**
      * 取"持仓段 + 其余段"拼接后的第 [offset, offset+size) 条。
-     * 持仓段在前（按基金代码升序），其余段在后（同序），两段拼接即整体有序。
+     * 持仓段在前（按持仓市值降序，V6.13），其余段在后（按**规模降序**、同规模按代码升序，V6.14），
+     * 两段拼接即整体有序。
      *
-     * @param held   持仓段（已按代码升序，且已过滤关键词/标签）
+     * @param held   持仓段（已按持仓市值降序，且已过滤关键词/标签）
      * @param offset 全局偏移量
      * @param size   每页条数（已钳制）
      */
@@ -173,6 +217,9 @@ public class FundQueryServiceImpl implements FundQueryService {
             // （offsets 均为已钳制的 long，不存在拼接注入问题；本项目数据库固定为 MySQL）
             rows.addAll(fundBasicMapper.selectList(baseWrapper(keyword, tagCodes)
                     .notIn(!holdings.isEmpty(), FundBasic::getFundCode, holdings)
+                    // 规模降序（V6.14 用户口径）：MySQL 的 DESC 会把 NULL 排在最后 ✓；
+                    // 同规模（含都为 NULL）再按代码升序，保证分页顺序稳定
+                    .orderByDesc(FundBasic::getFundScale)
                     .orderByAsc(FundBasic::getFundCode)
                     .last("LIMIT " + othersOffset + ", " + needOthers)));
         }
@@ -191,7 +238,8 @@ public class FundQueryServiceImpl implements FundQueryService {
      *
      * @param holdings 持仓基金代码集合（用于持仓标识，避免逐只查询）
      */
-    private WatchItemVO toWatchItem(FundBasic fund, Set<String> holdings, Map<String, BigDecimal> ttmYields) {
+    private WatchItemVO toWatchItem(FundBasic fund, Set<String> holdings, Map<String, BigDecimal> ttmYields,
+            FundScaleHistoryService.EstimatedScale estimated) {
         LastQuote quote = lastQuote(fund);
         BigDecimal percentile = fund.getIndexCode() == null ? null : percentileOfIndexPe(fund.getIndexCode(), 10);
         return new WatchItemVO(
@@ -200,7 +248,8 @@ public class FundQueryServiceImpl implements FundQueryService {
                 fund.getIndexName(), fund.getIndexCode(),
                 quote == null ? null : quote.price(),
                 quote == null ? null : quote.changePct(),
-                percentile, fund.getLastSyncDate(), fund.getLastSyncAt(),
+                percentile, fund.getLastSyncDate(), fund.getLastSyncAt(), fund.getInceptionDate(),
+                estimated == null ? null : estimated.scale(), estimated == null ? null : estimated.date(),
                 fund.getFundScale(), fund.getFundScaleDate(),
                 opFeeRateOf(fund), fund.getMgmtFeeRate(), fund.getCustFeeRate(), fund.getSalesFeeRate(),
                 fund.getPremiumRate(), fund.getPremiumDate(),
@@ -226,11 +275,14 @@ public class FundQueryServiceImpl implements FundQueryService {
     public FundDetailVO detail(String fundCode) {
         FundBasic fund = getByCodeRequired(fundCode);
         LastQuote quote = lastQuote(fund);
+        FundScaleHistoryService.EstimatedScale estimated = scaleHistoryService.latestEstimated(fund.getFundCode());
         return new FundDetailVO(
                 fund.getFundCode(), fund.getFundName(), fund.getFundType(), typeDesc(fund),
                 fund.getMarket(), fund.getIndexCode(), fund.getIndexName(), fund.getInceptionDate(),
                 fund.getFundCompany(),
-                fund.getFundScale(), fund.getFundScaleDate(), opFeeRateOf(fund),
+                fund.getFundScale(), fund.getFundScaleDate(),
+                estimated == null ? null : estimated.scale(), estimated == null ? null : estimated.date(),
+                opFeeRateOf(fund),
                 fund.getMgmtFeeRate(), fund.getCustFeeRate(), fund.getSalesFeeRate(),
                 fund.getPremiumRate(), fund.getPremiumDate(),
                 quote == null ? null : quote.price(),

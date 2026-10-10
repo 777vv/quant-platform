@@ -37,7 +37,7 @@
 
     <div class="login-panel">
       <div class="login-brand">
-        <div class="brand-name">个人量化投资助手</div>
+        <div class="brand-name">策略数据研究平台</div>
         <div class="brand-sub">指数基金 · 买卖建议 · 不做自动交易</div>
       </div>
       <el-card class="login-card">

@@ -236,7 +236,7 @@
 
     <!-- 速览弹框（按钮模式 V5.97→V5.98）：触发按钮由宿主放置（如批量弹窗把它与策略类型下拉排同一行），
          经 defineExpose(openSummary) 打开本弹框；内容与卡片模式同一份 -->
-    <el-dialog v-model="summaryOpen" title="策略逻辑速览" width="560px" append-to-body>
+    <el-dialog v-model="summaryOpen" :title="summaryDialogTitle" width="560px" append-to-body>
       <SummaryList :title="activeSummary.title" :items="activeSummary.items" />
       <template #footer>
         <el-button @click="summaryOpen = false">关闭</el-button>
@@ -249,6 +249,7 @@
 import { computed, h, onMounted, reactive, ref, watch } from 'vue'
 import { ElIcon, ElTooltip } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
+import { STRATEGY_TYPE_NAMES } from '@/utils/strategyParams'
 
 /**
  * 策略参数表单（三种策略各一套字段）。
@@ -331,6 +332,16 @@ function openSummary() {
 defineExpose({ openSummary })
 
 /** 当前类型的速览（按钮模式的弹框内容） */
+/**
+ * 速览弹框标题（V6.16 用户要求）：**带上策略名称**，让人一眼看出这是哪个策略的规则介绍
+ * （批量回测弹窗与基金详情回测页共用本组件，一处改动两处生效）。
+ * 名称取自公共映射（含已下线策略的中文名），未命中回退类型码。
+ */
+const summaryDialogTitle = computed(() => {
+  const name = STRATEGY_TYPE_NAMES[props.type] ?? props.type
+  return `${name} · 策略逻辑速览`
+})
+
 const activeSummary = computed<{ title: string; items: string[] }>(() => {
   if (props.type === 'MA_BREAK') {
     return { title: '策略逻辑速览', items: maBreakSummaryItems.value }

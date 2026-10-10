@@ -125,6 +125,10 @@ public class BacktestServiceImpl implements BacktestService {
         BacktestRecord record = new BacktestRecord();
         record.setId(recordId);
         record.setFundCode(fundCode);
+        // ⚠️ 类型与参数必须带上：runOne 是从记录里读它们去取策略与参数的（V6.17 修 bug——
+        // 这条路径漏设会让异步任务拿到 null，前端表现为"未知策略类型: null"）
+        record.setStrategyType(strategy.type());
+        record.setParams(JsonUtils.toJson(params));
         record.setStartDate(startDate);
         record.setEndDate(endDate);
         record.setInitialCapital(initialCapital);
@@ -144,9 +148,11 @@ public class BacktestServiceImpl implements BacktestService {
         LocalDate startDate = record.getStartDate();
         LocalDate endDate = record.getEndDate();
         BigDecimal initialCapital = record.getInitialCapital();
-        Strategy strategy = registry.getRequired(record.getStrategyType());
-        JsonNode params = JsonUtils.mapper().readTree(record.getParams());
         try {
+            // ⚠️ 策略/参数解析必须在 try 内（V6.17）：放在外面时一旦解析抛异常（如类型为空），
+            // 记录行不会被标成失败，会永久卡在"运行中"
+            Strategy strategy = registry.getRequired(record.getStrategyType());
+            JsonNode params = JsonUtils.mapper().readTree(record.getParams());
             int warmupDays = warmupDaysOf(strategy.type(), params);
             MarketDataLoader.LoadedData loaded = dataLoader.load(fundCode, startDate, endDate, warmupDays);
             MarketDataSeries series = loaded.series();

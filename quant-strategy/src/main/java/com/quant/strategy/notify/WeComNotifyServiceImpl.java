@@ -4,11 +4,16 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.quant.common.exception.BizException;
+import com.quant.fund.entity.FundBasic;
+import com.quant.fund.mapper.FundBasicMapper;
 import com.quant.common.util.JsonUtils;
 import com.quant.strategy.entity.SignalRecord;
 import com.quant.strategy.entity.SysWecomConfig;
@@ -49,13 +54,23 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
 
     private final SysWecomConfigMapper configMapper;
 
+    /** 通知范围（V6.26）：只有"持有过（含已清仓）且配置了策略"的基金才推送 */
+    private final SignalNotifyScope notifyScope;
+
+    /** 基金名称解析（V6.26：微信消息要带基金名称，与页面展示同源） */
+    private final FundBasicMapper fundBasicMapper;
+
     private final RestClient restClient = RestClient.create();
 
     /** 缓存的 access_token 与过期时间戳（毫秒），多实例下各自缓存亦可接受 */
     private final AtomicReference<String[]> tokenCache = new AtomicReference<>();
 
-    public WeComNotifyServiceImpl(SysWecomConfigMapper configMapper) {
+    public WeComNotifyServiceImpl(SysWecomConfigMapper configMapper,
+                                  SignalNotifyScope notifyScope,
+                                  FundBasicMapper fundBasicMapper) {
         this.configMapper = configMapper;
+        this.notifyScope = notifyScope;
+        this.fundBasicMapper = fundBasicMapper;
     }
 
     /** 单行配置（表由 schema 初始化，缺行时返回带默认值的空壳，不抛错） */
@@ -174,11 +189,16 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
             return; // 未启用/未配置：静默跳过（微信通道可选，不影响邮件）
         }
         try {
+            // V6.26 通知范围：只推"持有过（含已清仓、市值为 0）且配置了策略"的基金，其余信号只入库不推送
+            Set<String> scope = notifyScope.notifiableFundCodes();
             List<SignalRecord> actionable = signals.stream()
                     .filter(s -> Signal.BUY.equals(s.getDirection()) || Signal.SELL.equals(s.getDirection()))
+                    .filter(s -> scope.contains(s.getFundCode()))
                     .toList();
+            LOGGER.info("微信信号：候选 {} 条，命中通知范围 {} 条（范围基金 {} 只，跳过 {} 条：未持有或未配策略）",
+                    signals.size(), actionable.size(), scope.size(), signals.size() - actionable.size());
             if (actionable.isEmpty()) {
-                return; // 仅 HOLD：不推送（与邮件口径一致）
+                return; // 仅 HOLD 或全在范围外：不推送（与邮件口径一致）
             }
             String content = buildDigestText(actionable);
             sendText(row, content);
@@ -189,15 +209,24 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
         }
     }
 
-    /** 组装当日买卖信号文本（一条消息容纳全部，超长截断） */
+    /**
+     * 组装当日买卖信号文本（一条消息容纳全部，超长截断）。
+     * V6.26：每条信号带上**基金名称 + 代码**（名称一次批量解析，与页面展示同一来源）——光看代码
+     * 认不出是哪只基金；查不到名称的基金只显示代码。
+     */
     private String buildDigestText(List<SignalRecord> actionable) {
         LocalDate date = actionable.get(0).getSignalDate();
+        Map<String, String> nameByCode = fundNames(actionable);
         StringBuilder sb = new StringBuilder("【策略数据研究平台】交易信号 ")
                 .append(DATE_FMT.format(date)).append('\n');
         for (SignalRecord signal : actionable) {
             sb.append('\n')
                     .append(Signal.BUY.equals(signal.getDirection()) ? "▲ 买入 " : "▼ 卖出 ")
                     .append(signal.getFundCode());
+            String fundName = nameByCode.get(signal.getFundCode());
+            if (fundName != null && !fundName.isBlank()) {
+                sb.append(' ').append(fundName);
+            }
             if (signal.getPriceAt() != null) {
                 sb.append(" @").append(strip(signal.getPriceAt()));
             }
@@ -206,9 +235,22 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
             }
             sb.append('\n');
         }
-        sb.append("\n详见平台【信号查询】，不构成投资建议。");
+        sb.append("\n详见平台【平台信号】，不构成投资建议。");
         String text = sb.toString();
         return text.length() <= CONTENT_MAX_CHARS ? text : text.substring(0, CONTENT_MAX_CHARS);
+    }
+
+    /** 基金名称批量解析（一次查库；查不到的基金回退为只显示代码） */
+    private Map<String, String> fundNames(List<SignalRecord> signals) {
+        List<String> codes = signals.stream().map(SignalRecord::getFundCode).distinct().toList();
+        if (codes.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> names = new HashMap<>();
+        fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                        .in(FundBasic::getFundCode, codes))
+                .forEach(fund -> names.put(fund.getFundCode(), fund.getFundName()));
+        return names;
     }
 
     /** 测试与推送共用的发送路径：取配置 → 校验齐全 → 取 token → 发 text 消息 */

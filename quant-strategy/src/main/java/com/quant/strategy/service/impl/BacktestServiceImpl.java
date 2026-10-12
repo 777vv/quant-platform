@@ -21,8 +21,10 @@ import com.quant.strategy.core.MarketDataSeries;
 import com.quant.strategy.core.Strategy;
 import com.quant.strategy.core.StrategyRegistry;
 import com.quant.strategy.grid.AbstractGridStrategy;
+import com.quant.strategy.ma.DualMaStrategy;
 import com.quant.strategy.ma.MaBreakStrategy;
 import com.quant.strategy.ma.MaTakeProfitGridStrategy;
+import com.quant.strategy.ma.TripleMaStrategy;
 import com.quant.strategy.dto.BacktestRequest;
 import com.quant.strategy.entity.BacktestRecord;
 import com.quant.strategy.entity.BacktestTradeDetail;
@@ -115,6 +117,17 @@ public class BacktestServiceImpl implements BacktestService {
         if (MaTakeProfitGridStrategy.TYPE.equals(strategyType)) {
             // 均线止盈/加仓（V5.88）：预热要覆盖基准均线（首日即有完整均线值）
             return (int) Math.ceil(params.path("baselineMaDays").asInt(120) * 1.6) + 30;
+        }
+        if (DualMaStrategy.TYPE.equals(strategyType)) {
+            // 双均线（V6.32）：预热要覆盖较长的慢线（首日即有完整均线值）
+            int maDays = Math.max(params.path("fastMaDays").asInt(30), params.path("slowMaDays").asInt(180));
+            return (int) Math.ceil(maDays * 1.6) + 30;
+        }
+        if (TripleMaStrategy.TYPE.equals(strategyType)) {
+            // 三均线（V6.32）：预热要覆盖最长的慢线
+            int maDays = Math.max(params.path("fastMaDays").asInt(20),
+                    Math.max(params.path("midMaDays").asInt(60), params.path("slowMaDays").asInt(180)));
+            return (int) Math.ceil(maDays * 1.6) + 30;
         }
         return 30;
     }

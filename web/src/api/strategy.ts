@@ -150,7 +150,7 @@ export function markSignalsRead(ids: number[]) {
   return post<void>('/strategies/signals/read', { ids })
 }
 
-/** 信号行视图（【信号查询】页用；后端已补齐展示字段） */
+/** 信号行视图（【平台信号】页用；后端已补齐展示字段） */
 export interface SignalItem extends SignalRecord {
   /** 基金名称（库里查不到时为空串，界面回退显示代码） */
   fundName: string

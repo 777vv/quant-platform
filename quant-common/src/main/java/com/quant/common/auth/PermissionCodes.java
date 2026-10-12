@@ -82,7 +82,7 @@ public final class PermissionCodes {
             case MENU_TRADES:
                 return "交易流水";
             case MENU_SIGNALS:
-                return "信号查询";
+                return "平台信号";
             case MENU_MARKET_SIGNALS:
                 return "市场信号";
             case MENU_COMPARE:

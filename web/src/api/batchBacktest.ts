@@ -37,6 +37,8 @@ export interface BacktestBatch {
 export interface BacktestBatchDetail {
   batch: BacktestBatch
   records: BacktestRecord[]
+  /** 基金代码 → 名称（V6.29：抽屉不依赖市场信号总览也能立即显示名称） */
+  fundNames: Record<string, string>
 }
 
 /** 发起批量回测请求 */

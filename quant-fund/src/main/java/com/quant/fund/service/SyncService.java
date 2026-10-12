@@ -46,10 +46,12 @@ public interface SyncService {
     List<IndexQuote> getIndexQuotes();
 
     /**
-     * 档案（规模/费率）强制刷新：每交易日 15:05 对全部自选基金执行（用户口径：收盘后立即再刷一次
-     * 最新规模），并把当日规模快照落进 fund_scale_history。幂等，可手动调用。
+     * 每日规模快照（V6.30，每交易日 15:05）：对全部自选基金落一行**每日估算**规模
+     * （场内=份额×当日净值；场外=披露净资产按净值变动折算），并刷新溢价率。
+     * **不再记录定期报告披露值**（披露值只更新基金档案字段，由每日同步路径维护）。
+     * 幂等，可手动调用（POST /api/sync/scale，兼容旧路径 /profiles）。
      */
-    void refreshAllProfiles();
+    void snapshotDailyScale();
 
     /**
      * 盘中同步·持仓基金（V5.42）：每 4 分钟一轮（调度与交易时段闸门在 FundSyncJobs）。

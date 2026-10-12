@@ -147,6 +147,12 @@
             <el-table-column label="长期均线值" min-width="104" align="right">
               <template #default="{ row }">{{ row.maLongVal ?? '—' }}</template>
             </el-table-column>
+            <!-- 操作（V6.25 用户要求）：点【行情】弹框看该基金行情走势，不跳转基金详情页 -->
+            <el-table-column label="操作" min-width="80" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openQuote(row)">行情</el-button>
+              </template>
+            </el-table-column>
           </el-table>
           <div class="pager">
             <el-pagination
@@ -163,6 +169,9 @@
         </el-card>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 行情弹框：全页共用一个实例，由行内【行情】按钮切换目标基金 -->
+    <QuoteTrendDialog v-model="quoteVisible" :fund-code="quoteCode" :fund-name="quoteName" />
   </div>
 </template>
 
@@ -171,9 +180,10 @@ import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { markSignalsRead, signalsPage, strategyTypes, type SignalItem, type StrategyTypeVO } from '@/api/strategy'
 import { maSignalsPage, type MaSignalItem } from '@/api/marketSignals'
+import QuoteTrendDialog from '@/components/fund/QuoteTrendDialog.vue'
 
 /**
- * 信号查询（FR5）：全部历史信号的筛选 + 服务端分页。
+ * 平台信号（FR5，原「信号查询」菜单）：全部历史信号的筛选 + 服务端分页。
  * 与仪表盘「今日信号」卡同源（signal_record 表）；这里是全量可筛选视角，
  * 仪表盘卡只看最近 7 天。点击行 = 标记已读 + 进入基金详情（与仪表盘一致）。
  */
@@ -191,6 +201,18 @@ const activeTab = ref('strategy')
 
 /** 均线信号页签状态（服务端分页 + 基金代码筛选） */
 const maRecords = ref<MaSignalItem[]>([])
+
+/** 行情弹框（V6.25）：目标基金代码与名称（点行内【行情】时写入） */
+const quoteVisible = ref(false)
+const quoteCode = ref('')
+const quoteName = ref('')
+
+/** 打开行情弹框（基金详情里的行情走势，独立弹框展示） */
+function openQuote(row: MaSignalItem) {
+  quoteCode.value = row.fundCode
+  quoteName.value = row.fundName ?? ''
+  quoteVisible.value = true
+}
 const maLoading = ref(false)
 const maPage = ref(1)
 const maSize = ref(10)

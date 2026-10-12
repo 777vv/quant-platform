@@ -113,6 +113,12 @@
             <el-table-column label="价格数据截至" align="center" min-width="100">
               <template #default="{ row }">{{ row.lastDate ?? '—' }}</template>
             </el-table-column>
+            <!-- 操作（V6.25 用户要求）：点【行情】弹框看该基金行情走势，不跳转基金详情页 -->
+            <el-table-column label="操作" min-width="80" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openQuote(row)">行情</el-button>
+              </template>
+            </el-table-column>
           </el-table>
           <div class="pager-row">
             <el-pagination v-model:current-page="chgPage" v-model:page-size="chgSize" :page-sizes="PAGE_SIZES" :total="filteredRows.length" layout="total, sizes, prev, pager, next" background />
@@ -176,6 +182,12 @@
             </el-table-column>
             <el-table-column label="PE数据截至" align="center" min-width="100">
               <template #default="{ row }">{{ row.peDate ?? '—' }}</template>
+            </el-table-column>
+            <!-- 操作（V6.25 用户要求）：点【行情】弹框看该基金行情走势，不跳转基金详情页 -->
+            <el-table-column label="操作" min-width="80" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openQuote(row)">行情</el-button>
+              </template>
             </el-table-column>
           </el-table>
           <div class="pager-row">
@@ -252,6 +264,12 @@
                 <span v-else>—</span>
               </template>
             </el-table-column>
+            <!-- 操作（V6.25 用户要求）：点【行情】弹框看该基金行情走势，不跳转基金详情页 -->
+            <el-table-column label="操作" min-width="80" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openQuote(row)">行情</el-button>
+              </template>
+            </el-table-column>
           </el-table>
           <div class="pager-row">
             <el-pagination v-model:current-page="premiumPage" v-model:page-size="premiumSize" :page-sizes="PAGE_SIZES" :total="filteredRows.length" layout="total, sizes, prev, pager, next" background />
@@ -314,6 +332,12 @@
                 <span class="num">{{ row.dataDate ?? '—' }}</span>
               </template>
             </el-table-column>
+            <!-- 操作（V6.25 用户要求）：点【行情】弹框看该基金行情走势，不跳转基金详情页 -->
+            <el-table-column label="操作" min-width="80" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openQuote(row)">行情</el-button>
+              </template>
+            </el-table-column>
           </el-table>
           <div class="pager-row">
             <el-pagination v-model:current-page="maPage" v-model:page-size="maSize" :page-sizes="PAGE_SIZES" :total="maFilteredRows.length" layout="total, sizes, prev, pager, next" background />
@@ -333,6 +357,9 @@
           <el-button type="primary" :loading="maBackfilling" @click="onMaBackfill">开始回跑</el-button>
         </template>
       </el-dialog>
+
+      <!-- 行情弹框：全页共用一个实例，四个页签的行内【行情】按钮共用 -->
+      <QuoteTrendDialog v-model="quoteVisible" :fund-code="quoteCode" :fund-name="quoteName" />
     </el-card>
   </div>
 </template>
@@ -345,12 +372,25 @@ import { marketSignalOverviewCached, type MarketSignalRow, type PeWindow } from 
 import { backfillMa, fundMaRows, refreshMa, type FundMaRow } from '@/api/marketSignals'
 import { useUserStore } from '@/stores/user'
 import { PERM } from '@/utils/permissions'
+import QuoteTrendDialog from '@/components/fund/QuoteTrendDialog.vue'
 
 const loading = ref(false)
 const activeTab = ref('chg')
 const userStore = useUserStore()
 const rows = ref<MarketSignalRow[]>([])
 const selectedTags = ref<string[]>([])
+
+/** 行情弹框（V6.25）：目标基金代码与名称（四个页签的行内【行情】按钮共用） */
+const quoteVisible = ref(false)
+const quoteCode = ref('')
+const quoteName = ref('')
+
+/** 打开行情弹框（基金详情里的行情走势，独立弹框展示、不跳转详情页） */
+function openQuote(row: { fundCode: string; fundName?: string }) {
+  quoteCode.value = row.fundCode
+  quoteName.value = row.fundName ?? ''
+  quoteVisible.value = true
+}
 
 // PE 分位窗口与溢价阈值都记在浏览器本地（单用户自用；换浏览器/清缓存回默认值）
 const PE_WINDOW_KEY = 'ms-pe-window'

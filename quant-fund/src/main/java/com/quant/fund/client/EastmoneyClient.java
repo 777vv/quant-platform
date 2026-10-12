@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -603,6 +604,124 @@ public class EastmoneyClient {
         return items;
     }
 
+    /**
+     * 场外指数基金榜单（V6.27，批量导入候选用）：东财基金排行「指数型」分类（rankhandler，ft=zs）。
+     * 返回全部场外指数基金（含 ETF 联接、普通场外指数、指数 LOF；**不含场内 ETF 本体**——那在
+     * fetchEtfBoardList）的 代码/名称/成立日期/近1年涨幅，榜单按近1年涨幅降序（sc=1nzf）。
+     * 接口无规模字段——场外规模在东财只有**逐只** F10 口径（净资产规模、按季披露，实测 040046
+     * 为 58.10 亿元/2026-06-30），筛全部约 4600 只需逐只请求、必撞封堵；且场外按净值申赎无盘口，
+     * 规模只是"过小有清盘风险"的弱参考。故场外候选按"成立年限 + 近1年涨幅"筛选。
+     * 响应是 var rankData = {datas:["...", ...]} 的 JS 文本，正则抽出每行 CSV；分页拉全量（每页 200）。
+     */
+    public List<OtcFundRankItem> fetchOtcIndexFundRank() {
+        List<OtcFundRankItem> items = new ArrayList<>();
+        for (int page = 1; page <= 100; page++) {
+            String url = "https://fund.eastmoney.com/data/rankhandler.aspx?op=ph&dt=kf&ft=zs&rs=&gs=0"
+                    + "&sc=1nzf&st=desc&sd=&ed=&qdii=&tabSubtype=,,,,,&pi=" + page + "&pn=200&dx=1";
+            // 响应是 `var rankData = {datas:["行1","行2"],...}` 的 JS 文本、不是纯 JSON，
+            // 用正则抽 datas 数组体，再按下面的「引号对」逐行解析
+            String body = getRaw(url, "https://fund.eastmoney.com/data/fundranking.html");
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("datas:\\[(.*?)\\]", java.util.regex.Pattern.DOTALL).matcher(body);
+            if (!m.find()) {
+                break; // 超出末页或响应异常：正常结束
+            }
+            String text = m.group(1);
+            int added = 0;
+            // 行间分隔符就是英文逗号、行内字段也是逗号，按字符拆行不安全——
+            // 改为按引号对抽取整行（"…" 之间必是完整一行），实测每行 25 个字段
+            java.util.regex.Matcher rowMatcher = java.util.regex.Pattern
+                    .compile("\"([^\"]*)\"").matcher(text);
+            while (rowMatcher.find()) {
+                String row = rowMatcher.group(1);
+                String[] f = row.split(",");
+                // 字段布局（实测 25 列，2026-10 逐列核对）：0 代码 / 1 名称 / 2 拼音 / 3 净值日期 /
+                // 4 单位净值 / 5 累计净值 / 6 日增长率 / 7 近1周 / 8 近1月 / 9 近3月 / 10 近6月 /
+                // 11 近1年 / 12 近2年 / 13 近3年 / 14 今年来 / 15 成立来 / 16 成立日期 / 17 可申购 /
+                // 18 自定义涨幅 / 19~ 费率等。⚠️ 15 是「成立来」不是「近1年」（040046 第15列 747.36%
+                // 恰等于其累计净值 8.4736 − 1；近1年在第 11 列 16.51%，与 pingzhongdata 的 syl_1n 一致）
+                if (f.length < 17 || !f[0].matches("\\d{6}") || f[16].isBlank()) {
+                    continue;
+                }
+                Double pct1y = f[11].isBlank() ? null : Double.parseDouble(f[11]);
+                items.add(new OtcFundRankItem(f[0], f[1], f[16], pct1y));
+                added++;
+            }
+            if (added == 0) {
+                break;
+            }
+        }
+        return items;
+    }
+
+    /** 场外指数基金榜单行（V6.27）：代码 / 名称 / 成立日期 / 近1年涨幅（%，无则 null） */
+    public record OtcFundRankItem(String code, String name, String estabDate, Double pct1y) {
+    }
+
+    /** 指数型信息列表的每页条数（V6.28）：该接口 pageSize 参数无效、固定 20 条/页 */
+    private static final int FUND_INFO_PAGE_SIZE = 20;
+
+    /**
+     * 指数型基金规模（V6.28，场外候选按规模筛选用）：东财「指数型」信息列表
+     * （FundChannelData_BaseInfoHandler.ashx，网页 fund.eastmoney.com/data/jcxx_zhishu.html 同源）。
+     * 每行 EndNav = **最新已披露季报的期末净资产（亿元，全精度）**——实测与 F10「净资产规模」逐只一致
+     * （含 ETF 联接：040046 = 58.1004，F10 = 58.10）。两个"近亲"接口实测排除：
+     * ①「规模变动」明细（FundDataPortfolio_Interface dt=8）的"期末净资产"对 ETF 联接基金明显偏小
+     * （040046 只有 6.70 亿；其"期末总份额"6.84 亿份才是对的，净资产需再乘季末净值）；
+     * ② Fund_JJJZ 只支持最新净值、拿不到季末净值。本接口固定 20 条/页：
+     * m=zs（指数型·普通开放型，约 6460 行）+ m=qdii（指数型 QDII，约 379 行），共约 342 页，
+     * 受全局限频（quant.eastmoney.interval-ms=300）约束约需 2 分钟；连续 5 页失败即中止（疑似封堵）。
+     *
+     * @return 基金代码 → 期末净资产（亿元）；EndNav ≤ 0 或缺失的不入表
+     */
+    public Map<String, BigDecimal> fetchIndexFundScale() {
+        Map<String, BigDecimal> scale = new HashMap<>();
+        for (String m : new String[] {"zs", "qdii"}) {
+            int page = 0;
+            // 首轮保证进入循环；解析后用接口返回的 TotalCount 覆盖
+            int total = FUND_INFO_PAGE_SIZE;
+            int failStreak = 0;
+            // page 上限兜底：正常 323/19 页，异常时不让循环失控
+            while (page < 400 && page * FUND_INFO_PAGE_SIZE < total) {
+                page++;
+                String url = "https://fund.eastmoney.com/data/FundChannelData_BaseInfoHandler.ashx?r="
+                        + System.currentTimeMillis() + "&m=" + m + "&pageIndex=" + page
+                        + "&sName=isbuy&s=desc&t=all";
+                String body;
+                try {
+                    body = getRaw(url, "https://fund.eastmoney.com/data/jcxx_zhishu.html");
+                    failStreak = 0;
+                } catch (RuntimeException e) {
+                    failStreak++;
+                    LOGGER.error("规模抓取[{}]第 {} 页请求失败（连续 {} 次）", m, page, failStreak, e);
+                    if (failStreak >= 5) {
+                        throw new BizException("规模数据源请求失败（连续 " + failStreak + " 页），请稍后重试");
+                    }
+                    page--; // 同一页重试
+                    continue;
+                }
+                JsonNode root = JsonUtils.mapper().readTree(body);
+                JsonNode datas = root.path("Datas");
+                total = root.path("TotalCount").asInt(page * FUND_INFO_PAGE_SIZE);
+                if (!datas.isArray() || datas.isEmpty()) {
+                    break;
+                }
+                for (JsonNode row : datas) {
+                    String code = row.path("FCode").asText("");
+                    double endNav = row.path("EndNav").asDouble(0);
+                    if (code.matches("\\d{6}") && endNav > 0) {
+                        scale.put(code, BigDecimal.valueOf(endNav));
+                    }
+                }
+                if (page % 20 == 0) {
+                    LOGGER.info("规模抓取[{}] 已完成 {}/{} 页（累计 {} 只）", m, page,
+                            (total + FUND_INFO_PAGE_SIZE - 1) / FUND_INFO_PAGE_SIZE, scale.size());
+                }
+            }
+        }
+        return scale;
+    }
+
     /** 拉取指数估值历史（中证官网，peg 即 PE；仅覆盖中证/上证系列） */
     public List<ValuationItem> fetchIndexValuation(String indexCode, LocalDate beg, LocalDate end) {
         String url = URL_INDEX_VALUATION.replace("{indexCode}", indexCode)
@@ -669,6 +788,11 @@ public class EastmoneyClient {
     private JsonNode getJson(String url, String referer) {
         String body = getWithRetry(url, referer);
         return com.quant.common.util.JsonUtils.mapper().readTree(body);
+    }
+
+    /** GET 返回原始文本（可带 Referer；用于非纯 JSON 的 JS 文本接口，如基金排行 rankhandler） */
+    private String getRaw(String url, String referer) {
+        return getWithRetry(url, referer);
     }
 
     /** 带重试的 GET：指数退避 1s/2s/4s，重试耗尽抛业务异常；总开关关闭时直接熔断 */

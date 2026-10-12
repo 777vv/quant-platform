@@ -434,9 +434,9 @@ public class SyncServiceImpl implements SyncService {
         refreshDividendsIfNeeded(fund, forceProfile);
         if (fund.getFundType() != null && fund.getFundType() == FundTypeEnum.ETF.getCode()) {
             refreshPremiumRate(fund);
-            // 每日估算规模（V6.15）：份额 × 当日单位净值——与季报披露同口径、但每个交易日可得
-            estimateEtfDailyScale(fund);
         }
+        // 每日估算规模（V6.15/V6.30）：场内=份额×当日净值、场外=披露净资产按净值变动折算——每个交易日一条
+        estimateDailyScale(fund);
     }
 
     /**
@@ -466,8 +466,8 @@ public class SyncServiceImpl implements SyncService {
             fund.setCustFeeRate(profile.custFeeRate());
             fund.setSalesFeeRate(profile.salesFeeRate());
             fund.setProfileSyncDate(LocalDate.now());
-            // 规模历史随每次成功的档案刷新落一行（幂等，同日覆盖），供基金规模走势副图使用
-            scaleHistoryService.record(fund.getFundCode(), profile.fundScale(), profile.fundScaleDate());
+            // ⚠️ V6.30 起不再写 fund_scale_history 的披露值行（用户口径：披露值只更新档案字段，
+            // 规模历史只记每日估算）——披露值仍随档案刷新写入 fund_basic，供列表无估算时回退展示
         } catch (Exception e) {
             LOGGER.error("基金[{}]档案（规模/费率）刷新失败", fund.getFundCode(), e);
         }
@@ -501,15 +501,70 @@ public class SyncServiceImpl implements SyncService {
     }
 
     /**
+     * 落一行「每日估算」规模（V6.30，用户口径：规模历史只记每日估算、每基金每交易日一条）：
+     * <ul>
+     *   <li><b>场内 ETF</b>：当日份额（东财行情 f84，每交易日公布）× 当日单位净值（V6.15 口径）；</li>
+     *   <li><b>场外指数基金</b>：最新披露净资产 ×（最新单位净值 ÷ 披露截止日单位净值）——场外没有每日份额
+     *       数据源（监管只要求定期报告披露），按"净资产 = 份额 × 单位净值、份额不变时两者同比例变化"
+     *       做等效折算；申购赎回造成的份额变动无法反映，属**估算**口径（副图与列表都标"每日估算"）。</li>
+     * </ul>
+     * 落库幂等键 = 基金 + 净值日，同一天重复跑覆盖；缺数据时跳过并记日志，不影响同步主流程。
+     */
+    private void estimateDailyScale(FundBasic fund) {
+        if (fund.getFundType() != null && fund.getFundType() == FundTypeEnum.ETF.getCode()) {
+            estimateEtfDailyScale(fund);
+        } else {
+            estimateOtcDailyScale(fund);
+        }
+    }
+
+    /**
+     * 场外指数基金的每日规模估算（V6.30）：披露净资产 × 最新单位净值 ÷ 披露截止日单位净值。
+     * 全部取自本地数据（fund_basic 的披露值 + fund_nav 净值序列），不额外请求数据源；
+     * 披露值由每日同步的档案刷新维护（fund_basic.fund_scale），季报更新后估算基准自动跟上。
+     */
+    private void estimateOtcDailyScale(FundBasic fund) {
+        try {
+            BigDecimal disclosed = fund.getFundScale();
+            LocalDate disclosedDate = fund.getFundScaleDate();
+            if (disclosed == null || disclosed.compareTo(BigDecimal.ZERO) <= 0 || disclosedDate == null) {
+                return; // 无披露基准（如刚导入、档案还没刷过）：次日档案刷新后再估算
+            }
+            // 披露截止日的单位净值（当日无净值时取截止日之前最近一个净值日）
+            FundNav base = navMapper.selectOne(new LambdaQueryWrapper<FundNav>()
+                    .eq(FundNav::getFundCode, fund.getFundCode())
+                    .le(FundNav::getNavDate, disclosedDate)
+                    .orderByDesc(FundNav::getNavDate)
+                    .last("limit 1"));
+            FundNav latest = navMapper.selectOne(new LambdaQueryWrapper<FundNav>()
+                    .eq(FundNav::getFundCode, fund.getFundCode())
+                    .orderByDesc(FundNav::getNavDate)
+                    .last("limit 1"));
+            if (base == null || latest == null || base.getUnitNav() == null || latest.getUnitNav() == null
+                    || base.getUnitNav().compareTo(BigDecimal.ZERO) <= 0) {
+                return;
+            }
+            BigDecimal scaleYi = disclosed.multiply(latest.getUnitNav())
+                    .divide(base.getUnitNav(), 2, RoundingMode.HALF_UP);
+            scaleHistoryService.recordEstimated(fund.getFundCode(), latest.getNavDate(), scaleYi);
+            LOGGER.info("基金[{}]每日规模估算（场外）：披露 {} 亿元（{}）/ 净值 {} + 最新净值 {}（{}） = {} 亿元",
+                    fund.getFundCode(), disclosed.toPlainString(), disclosedDate,
+                    base.getUnitNav().toPlainString(), latest.getUnitNav().toPlainString(), latest.getNavDate(),
+                    scaleYi.toPlainString());
+        } catch (Exception e) {
+            LOGGER.error("基金[{}]场外每日规模估算失败（次日重试）", fund.getFundCode(), e);
+        }
+    }
+
+    /**
      * 每日估算规模（V6.15，用户口径）：**场内 ETF 规模 = 当日份额 × 当日单位净值**（亿元）。
      *
      * <p>为什么需要：东财 f10 的「净资产规模」是**定期报告口径**（如截止 6/30），一个季度才变一次，
      * 列表/副图看着像"数据不动"；而场内 ETF 的**份额每交易日公布**（东财行情 f84），
      * 乘当日单位净值（与溢价率同一净值来源）即可得到与披露口径一致、但每日更新的规模估算。
      *
-     * <p>落库：写进 fund_scale_history（source=ESTIMATED，stat_date=净值日），与披露值(DISCLOSED)区分；
+     * <p>落库：写进 fund_scale_history（source=ESTIMATED，stat_date=净值日）；
      * 份额或净值取不到时**跳过并记日志**（不影响同步主流程，次日重试）。
-     * 场外基金（无每日份额数据源）不参与，继续用季报口径。
      */
     private void estimateEtfDailyScale(FundBasic fund) {
         try {
@@ -905,31 +960,33 @@ public class SyncServiceImpl implements SyncService {
     }
 
     /**
-     * 档案（规模/费率）强制刷新（每交易日 15:05）：收盘后立即再刷一次最新规模，
-     * 并把当日规模快照落进 fund_scale_history（供行情图「基金规模」副图）。
-     * 成功后 profile_sync_date 已是今天 → 15:30 日K全量覆盖的档案刷新会自然跳过，不会重复拉。
+     * 每日规模快照（每交易日 15:05，V6.30 用户口径：**只记「每日估算」、定期报告披露值不再落库**）：
+     * 对全部自选基金落一行估算（场内=份额×当日净值；场外=披露净资产按净值变动折算），
+     * 并顺带刷新溢价率；幂等（同基金同净值日覆盖，15:30/20:00 的同步路径会再覆盖一次同值或更新值）。
+     * ⚠️ 原"15:05 档案强制刷新"已移除：档案（费率/披露规模/分红）由各同步路径每日刷新（ETF 15:30、场外 20:00），
+     * 不再为已停记的披露快照多拉一遍 f10 档案页。
      */
     @Override
-    public void refreshAllProfiles() {
+    public void snapshotDailyScale() {
         if (isMarketClosedToday()) {
             return;
         }
-        lockUtils.runWithLock("job:profile:refresh", 60, () -> {
+        lockUtils.runWithLock("job:scale:daily", 60, () -> {
             List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
                     .eq(FundBasic::getStatus, 1));
             int ok = 0;
             List<String> errors = new ArrayList<>();
             for (FundBasic fund : funds) {
                 try {
-                    refreshProfileIfNeeded(fund, true);
                     refreshPremiumRate(fund);
+                    estimateDailyScale(fund);
                     ok++;
                 } catch (Exception e) {
-                    LOGGER.error("档案刷新[{}]失败", fund.getFundCode(), e);
+                    LOGGER.error("每日规模快照[{}]失败", fund.getFundCode(), e);
                     errors.add(fund.getFundCode() + ":" + e.getMessage());
                 }
             }
-            LOGGER.info("15:05 档案（规模/费率）强制刷新完成：成功 {}/{} 只{}", ok, funds.size(),
+            LOGGER.info("15:05 每日规模快照完成：成功 {}/{} 只{}", ok, funds.size(),
                     errors.isEmpty() ? "" : "，失败: " + String.join(" | ", errors));
         });
     }

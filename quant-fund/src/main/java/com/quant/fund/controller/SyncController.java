@@ -31,7 +31,7 @@ public class SyncController {
         this.syncLogMapper = syncLogMapper;
     }
 
-    /** 手动触发全局任务：etf / nav / valuation / indices / profiles（档案规模强制刷新） */
+    /** 手动触发全局任务：etf / nav / valuation / indices / scale（每日规模快照，兼容旧名 profiles）/ held / others */
     @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_SYNC)
     @PostMapping("/{type}")
     public R<Void> trigger(@PathVariable String type) {
@@ -40,7 +40,8 @@ public class SyncController {
             case "nav" -> syncService.syncAllOtcNav();
             case "valuation" -> syncService.syncValuation();
             case "indices" -> syncService.refreshIndexQuotes();
-            case "profiles" -> syncService.refreshAllProfiles();
+            // V6.30：原"档案强制刷新"改为"每日规模快照"（只记估算），旧路径名保留兼容
+            case "profiles", "scale" -> syncService.snapshotDailyScale();
             case "held" -> syncService.syncHeldFundsIntraday();
             case "others" -> syncService.syncNonHeldFundsIntraday();
             default -> throw new com.quant.common.exception.BizException("未知同步类型: " + type);

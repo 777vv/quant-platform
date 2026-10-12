@@ -15,9 +15,10 @@ import com.quant.fund.service.FundScaleHistoryService;
 import org.springframework.stereotype.Service;
 
 /**
- * 基金规模历史实现：每次档案刷新成功后调 {@link #record}（披露口径），
- * 场内 ETF 另由每日任务调 {@link #recordEstimated}（估算口径，V6.15）；
- * 同基金同日只留一行（后写覆盖）；查询按日期升序返回，前端画成阶梯/折线。
+ * 基金规模历史实现（V6.30 口径：**历史只记「每日估算」**，定期报告披露值不再落库）：
+ * 每交易日由同步路径与 15:05 规模快照任务调 {@link #recordEstimated}（场内=份额×当日净值；
+ * 场外=披露净资产按净值变动折算）；同基金同净值日只留一行（后写覆盖）；查询按日期升序返回。
+ * {@link #record}（披露口径）保留供排查/历史回补用，流水线已不再调用（V6.30）。
  */
 @Service
 public class FundScaleHistoryServiceImpl implements FundScaleHistoryService {

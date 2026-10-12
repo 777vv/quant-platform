@@ -50,17 +50,42 @@
     <el-card class="import-card block">
       <template #header><span>批量导入（串行导入，自动避开数据源封堵窗口；单批上限 200 只）</span></template>
 
-      <!-- 第一步：候选筛选（可选） -->
+      <!-- 第一步：候选筛选（可选）。V6.27 起支持场外指数基金——场内按「规模+上市年限」、场外按「成立年限」 -->
       <div class="batch-row">
         <span class="batch-label">候选筛选</span>
-        <span class="batch-field">规模 ≥</span>
-        <el-input-number v-model="minScale" :min="0" :max="10000" :controls="false" style="width: 100px" />
-        <span class="batch-field">亿 且 上市 ≥</span>
+        <el-radio-group v-model="candidateType" @change="onCandidateTypeChange">
+          <el-radio-button value="etf">场内 ETF</el-radio-button>
+          <el-radio-button value="otc">场外指数基金</el-radio-button>
+        </el-radio-group>
+        <template v-if="candidateType === 'etf'">
+          <span class="batch-field">规模 ≥</span>
+          <el-input-number v-model="minScale" :min="0" :max="10000" :controls="false" style="width: 100px" />
+          <span class="batch-field">亿 且 上市 ≥</span>
+        </template>
+        <template v-else>
+          <span class="batch-field">规模 ≥</span>
+          <el-input-number v-model="minScale" :min="0" :max="10000" :controls="false" style="width: 100px" />
+          <span class="batch-field">亿 且 成立 ≥</span>
+        </template>
         <el-input-number v-model="minYears" :min="0" :max="30" :controls="false" style="width: 76px" />
         <span class="batch-field">年</span>
-        <el-button :loading="candidatesLoading" @click="loadCandidates">查询符合条件的 ETF</el-button>
-        <span class="muted">共 {{ candidates.length }} 只，已在池中的不可勾选（结果缓存 10 分钟）</span>
+        <el-button :loading="candidatesLoading" @click="loadCandidates">
+          {{ candidateType === 'etf' ? '查询符合条件的 ETF' : '查询符合条件的场外指数基金' }}
+        </el-button>
+        <span class="muted">
+          共 {{ candidates.length }} 只，已在池中的不可勾选（结果缓存 10 分钟<template
+            v-if="candidateType === 'otc' && otcScaleDate">；规模为季报口径，截至 {{ otcScaleDate }}</template>）
+        </span>
       </div>
+      <!-- 场外规模为季报口径、全量快照首次抓取约 2 分钟：加载中先给不按规模过滤的列表，避免干等（V6.28） -->
+      <el-alert
+        v-if="candidateType === 'otc' && otcQueried && !otcScaleReady"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="block"
+        title="规模数据正在首次加载（东财约 2~3 分钟，之后 7 天内即查即得），本次列表按成立年限筛选、未按规模过滤；稍后重新点【查询】即可看到规模"
+      />
       <el-table
         v-if="candidates.length"
         ref="candidateTableRef"
@@ -73,12 +98,27 @@
         <el-table-column type="selection" width="46" :selectable="selectableCandidate" />
         <el-table-column prop="fundCode" label="代码" width="92" />
         <el-table-column prop="fundName" label="名称" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="scaleYi" label="规模(亿)" min-width="96" align="right">
-          <template #default="{ row }">
-            <span class="num">{{ row.scaleYi }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="listedDate" label="上市日期" min-width="104" align="center" />
+        <template v-if="candidateType === 'etf'">
+          <el-table-column prop="scaleYi" label="规模(亿)" min-width="96" align="right">
+            <template #default="{ row }">
+              <span class="num">{{ row.scaleYi }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="listedDate" label="上市日期" min-width="104" align="center" />
+        </template>
+        <template v-else>
+          <el-table-column prop="scaleYi" label="规模(亿)" min-width="88" align="right">
+            <template #default="{ row }">
+              <span class="num">{{ row.scaleYi == null ? '--' : Number(row.scaleYi).toFixed(2) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="近1年涨幅" min-width="96" align="right">
+            <template #default="{ row }">
+              <span class="num" :class="changeColorClass(row.pct1y)">{{ row.pct1y == null ? '--' : (row.pct1y > 0 ? '+' : '') + row.pct1y.toFixed(2) + '%' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="estabDate" label="成立日期" min-width="104" align="center" />
+        </template>
         <el-table-column label="池内状态" min-width="96" align="center">
           <template #default="{ row }">
             <el-tag :type="row.inPool ? 'info' : 'success'" size="small">{{ row.inPool ? '已在池中' : '未导入' }}</el-tag>
@@ -93,7 +133,7 @@
           v-model="pasteText"
           type="textarea"
           :rows="2"
-          placeholder="可选：粘贴基金代码（换行/逗号/空格分隔均可，自动提取 6 位数字），如 510310, 510500 159915"
+          placeholder="可选：粘贴基金代码（换行/逗号/空格分隔均可，自动提取 6 位数字），场内场外均可，如 510310, 510500 110020 161005"
         />
       </div>
       <div class="batch-row">
@@ -135,8 +175,9 @@ import { useUserStore } from '@/stores/user'
 import { PERM } from '@/utils/permissions'
 import { computed, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { checkFund, etfCandidates, batchImportProgress, importFund, importProgress, startBatchImport } from '@/api/fund'
-import type { BatchImportProgress, EtfCandidate, FundCheckVO, TaskProgressVO } from '@/api/fund'
+import { changeColorClass } from '@/utils/format'
+import { checkFund, etfCandidates, otcCandidates, batchImportProgress, importFund, importProgress, startBatchImport } from '@/api/fund'
+import type { BatchImportProgress, EtfCandidate, FundCheckVO, OtcCandidate, TaskProgressVO } from '@/api/fund'
 
 const userStore = useUserStore()
 
@@ -239,13 +280,19 @@ function startPoll(taskId: string) {
   }, 1500)
 }
 
-// ===== 批量导入（V5.41）=====
+// ===== 批量导入（V5.41；V6.27 起支持场外指数基金候选）=====
 
+/** 候选类型：etf=场内（按规模+上市年限）/ otc=场外指数基金（按成立年限+规模，近1年涨幅降序；V6.28 起规模为季报口径） */
+const candidateType = ref<'etf' | 'otc'>('etf')
 const minScale = ref(10)
 const minYears = ref(6)
 const candidatesLoading = ref(false)
-const candidates = ref<EtfCandidate[]>([])
-const selectedCandidates = ref<EtfCandidate[]>([])
+const candidates = ref<(EtfCandidate | OtcCandidate)[]>([])
+const selectedCandidates = ref<(EtfCandidate | OtcCandidate)[]>([])
+/** 场外规模快照：是否就绪 + 季报截止日（V6.28；未就绪时列表未按规模过滤，页面给出提示） */
+const otcScaleReady = ref(true)
+const otcScaleDate = ref<string | null>(null)
+const otcQueried = ref(false)
 const pasteText = ref('')
 const batchRunning = ref(false)
 const batchProgress = ref<BatchImportProgress | null>(null)
@@ -257,7 +304,15 @@ const singleRunning = computed(() => importing.value || (!!progress.value && pro
 async function loadCandidates() {
   candidatesLoading.value = true
   try {
-    candidates.value = await etfCandidates(minScale.value, minYears.value)
+    if (candidateType.value === 'etf') {
+      candidates.value = await etfCandidates(minScale.value, minYears.value)
+    } else {
+      const res = await otcCandidates(minScale.value, minYears.value)
+      candidates.value = res.items
+      otcScaleReady.value = res.scaleReady
+      otcScaleDate.value = res.scaleDate
+      otcQueried.value = true
+    }
     // 新查询结果重置勾选，避免"上一次的勾选"错配到本次清单
     selectedCandidates.value = []
   } finally {
@@ -265,12 +320,18 @@ async function loadCandidates() {
   }
 }
 
+/** 切换候选类型：清空当前清单与勾选（两类的列与筛选条件不同，不宜混看） */
+function onCandidateTypeChange() {
+  candidates.value = []
+  selectedCandidates.value = []
+}
+
 /** 已在池中的行不可勾选（服务端也会跳过，这里提前挡掉省额度） */
-function selectableCandidate(row: EtfCandidate): boolean {
+function selectableCandidate(row: EtfCandidate | OtcCandidate): boolean {
   return !row.inPool
 }
 
-function onSelectionChange(rows: EtfCandidate[]) {
+function onSelectionChange(rows: (EtfCandidate | OtcCandidate)[]) {
   selectedCandidates.value = rows
 }
 

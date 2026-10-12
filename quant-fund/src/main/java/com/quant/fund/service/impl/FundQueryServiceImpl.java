@@ -126,7 +126,10 @@ public class FundQueryServiceImpl implements FundQueryService {
     }
 
     @Override
-    public PageResult<WatchItemVO> pageWatchlist(String keyword, String tag, long page, long size) {
+    public PageResult<WatchItemVO> pageWatchlist(String keyword, String tag, Integer fundType, long page, long size) {
+        if (fundType != null && fundType != 1 && fundType != 2) {
+            throw new BizException("基金类型只支持 1（场内 ETF）或 2（场外指数基金）");
+        }
         List<String> tagCodes = null;
         if (tag != null && !tag.isBlank()) {
             tagCodes = fundTagService.fundCodesOfTag(tag.trim());
@@ -138,12 +141,12 @@ public class FundQueryServiceImpl implements FundQueryService {
         long safePage = Math.max(page, 1);
         long safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         Set<String> holdings = holdingCodes();
-        long total = fundBasicMapper.selectCount(baseWrapper(keyword, tagCodes));
-        // 持仓段：持仓基金数量很少，直接一次取出（同样受关键词/标签条件约束），
+        long total = fundBasicMapper.selectCount(baseWrapper(keyword, tagCodes, fundType));
+        // 持仓段：持仓基金数量很少，直接一次取出（同样受关键词/标签/类型条件约束），
         // 这样"持仓优先"不依赖数据库方言的布尔排序，翻页也只需拼接两段
         List<FundBasic> held = holdings.isEmpty() ? List.of() : sortHeldByMarketValueDesc(
-                fundBasicMapper.selectList(baseWrapper(keyword, tagCodes).in(FundBasic::getFundCode, holdings)));
-        List<FundBasic> records = slicePage(keyword, tagCodes, holdings, held, (safePage - 1) * safeSize, safeSize);
+                fundBasicMapper.selectList(baseWrapper(keyword, tagCodes, fundType).in(FundBasic::getFundCode, holdings)));
+        List<FundBasic> records = slicePage(keyword, tagCodes, fundType, holdings, held, (safePage - 1) * safeSize, safeSize);
         Map<String, BigDecimal> ttmYields = dividendYieldService.currentTtmYields(records);
         // 每日估算规模（V6.15）：本页基金一次批量查（场外基金本来就没有估算行，自然为空）
         Map<String, FundScaleHistoryService.EstimatedScale> estimated = scaleHistoryService.latestEstimated(
@@ -181,9 +184,13 @@ public class FundQueryServiceImpl implements FundQueryService {
                 .toList();
     }
 
-    /** 自选筛选条件（状态正常 + 关键词 + 标签），每次调用返回新实例（MP 的 wrapper 会被就地修改） */
-    private LambdaQueryWrapper<FundBasic> baseWrapper(String keyword, List<String> tagCodes) {
+    /** 自选筛选条件（状态正常 + 关键词 + 标签 + 类型），每次调用返回新实例（MP 的 wrapper 会被就地修改） */
+    private LambdaQueryWrapper<FundBasic> baseWrapper(String keyword, List<String> tagCodes, Integer fundType) {
         LambdaQueryWrapper<FundBasic> wrapper = new LambdaQueryWrapper<FundBasic>().eq(FundBasic::getStatus, 1);
+        if (fundType != null) {
+            // 场内/场外查询条件（V6.31，用户要求）：1=场内 ETF、2=场外指数基金
+            wrapper.eq(FundBasic::getFundType, fundType);
+        }
         if (keyword != null && !keyword.isBlank()) {
             String kw = keyword.trim();
             wrapper.and(w -> w.like(FundBasic::getFundCode, kw).or().like(FundBasic::getFundName, kw));
@@ -203,7 +210,7 @@ public class FundQueryServiceImpl implements FundQueryService {
      * @param offset 全局偏移量
      * @param size   每页条数（已钳制）
      */
-    private List<FundBasic> slicePage(String keyword, List<String> tagCodes, Set<String> holdings,
+    private List<FundBasic> slicePage(String keyword, List<String> tagCodes, Integer fundType, Set<String> holdings,
             List<FundBasic> held, long offset, long size) {
         List<FundBasic> rows = new ArrayList<>();
         int fromHeld = (int) Math.max(0, Math.min(size, held.size() - offset));
@@ -215,7 +222,7 @@ public class FundQueryServiceImpl implements FundQueryService {
             long othersOffset = Math.max(0, offset - held.size());
             // 其余段按偏移量直接取：MP 的分页参数按"整页对齐"计，无法表达任意偏移，故用 LIMIT o, n
             // （offsets 均为已钳制的 long，不存在拼接注入问题；本项目数据库固定为 MySQL）
-            rows.addAll(fundBasicMapper.selectList(baseWrapper(keyword, tagCodes)
+            rows.addAll(fundBasicMapper.selectList(baseWrapper(keyword, tagCodes, fundType)
                     .notIn(!holdings.isEmpty(), FundBasic::getFundCode, holdings)
                     // 规模降序（V6.14 用户口径）：MySQL 的 DESC 会把 NULL 排在最后 ✓；
                     // 同规模（含都为 NULL）再按代码升序，保证分页顺序稳定

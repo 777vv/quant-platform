@@ -1,14 +1,17 @@
 package com.quant.fund.task;
 
+import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 
 import com.quant.common.log.JobLogs;
+import com.quant.fund.service.ImportService;
 import com.quant.fund.service.SyncService;
 import com.quant.fund.service.SyncSummaryService;
 import com.quant.fund.service.TradingCalendarService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -30,11 +33,23 @@ public class FundSyncJobs {
     /** 交易日判定（V5.33）：法定节假日里「收盘后同步」不再空跑/撞限流 */
     private final TradingCalendarService tradingCalendarService;
 
+    /** 自动导入新基金（V6.30，周三 13:01 定时任务）复用批量导入管线 */
+    private final ImportService importService;
+
+    /** 自动导入的规模下限（亿元，季报/实时口径与候选接口一致；默认 10） */
+    @Value("${import.auto.min-scale-yi:10}")
+    private BigDecimal autoMinScaleYi;
+
+    /** 自动导入的成立/上市年限下限（默认 2 年） */
+    @Value("${import.auto.min-years:2}")
+    private int autoMinYears;
+
     public FundSyncJobs(SyncService syncService, SyncSummaryService syncSummaryService,
-                        TradingCalendarService tradingCalendarService) {
+                        TradingCalendarService tradingCalendarService, ImportService importService) {
         this.syncService = syncService;
         this.syncSummaryService = syncSummaryService;
         this.tradingCalendarService = tradingCalendarService;
+        this.importService = importService;
     }
 
     /**
@@ -51,12 +66,27 @@ public class FundSyncJobs {
     }
 
     /**
-     * 每交易日 15:05 档案（规模/费率）强制刷新（用户口径：收盘后立即再刷一次最新规模），
-     * 并把当日规模快照落进 fund_scale_history（行情图「基金规模」副图数据源）。
+     * 每交易日 15:05 每日规模快照（V6.30 用户口径：只记「每日估算」，定期报告披露值不再落库）：
+     * 场内=份额×当日净值、场外=披露净资产按净值变动折算，每基金每交易日一条；另刷新溢价率。
      */
     @Scheduled(cron = "0 5 15 * * MON-FRI", zone = "Asia/Shanghai")
-    public void refreshProfiles() {
-        JobLogs.run("profile:refresh", syncService::refreshAllProfiles);
+    public void snapshotDailyScale() {
+        JobLogs.run("scale:daily", syncService::snapshotDailyScale);
+    }
+
+    /**
+     * 每周三 13:01（且为交易日，V6.30 用户要求）：自动导入"规模 ≥10 亿、成立 ≥2 年、且不在自选池"
+     * 的新基金（场内 ETF + 场外指数基金）。阈值可在配置里调整（import.auto.*）。
+     * 实际导入走批量导入管线（串行分批、与数据同步任务互斥、封堵窗口自动暂停），
+     * 手动手动预演用 POST /api/funds/import/batch/auto（默认 dryRun=true 只看清单）。
+     */
+    @Scheduled(cron = "0 1 13 * * WED", zone = "Asia/Shanghai")
+    public void autoImportNewFunds() {
+        JobLogs.run("import:auto", () -> {
+            if (!isClosedToday("import:auto")) {
+                importService.autoImportEligibleFunds(autoMinScaleYi, autoMinYears, false);
+            }
+        });
     }
 
     /**

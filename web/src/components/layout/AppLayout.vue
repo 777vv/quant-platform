@@ -57,7 +57,7 @@ const MENUS = [
   { path: '/funds', label: '基金池', icon: 'Coin', perm: PERM.MENU_FUNDS },
   { path: '/batch-backtest', label: '批量回测', icon: 'VideoPlay', perm: PERM.MENU_BATCH_BACKTEST },
   { path: '/trades', label: '交易流水', icon: 'Tickets', perm: PERM.MENU_TRADES },
-  { path: '/signals', label: '信号查询', icon: 'Bell', perm: PERM.MENU_SIGNALS },
+  { path: '/signals', label: '平台信号', icon: 'Bell', perm: PERM.MENU_SIGNALS },
   { path: '/market-signals', label: '市场信号', icon: 'Histogram', perm: PERM.MENU_MARKET_SIGNALS },
   { path: '/compare', label: '基金对比', icon: 'DataAnalysis', perm: PERM.MENU_COMPARE },
   { path: '/import', label: '数据导入', icon: 'Download', perm: PERM.MENU_IMPORT },

@@ -50,16 +50,16 @@
           </template>
         </el-table-column>
       </el-table>
-      <div class="pager-row">
+      <div class="pager">
         <el-pagination
           v-model:current-page="page"
           v-model:page-size="size"
-          :page-sizes="[10, 20, 50]"
           :total="total"
-          layout="total, sizes, prev, pager, next"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
           background
           @current-change="load"
-          @size-change="load"
+          @size-change="reload(1)"
         />
       </div>
     </el-card>
@@ -215,7 +215,9 @@
             <span class="muted">进度每 2 秒自动刷新</span>
           </template>
         </div>
-        <el-table :data="sortedRecords" border size="small">
+        <!-- 表格区（V6.29 用户要求）：滚动只发生在抽屉内的这块表格里，表头固定不跟随滚动 -->
+        <div class="drawer-table">
+          <el-table :data="sortedRecords" border size="small" height="100%">
           <el-table-column prop="id" label="ID" width="64" />
           <el-table-column label="区间" min-width="172">
             <template #default="{ row }">{{ row.startDate }} ~ {{ row.endDate }}</template>
@@ -289,7 +291,8 @@
               >删除</el-button>
             </template>
           </el-table-column>
-        </el-table>
+          </el-table>
+        </div>
       </div>
     </el-drawer>
   </div>
@@ -307,7 +310,7 @@ import StrategyParamForm from '@/components/strategy/StrategyParamForm.vue'
 import { addStrategy, allStrategyConfigs, deleteBacktest, strategyTypes, updateStrategy, type StrategyConfig, type StrategyTypeVO } from '@/api/strategy'
 import { batchBacktestDetail, batchBacktestPage, createBatchBacktest, type BacktestBatch, type BacktestBatchDetail, type BatchBacktestRequest } from '@/api/batchBacktest'
 import type { BacktestRecord } from '@/api/strategy'
-import { marketSignalOverview } from '@/api/marketSignals'
+import { marketSignalOverviewCached } from '@/api/marketSignals'
 
 const userStore = useUserStore()
 const canRun = computed(() => userStore.can(PERM.ACTION_BATCH_BACKTEST))
@@ -329,6 +332,12 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+/** 回到第 1 页再查询（改每页条数时用，避免停在越界页）——与交易流水/平台信号等列表页同一写法（V6.29） */
+function reload(p = 1) {
+  page.value = p
+  load()
 }
 
 /** 注册表优先（名字最准），注册表外的（已下线/未加载）回退公共映射 */
@@ -386,8 +395,11 @@ const fundTags = computed(() => {
 
 async function loadFundPool() {
   try {
-    const overview = await marketSignalOverview('10y')
-    fundPool.value = overview.rows.map((r) => ({ fundCode: r.fundCode, fundName: r.fundName, tags: r.tags }))
+    // V6.29：改走 5 分钟模块缓存（与市场信号页共用同一实体）——总览要算全池估值分位/均线/区间涨幅，
+    // 实测是页面初始化三项请求里最重的一个（本地 221ms vs 其余 16ms，生产更重）；
+    // 原实现每次进页面都直连，且抽屉的基金名/标签要等它回来，故"打开效率低"集中在这条链路上。
+    const { data } = await marketSignalOverviewCached('10y')
+    fundPool.value = data.rows.map((r) => ({ fundCode: r.fundCode, fundName: r.fundName, tags: r.tags }))
   } catch {
     fundPool.value = []
   }
@@ -507,7 +519,7 @@ async function openDialog() {
 const paramFormRef = ref<{ openSummary: () => void } | null>(null)
 /** 当前类型是否有速览内容（MA_TP_GRID 等四种有，未识别类型隐藏按钮） */
 const hasSummary = computed(() =>
-  ['MA_BREAK', 'MA_TP_GRID', 'OSC_UP'].includes(form.value.strategyType) ||
+  ['MA_BREAK', 'MA_TP_GRID', 'OSC_UP', 'DUAL_MA', 'TRIPLE_MA'].includes(form.value.strategyType) ||
   ['DIV_GRID', 'NDX_GRID', 'PYRAMID_GRID', 'INV_PYRAMID_GRID'].includes(form.value.strategyType)
 )
 /** 回填提示（该策略上一次批量的参数与区间），空 = 没有历史批量 */
@@ -607,9 +619,9 @@ const detail = ref<BacktestBatchDetail | null>(null)
 const detailLoading = ref(false)
 const drawerTitle = computed(() => (detail.value ? `批次 #${detail.value.batch.id} 回测明细` : '批次详情'))
 
-/** 基金名（用选择器里那份自选池；没加载到回退代码） */
+/** 基金名（V6.29）：优先批次详情随附的 fundNames（接口一次带回来，不依赖总览），再回退自选池，最后退代码 */
 function fundName(code: string): string {
-  return fundPool.value.find((f) => f.fundCode === code)?.fundName ?? code
+  return detail.value?.fundNames?.[code] ?? fundPool.value.find((f) => f.fundCode === code)?.fundName ?? code
 }
 
 // ===== 抽屉内筛选与排序（V5.97）：基金下拉 + 标签多选；默认按持仓年化% 从大到小（空值恒最后）=====
@@ -819,5 +831,25 @@ async function removeRecord(row: BacktestRecord) {
 .capital-input {
   width: 180px;
   margin-left: var(--q-space-3);
+}
+
+/* 批次列表分页：靠右、与交易流水等列表页同一写法（V6.29 用户要求） */
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--q-space-3);
+}
+
+/* 查看抽屉（V6.29 用户要求）：参数卡与筛选条不滚动，滚动只发生在下方表格内、表头固定不跟随 */
+.drawer-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.drawer-table {
+  flex: 1;
+  min-height: 0;
 }
 </style>

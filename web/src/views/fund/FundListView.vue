@@ -22,6 +22,18 @@
         >
           <el-option v-for="tag in tagLibraryList" :key="tag.id" :value="tag.name" :label="tag.name" />
         </el-select>
+        <!-- 场内/场外查询条件（V6.31 用户要求）：与关键词/标签同为服务端筛选，对两个页签一致生效 -->
+        <el-select
+          v-model="typeFilter"
+          clearable
+          placeholder="全部类型"
+          style="width: 130px"
+          @change="reloadWatch(1)"
+          @clear="reloadWatch(1)"
+        >
+          <el-option :value="1" label="场内 ETF" />
+          <el-option :value="2" label="场外指数基金" />
+        </el-select>
         <el-button @click="reloadWatch(1)">查询</el-button>
         <el-button v-if="userStore.can(PERM.ACTION_TAG)" @click="tagManageVisible = true">标签管理</el-button>
       </div>
@@ -106,12 +118,8 @@
           </el-table-column>
           <el-table-column label="规模(亿)" min-width="88" align="right">
             <template #default="{ row }">
-              <!-- 优先展示"每日估算规模"（V6.15：场内 ETF 份额×当日净值，每个交易日更新）；
-                   没有估算的（场外基金）回退定期报告披露值，悬浮说明口径 -->
-              <el-tooltip v-if="scaleTextOf(row)" :content="scaleTipOf(row)" placement="top">
-                <span class="num">{{ scaleTextOf(row) }}</span>
-              </el-tooltip>
-              <span v-else class="num">--</span>
+              <!-- V6.30 用户要求：不做悬浮文案，直接显示数值（优先"每日估算"，无估算回退披露值） -->
+              <span class="num">{{ scaleTextOf(row) ?? '--' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="运作费率" min-width="88" align="right">
@@ -182,7 +190,7 @@
           row-key="fundCode"
           v-loading="holdingLoading"
           :data="pagedHolding"
-          :empty-text="tagFilter ? `当前标签「${tagFilter}」下无持仓基金` : '暂无持仓'"
+          :empty-text="holdingEmptyText"
           border
           stripe
         >
@@ -280,14 +288,32 @@ let pollTimer: number | undefined
 let keywordTimer: number | undefined
 
 /**
- * 持仓表同样受页头标签筛选约束（筛选控件在标签页之外，对两个标签页一致生效）；
- * 未选标签时返回全部持仓。
+ * 持仓表同样受页头标签/类型筛选约束（筛选控件在标签页之外，对两个标签页一致生效）；
+ * 未选条件时返回全部持仓。
  */
 const filteredHolding = computed(() => {
-  if (!tagFilter.value) {
-    return holdingItems.value
+  return holdingItems.value.filter((item) => {
+    if (tagFilter.value && !(fundTagMap.value[item.fundCode] ?? []).includes(tagFilter.value)) {
+      return false
+    }
+    // 场内/场外筛选（V6.31）：持仓表的 fundType 与自选表同一口径（1=场内、2=场外）
+    if (typeFilter.value !== '' && item.fundType !== typeFilter.value) {
+      return false
+    }
+    return true
+  })
+})
+
+/** 持仓表空态文案：把当前生效的筛选项说清楚（V6.31 起含类型） */
+const holdingEmptyText = computed(() => {
+  const conds: string[] = []
+  if (tagFilter.value) {
+    conds.push(`标签「${tagFilter.value}」`)
   }
-  return holdingItems.value.filter((item) => (fundTagMap.value[item.fundCode] ?? []).includes(tagFilter.value))
+  if (typeFilter.value !== '') {
+    conds.push(typeFilter.value === 1 ? '场内 ETF' : '场外指数基金')
+  }
+  return conds.length > 0 ? `当前筛选（${conds.join('、')}）下无持仓基金` : '暂无持仓'
 })
 
 /** 市值降序（V5.35）：null 市值排最后，其余从大到小 */
@@ -324,6 +350,8 @@ const router = useRouter()
 const tagLibraryList = ref<FundTagVO[]>([])
 const fundTagMap = ref<Record<string, string[]>>({})
 const tagFilter = ref('')
+/** 场内/场外筛选（V6.31 用户要求）：1=场内 ETF、2=场外指数基金、''=不限 */
+const typeFilter = ref<number | ''>('')
 const tagManageVisible = ref(false)
 const tagEditVisible = ref(false)
 const tagEditFund = ref('')
@@ -389,6 +417,7 @@ async function loadWatch() {
     const result = await watchlistPage({
       keyword: keyword.value.trim() || undefined,
       tag: tagFilter.value || undefined,
+      fundType: typeFilter.value === '' ? undefined : typeFilter.value,
       page: watchPageNo.value,
       size: watchPageSize.value
     })
@@ -410,21 +439,12 @@ function reloadWatch(targetPage: number) {
   loadWatch()
 }
 
-/** 关键词输入防抖（300ms）后回到第 1 页查询，避免每敲一个字都打接口 */
-/** 规模展示值（V6.15）：优先"每日估算规模"，无估算时回退定期报告披露值 */
+/** 规模展示值（V6.15；V6.30 起列内不再有悬浮口径说明）：优先"每日估算规模"，无估算时回退定期报告披露值 */
 function scaleTextOf(row: WatchItemVO): string | null {
   if (row.dailyScale != null) {
     return row.dailyScale.toFixed(2)
   }
   return row.fundScale != null ? row.fundScale.toFixed(2) : null
-}
-
-/** 规模的悬浮口径说明：估算值标"每日估算（净值日）"，披露值标"季报截止日" */
-function scaleTipOf(row: WatchItemVO): string {
-  if (row.dailyScale != null) {
-    return `每日估算规模 = 当日份额 × 当日单位净值（数据日 ${row.dailyScaleDate ?? '未知'}）；定期报告披露值 ${row.fundScale?.toFixed(2) ?? '--'} 亿元（截止 ${row.fundScaleDate ?? '未知'}）`
-  }
-  return `净资产规模（定期报告披露），截止 ${row.fundScaleDate ?? '未知'}；场内 ETF 才有每日估算值`
 }
 
 /** 最后同步动作时间：取时分秒部分（后端 LocalDateTime 序列化为 yyyy-MM-ddTHH:mm:ss） */

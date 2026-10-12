@@ -41,7 +41,31 @@ export interface TaskProgressVO {
   message: string | null
 }
 
-/** 批量导入候选（ETF，按规模/上市年限筛选；V5.41） */
+/** 批量导入候选·场外指数基金（V6.27；V6.28 起含规模——最新季报口径净资产） */
+export interface OtcCandidate {
+  /** 基金代码 */
+  fundCode: string
+  /** 基金名称 */
+  fundName: string
+  /** 成立日期（真实成立日，非近似） */
+  estabDate: string
+  /** 近1年涨幅（%，榜单口径；无数据为 null） */
+  pct1y: number | null
+  /** 规模（亿元，最新季报口径；无数据或规模快照未就绪为 null） */
+  scaleYi: number | null
+  /** 是否已在自选池中 */
+  inPool: boolean
+}
+
+/** 场外候选响应（V6.28）：包一层携带规模快照状态（季报口径、抓全量快照约 2 分钟） */
+export interface OtcCandidatesResult {
+  /** 规模快照是否就绪（false=加载中或失败，本次列表未按规模过滤） */
+  scaleReady: boolean
+  /** 规模口径的季报截止日（如 2026-06-30；未就绪为 null） */
+  scaleDate: string | null
+  /** 候选清单（按近1年涨幅降序） */
+  items: OtcCandidate[]
+}
 export interface EtfCandidate {
   /** 基金代码 */
   fundCode: string
@@ -255,9 +279,14 @@ export function importProgress(taskId: string) {
   return get<TaskProgressVO>('/funds/import/progress', { taskId })
 }
 
-/** 批量导入候选：全市场场内 ETF 按规模（亿）/上市年限筛选（V5.41，结果服务端缓存 10 分钟） */
+/** 批量导入候选：场内 ETF 按规模/上市年限、场外指数按成立年限筛选（结果服务端缓存 10 分钟） */
 export function etfCandidates(minScaleYi: number, minYears: number) {
   return get<EtfCandidate[]>('/funds/import/batch/candidates', { minScaleYi, minYears })
+}
+
+/** 批量导入候选·场外指数基金（V6.28：按成立年限 + 季报口径规模筛选；快照加载中时 scaleReady=false） */
+export function otcCandidates(minScaleYi: number, minYears: number) {
+  return get<OtcCandidatesResult>('/funds/import/batch/candidates', { minScaleYi, minYears, fundType: 'otc' })
 }
 
 /** 发起批量导入：返回 taskId 与接收/跳过清单（已在池中的自动跳过） */
@@ -428,6 +457,8 @@ export interface WatchQuery {
   keyword?: string
   /** 标签名（预定义标签库中的名称） */
   tag?: string
+  /** 基金类型（V6.31）：1=场内 ETF、2=场外指数基金；不传=不限 */
+  fundType?: number
   /** 页码（从 1 开始） */
   page?: number
   /** 每页条数 */

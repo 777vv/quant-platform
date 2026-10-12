@@ -105,7 +105,7 @@
         <el-form-item label="快捷模板">
           <el-button size="small" @click="applyGuestDefault">一键只读访客</el-button>
           <el-button size="small" @click="form.permissions = []">清空全部</el-button>
-          <span class="field-hint">只读模板 = 仪表盘 + 基金池 + 信号查询 + 基金对比 + 使用手册</span>
+          <span class="field-hint">只读模板 = 仪表盘 + 基金池 + 平台信号 + 基金对比 + 使用手册</span>
         </el-form-item>
       </el-form>
       <template #footer>

@@ -29,8 +29,12 @@ export const TEXT_SECONDARY = '#6b7280'
 export const CANDLE_UP = UP
 export const CANDLE_DOWN = DOWN
 
-/** 均线（V5.88：改为一组长周期 30/60/90/120/180/250）——6 色互不撞色，并与 K 线红/绿保持区分度 */
-export const MA_COLORS = ['#f59e0b', '#0ea5e9', '#7c3aed', '#64748b', '#10b981', '#ec4899']
+/**
+ * 均线色（V6.25：窗口扩为 MA10/20/30/60/90/120/180/250，8 色按同序一一对应）。
+ * 选色口径：色相互不撞色、且都与 K 线红/绿保持区分度；**MA120 用品牌蓝**——
+ * 它是默认显示的那条（见 QuoteTrendPanel 的 DEFAULT_MA_WINDOWS），给最醒目的颜色。
+ */
+export const MA_COLORS = ['#f59e0b', '#0ea5e9', '#7c3aed', '#64748b', '#10b981', '#2563eb', '#0f766e', '#ec4899']
 
 /** 布林带：中轨 + 上下轨（上下轨同色，中轨用主色区分） */
 export const BOLL_MID = '#7c3aed'

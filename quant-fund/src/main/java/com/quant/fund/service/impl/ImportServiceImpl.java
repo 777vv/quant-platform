@@ -10,9 +10,10 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.toolkit.Db;
@@ -23,6 +24,9 @@ import com.quant.fund.client.EastmoneyClient;
 import com.quant.fund.dto.BatchImportProgressVO;
 import com.quant.fund.dto.EtfCandidateVO;
 import com.quant.fund.dto.FundCheckVO;
+import com.quant.fund.dto.OtcCandidateVO;
+import com.quant.fund.dto.OtcCandidatesVO;
+import com.quant.fund.dto.OtcScaleSnapshot;
 import com.quant.fund.dto.TaskProgressVO;
 import com.quant.fund.entity.FundBasic;
 import com.quant.fund.entity.FundEtfKline;
@@ -43,6 +47,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
@@ -80,6 +86,9 @@ public class ImportServiceImpl implements ImportService {
     /** 单批代码上限：防误操作（粘贴错整份名单/文件）导致任务跑数小时 */
     private static final int BATCH_MAX_CODES = 200;
 
+    /** 自动导入（V6.30）：单批等待上限（秒），超时保留剩余批次到下周，避免整轮任务挂死 */
+    private static final int AUTO_IMPORT_BATCH_TIMEOUT_SECONDS = 3600;
+
     private final EastmoneyClient client;
 
     private final FundBasicMapper fundBasicMapper;
@@ -102,6 +111,9 @@ public class ImportServiceImpl implements ImportService {
     private final LockUtils lockUtils;
 
     private final StringRedisTemplate redisTemplate;
+
+    /** 场外规模快照抓取在途标记（V6.28）：启动预热与页面查询并发时只让一个线程去抓 */
+    private final AtomicBoolean otcScaleLoading = new AtomicBoolean(false);
 
     /** 批量任务执行线程池（POST 立即返回，任务体不能像单只导入那样占住请求线程） */
     private final ThreadPoolTaskExecutor taskExecutor;
@@ -227,6 +239,134 @@ public class ImportServiceImpl implements ImportService {
         return result;
     }
 
+    /** 场外候选缓存键前缀（V6.27） */
+    private static final String OTC_CANDIDATES_CACHE_KEY = "import:batch:otc-candidates:";
+
+    /** 场外规模快照缓存键（V6.28）：季报数据一年只变 4 次，缓存 7 天 */
+    private static final String OTC_SCALE_CACHE_KEY = "import:otc-scale:latest";
+
+    /** 场外规模快照缓存时长（V6.28） */
+    private static final Duration OTC_SCALE_TTL = Duration.ofDays(7);
+
+    @Override
+    public OtcCandidatesVO otcCandidates(BigDecimal minScaleYi, int minYears) {
+        if (minScaleYi == null || minScaleYi.compareTo(BigDecimal.ZERO) < 0) {
+            throw new BizException("规模下限须 ≥ 0");
+        }
+        if (minYears < 0 || minYears > 30) {
+            throw new BizException("成立年限须在 0~30 之间");
+        }
+        OtcScaleSnapshot scale = scaleSnapshot();
+        String cacheKey = OTC_CANDIDATES_CACHE_KEY + minScaleYi.stripTrailingZeros().toPlainString() + ":"
+                + minYears + (scale == null ? ":noscale" : "");
+        // 只在规模快照就绪时写缓存：快照加载中的结果（未按规模过滤）不缓存，避免用户看到"假过滤"
+        if (scale != null) {
+            String cached = redisTemplate.opsForValue().get(cacheKey);
+            if (cached != null) {
+                try {
+                    return JsonUtils.fromJson(cached, OtcCandidatesVO.class);
+                } catch (RuntimeException e) {
+                    LOGGER.error("场外候选清单缓存反序列化失败，删除缓存后实时抓取", e);
+                    redisTemplate.delete(cacheKey);
+                }
+            }
+        }
+        Set<String> poolCodes = poolCodes();
+        LocalDate estabBefore = LocalDate.now().minusYears(minYears);
+        // 榜单默认按近1年涨幅降序返回（sc=1nzf&st=desc），保持原序即"涨幅从高到低"
+        List<OtcCandidateVO> result = client.fetchOtcIndexFundRank().stream()
+                .filter(item -> !item.estabDate().isBlank()
+                        && LocalDate.parse(item.estabDate()).isBefore(estabBefore))
+                .map(item -> new OtcCandidateVO(item.code(), item.name(), item.estabDate(), item.pct1y(),
+                        scaleYi(scale, item.code()), poolCodes.contains(item.code())))
+                // 规模快照未就绪时不按规模过滤（页面提示"规模数据加载中"），就绪后按季报口径净资产过滤
+                .filter(item -> scale == null || minScaleYi.compareTo(BigDecimal.ZERO) == 0
+                        || (item.scaleYi() != null && item.scaleYi().compareTo(minScaleYi) >= 0))
+                .toList();
+        OtcCandidatesVO vo = new OtcCandidatesVO(scale != null,
+                scale == null ? null : scale.reportDate(), result);
+        if (scale != null) {
+            redisTemplate.opsForValue().set(cacheKey, JsonUtils.toJson(vo), Duration.ofMinutes(10));
+        }
+        return vo;
+    }
+
+    /** 规模取值（亿元，保留 2 位）：快照缺失或该基金无数据时返回 null（前端显示 --） */
+    private static BigDecimal scaleYi(OtcScaleSnapshot scale, String code) {
+        if (scale == null) {
+            return null;
+        }
+        BigDecimal raw = scale.scaleYi().get(code);
+        return raw == null ? null : raw.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    // ===== 场外规模快照（V6.28）=====
+
+    /**
+     * 最近一个**已完整披露**的季报截止日（V6.28）：按法定披露截止日推导——一季报 4/30、半年报 8/31、
+     * 三季报 10/31、年报次年 3/31。例：2026-10-12 落在三季报截止（10/31）之前，取 2026-06-30，
+     * 与东财实际返回的数据口径一致；东财若提前发布新季报，本标签在下一个披露窗口自动跟上。
+     */
+    static LocalDate latestReportQuarter(LocalDate today) {
+        LocalDate latest = LocalDate.of(today.getYear() - 1, 12, 31);
+        LocalDate[] ends = {LocalDate.of(today.getYear(), 3, 31), LocalDate.of(today.getYear(), 6, 30),
+                LocalDate.of(today.getYear(), 9, 30), LocalDate.of(today.getYear(), 12, 31)};
+        LocalDate[] deadlines = {LocalDate.of(today.getYear(), 4, 30), LocalDate.of(today.getYear(), 8, 31),
+                LocalDate.of(today.getYear(), 10, 31), LocalDate.of(today.getYear() + 1, 3, 31)};
+        for (int i = 0; i < ends.length; i++) {
+            if (!today.isBefore(deadlines[i])) {
+                latest = ends[i];
+            }
+        }
+        return latest;
+    }
+
+    /**
+     * 场外规模快照：Redis 缓存 7 天（季报数据、一年只变 4 次）。缓存未命中时**当前线程**同步抓取
+     * （约 2 分钟，受全局 300ms 限频约束）；抓取期间其他请求直接拿到 null（页面提示"规模数据加载中"、
+     * 本次不按规模过滤），不让请求线程排队干等。应用启动后由 {@link #warmOtcScaleCache()} 预热，
+     * 正常情况下用户查询时缓存已就绪。
+     */
+    private OtcScaleSnapshot scaleSnapshot() {
+        String cached = redisTemplate.opsForValue().get(OTC_SCALE_CACHE_KEY);
+        if (cached != null) {
+            try {
+                return JsonUtils.fromJson(cached, OtcScaleSnapshot.class);
+            } catch (RuntimeException e) {
+                LOGGER.error("场外规模缓存反序列化失败，删除缓存后重新抓取", e);
+                redisTemplate.delete(OTC_SCALE_CACHE_KEY);
+            }
+        }
+        if (!otcScaleLoading.compareAndSet(false, true)) {
+            return null;
+        }
+        try {
+            Map<String, BigDecimal> scale = client.fetchIndexFundScale();
+            OtcScaleSnapshot snapshot = new OtcScaleSnapshot(latestReportQuarter(LocalDate.now()).toString(), scale);
+            redisTemplate.opsForValue().set(OTC_SCALE_CACHE_KEY, JsonUtils.toJson(snapshot), OTC_SCALE_TTL);
+            LOGGER.info("场外规模快照抓取完成：{} 只（季报截止 {}），缓存 7 天", scale.size(), snapshot.reportDate());
+            return snapshot;
+        } catch (RuntimeException e) {
+            LOGGER.error("场外规模快照抓取失败（页面会提示加载中，稍后查询自动重试）", e);
+            return null;
+        } finally {
+            otcScaleLoading.set(false);
+        }
+    }
+
+    /**
+     * 应用启动后预热场外规模快照（V6.28）：仅当缓存缺失/过期时发起（后台线程，失败不阻断启动、
+     * 由 scaleSnapshot 自身记录日志），让用户打开数据导入页时即点即得；缓存 7 天内不重复抓取。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmOtcScaleCache() {
+        if (Boolean.TRUE.equals(redisTemplate.hasKey(OTC_SCALE_CACHE_KEY))) {
+            return;
+        }
+        LOGGER.info("场外规模快照缓存缺失，启动后台预热（约 2 分钟，不影响其他功能）");
+        taskExecutor.execute(this::scaleSnapshot);
+    }
+
     @Override
     public BatchStartResult startBatch(List<String> codes) {
         // 清洗：只留 6 位数字代码、保序去重（ETF 与场外代码都是 6 位）
@@ -275,6 +415,103 @@ public class ImportServiceImpl implements ImportService {
             throw new BizException("批量任务不存在或已过期（进度保留 2 小时）");
         }
         return JsonUtils.fromJson(json, BatchImportProgressVO.class);
+    }
+
+    // ===== 自动导入新基金（V6.30，周三 13:01 定时任务与手动预演共用）=====
+
+    @Override
+    public AutoImportReport autoImportEligibleFunds(BigDecimal minScaleYi, int minYears, boolean dryRun) {
+        List<String> notes = new ArrayList<>();
+        // 场外候选依赖"最新季报规模快照"：未就绪时本轮跳过场外，绝不按"无规模过滤"静默放行（会导入小基金）
+        OtcScaleSnapshot scale = scaleSnapshot();
+        List<String> etfNew = new ArrayList<>();
+        List<String> otcNew = new ArrayList<>();
+        try {
+            for (EtfCandidateVO candidate : etfCandidates(minScaleYi, minYears)) {
+                if (!candidate.inPool()) {
+                    etfNew.add(candidate.fundCode());
+                }
+            }
+        } catch (RuntimeException e) {
+            LOGGER.error("自动导入：场内候选获取失败（本轮跳过场内部分，下周再试）", e);
+            notes.add("场内候选获取失败：" + e.getMessage());
+        }
+        if (scale == null) {
+            LOGGER.warn("自动导入：场外规模快照未就绪，本轮跳过场外部分（下旬任务自动重试）");
+            notes.add("场外规模快照未就绪，已跳过场外部分");
+        } else {
+            try {
+                for (OtcCandidateVO candidate : otcCandidates(minScaleYi, minYears).items()) {
+                    if (!candidate.inPool()) {
+                        otcNew.add(candidate.fundCode());
+                    }
+                }
+            } catch (RuntimeException e) {
+                LOGGER.error("自动导入：场外候选获取失败（本轮跳过场外部分，下周再试）", e);
+                notes.add("场外候选获取失败：" + e.getMessage());
+            }
+        }
+        LinkedHashSet<String> merged = new LinkedHashSet<>(etfNew);
+        merged.addAll(otcNew);
+        List<String> codes = new ArrayList<>(merged);
+        if (dryRun) {
+            LOGGER.info("自动导入预演（dryRun）：场内新增 {} 只、场外新增 {} 只，合计 {} 只",
+                    etfNew.size(), otcNew.size(), codes.size());
+            return new AutoImportReport(true, etfNew, otcNew, List.of(), String.join("；", notes));
+        }
+        if (codes.isEmpty()) {
+            LOGGER.info("自动导入：没有符合条件且不在池中的新基金");
+            return new AutoImportReport(false, etfNew, otcNew, List.of(), "没有需要导入的新基金");
+        }
+        // 分批串行（单批上限 200）：等上一批跑完再提交下一批——批与批之间共用互斥锁与数据源，并发只会互相撞
+        List<String> imported = new ArrayList<>();
+        int batches = (codes.size() + BATCH_MAX_CODES - 1) / BATCH_MAX_CODES;
+        for (int i = 0; i < codes.size(); i += BATCH_MAX_CODES) {
+            List<String> chunk = codes.subList(i, Math.min(codes.size(), i + BATCH_MAX_CODES));
+            int batchNo = i / BATCH_MAX_CODES + 1;
+            BatchStartResult started = startBatch(chunk);
+            imported.addAll(started.accepted());
+            LOGGER.info("自动导入第 {}/{} 批已提交：接收 {} 只（已在池跳过 {} 只）",
+                    batchNo, batches, started.accepted().size(), started.skippedExisting().size());
+            if (!waitBatchDone(started.taskId(), AUTO_IMPORT_BATCH_TIMEOUT_SECONDS)) {
+                notes.add("第 " + batchNo + "/" + batches + " 批等待超时，剩余批次留待下周");
+                break;
+            }
+        }
+        LOGGER.info("自动导入完成：符合条件 {} 只（场内 {} + 场外 {}），提交导入 {} 只、分 {} 批{}",
+                codes.size(), etfNew.size(), otcNew.size(), imported.size(), batches,
+                notes.isEmpty() ? "" : "；" + String.join("；", notes));
+        return new AutoImportReport(false, etfNew, otcNew, imported, String.join("；", notes));
+    }
+
+    /**
+     * 等待批量导入任务结束（10 秒轮询一次 Redis 进度，上限由调用方给定）。
+     * 进度键 2 小时过期：取不到进度视为"已结束或过期"直接放行，避免整轮自动导入卡死。
+     */
+    private boolean waitBatchDone(String taskId, int timeoutSeconds) {
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+        while (System.currentTimeMillis() < deadline) {
+            BatchImportProgressVO progress;
+            try {
+                progress = batchProgress(taskId);
+            } catch (RuntimeException e) {
+                LOGGER.warn("自动导入批次[{}]进度取不到（任务已结束或已过期）：{}", taskId, e.getMessage());
+                return true;
+            }
+            if (!BatchImportProgressVO.RUNNING.equals(progress.status())) {
+                LOGGER.info("自动导入批次[{}]结束：{}（成功 {} / 失败 {}）",
+                        taskId, progress.message(), progress.success(), progress.failed());
+                return true;
+            }
+            try {
+                Thread.sleep(10_000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        LOGGER.warn("自动导入批次[{}]等待超过 {} 秒仍未完成", taskId, timeoutSeconds);
+        return false;
     }
 
     /**
@@ -636,45 +873,33 @@ public class ImportServiceImpl implements ImportService {
     }
 
     /**
-     * 判定场内市场：1=沪 0=深，非场内返回 null。
-     * 规则优先级：① 代码段规则（确定性，不受网络影响）——沪 ETF 51/56/58 开头、深 ETF 159 开头；
-     * ② 场内行情探测兜底（覆盖未纳入规则的少数品种；探测走外部接口，链路抖动时可能失败）。
-     * 背景实测：曾因探测单次失败把 515080（沪 ETF）误判为场外基金，导致 K 线缺失、15:30 同步任务不覆盖。
+     * 判定场内市场：1=沪 0=深，非场内（含 ETF 联接、普通场外指数、指数 LOF）返回 null。
+     *
+     * <p>⚠️ V6.30 起**只用代码段规则、不再做"push2 场内行情探测"兜底**：交易所 ETF 代码段
+     * （沪 51/56/58、深 159）已全覆盖，而探测只看"有没有场内报价"，会把两类基金误判成场内 ETF：
+     * ① 与深市股票撞号的 00xxxx 场外基金——实测 **002611 博时黄金ETF联接C**（002611 同时是深市股票）
+     * 被判为场内、走了 K 线取数路径；② 场内可交易但按**场外净值口径**取数的 LOF（16xxxx/501xxx）。
+     * 原兜底注释里的历史事故（515080 误判为场外）由代码段规则本身覆盖，不受影响。
      */
     private Integer detectMarket(String code) {
-        Integer byCode = detectMarketByCode(code);
-        if (byCode != null) {
-            return byCode;
-        }
-        Optional<EastmoneyClient.EtfRealtime> sh = client.fetchEtfRealtime(1, code);
-        if (sh.isPresent()) {
-            return 1;
-        }
-        Optional<EastmoneyClient.EtfRealtime> sz = client.fetchEtfRealtime(0, code);
-        if (sz.isPresent()) {
-            return 0;
-        }
-        return null;
+        return detectMarketByCode(code);
     }
 
-    /** 代码段规则：沪 ETF（51/56/58 开头）→ 1；深 ETF（159 开头）→ 0；其余 → null */
-    /**
-     * 判定场内市场：1=沪 0=深，非场内返回 null。
-     * 规则优先级：① 代码段规则（确定性，不受网络影响）——沪 ETF 51/56/58 开头、深 ETF 159 开头；
-     * ② 场内行情探测兜底（覆盖未纳入规则的少数品种；探测走外部接口，链路抖动时可能失败）。
-     * 背景实测：曾因探测单次失败把 515080（沪 ETF）误判为场外基金，导致 K 线缺失、15:30 同步任务不覆盖。
-     *
-     * <p>V4.6：非 6 位代码（如带市场前缀的写法）直接跳过规则①走探测——它们本来就不是
-     * 标准 ETF 代码，命中不了 51/56/58/159 前缀；真正的格式判断在 check() 里由东财搜索接口完成。
-     */
+    /** 代码段规则：沪 ETF（51/56/58 开头）→ 1；深 ETF（159 开头）→ 0；其余 → null（场外口径） */
     private Integer detectMarketByCode(String code) {
-        if (code == null || code.length() != 6) {
+        if (code == null) {
             return null;
         }
-        if (code.startsWith("51") || code.startsWith("56") || code.startsWith("58")) {
+        // 带市场前缀/后缀的写法（如 SH510300、159915.SZ）先提取 6 位数字再套规则（V4.6 起支持这类输入）
+        java.util.regex.Matcher digits = java.util.regex.Pattern.compile("(\\d{6})").matcher(code);
+        if (!digits.find()) {
+            return null;
+        }
+        String six = digits.group(1);
+        if (six.startsWith("51") || six.startsWith("56") || six.startsWith("58")) {
             return 1;
         }
-        if (code.startsWith("159")) {
+        if (six.startsWith("159")) {
             return 0;
         }
         return null;

@@ -3,6 +3,7 @@ package com.quant.strategy.service.impl;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -253,12 +254,21 @@ public class BacktestBatchServiceImpl implements BacktestBatchService, Applicati
         if (batch == null) {
             throw new BizException("批量回测批次不存在");
         }
-        BacktestBatchDetailVO vo = new BacktestBatchDetailVO();
-        vo.setBatch(batch);
-        vo.setRecords(recordMapper.selectList(new LambdaQueryWrapper<BacktestRecord>()
+        List<BacktestRecord> records = recordMapper.selectList(new LambdaQueryWrapper<BacktestRecord>()
                 .eq(BacktestRecord::getBatchId, id)
                 .orderByAsc(BacktestRecord::getFundCode)
-                .select(BacktestRecord.class, field -> !field.getColumn().contains("curve"))));
+                .select(BacktestRecord.class, field -> !field.getColumn().contains("curve")));
+        BacktestBatchDetailVO vo = new BacktestBatchDetailVO();
+        vo.setBatch(batch);
+        vo.setRecords(records);
+        // 基金名随详情一起下发（V6.29）：抽屉的「基金」列不必等市场信号总览（全池估值分位重接口）才能显示名称
+        List<String> codes = records.stream().map(BacktestRecord::getFundCode).distinct().toList();
+        Map<String, String> fundNames = new HashMap<>();
+        if (!codes.isEmpty()) {
+            fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>().in(FundBasic::getFundCode, codes))
+                    .forEach(fund -> fundNames.put(fund.getFundCode(), fund.getFundName()));
+        }
+        vo.setFundNames(fundNames);
         return vo;
     }
 

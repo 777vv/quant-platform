@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.quant.common.exception.BizException;
@@ -84,17 +85,22 @@ public class NotifyServiceImpl implements NotifyService {
 
     private final SysMailConfigMapper mapper;
 
+    /** 通知范围（V6.26）：只有"持有过（含已清仓）且配置了策略"的基金才推送 */
+    private final SignalNotifyScope notifyScope;
+
     public NotifyServiceImpl(MailConfigService mailConfigService,
                              SysMailConfigMapper mapper,
                              ObjectProvider<MailRecipientProvider> recipientProvider,
                              SpringTemplateEngine templateEngine,
-                             SignalRecordMapper signalRecordMapper, StrategyRegistry registry) {
+                             SignalRecordMapper signalRecordMapper, StrategyRegistry registry,
+                             SignalNotifyScope notifyScope) {
         this.mailConfigService = mailConfigService;
         this.mapper = mapper;
         this.recipientProvider = recipientProvider;
         this.templateEngine = templateEngine;
         this.signalRecordMapper = signalRecordMapper;
         this.registry = registry;
+        this.notifyScope = notifyScope;
     }
 
     @Override
@@ -133,9 +139,14 @@ public class NotifyServiceImpl implements NotifyService {
         if (!mailEnabled()) {
             return;
         }
+        // V6.26 通知范围：只推"持有过（含已清仓、市值为 0）且配置了策略"的基金，其余信号只入库不推送
+        Set<String> scope = notifyScope.notifiableFundCodes();
         List<SignalRecord> actionable = signals.stream()
                 .filter(this::needsMail)
+                .filter(signal -> scope.contains(signal.getFundCode()))
                 .toList();
+        LOGGER.info("信号邮件：候选 {} 条，命中通知范围 {} 条（范围基金 {} 只，跳过 {} 条：未持有或未配策略）",
+                signals.size(), actionable.size(), scope.size(), signals.size() - actionable.size());
         sendDigest(actionable);
     }
 
@@ -144,9 +155,16 @@ public class NotifyServiceImpl implements NotifyService {
         if (!mailEnabled()) {
             throw new BizException("邮件通知已关闭：请在【平台配置 → 邮件通知】开启后再试");
         }
+        // V6.26 通知范围：补发也只补"持有过且配置了策略"的基金（口径与定时推送一致）
+        Set<String> scope = notifyScope.notifiableFundCodes();
+        if (scope.isEmpty()) {
+            LOGGER.info("补发信号摘要：通知范围内没有基金（未持有或未配策略），跳过");
+            return 0;
+        }
         List<SignalRecord> pending = signalRecordMapper.selectList(new LambdaQueryWrapper<SignalRecord>()
                 .in(SignalRecord::getDirection, List.of(DIRECTION_BUY, DIRECTION_SELL))
                 .eq(SignalRecord::getNotifiedFlag, 0)
+                .in(SignalRecord::getFundCode, scope)
                 .ge(SignalRecord::getSignalDate, LocalDate.now().minusDays(PENDING_WINDOW_DAYS))
                 .orderByDesc(SignalRecord::getSignalDate).orderByAsc(SignalRecord::getFundCode));
         if (pending.isEmpty()) {

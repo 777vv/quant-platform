@@ -64,6 +64,16 @@ export const PARAM_LABELS: Record<string, Record<string, string>> = {
     initialShare: '初始仓位份额', baseShare: '底仓份额', fullShare: '满仓份额',
     baselineMaDays: '基准均线(日)', reboundMaDays: '回踩均线(日)',
     upperPct: '上限百分比', lowerPct: '下限百分比', cooldownDays: '冷静天数'
+  },
+  // 双均线/三均线（V6.32 用户新增）：按均线排列切换目标仓位（无初始仓位份额参数）
+  DUAL_MA: {
+    fullShare: '满仓份额', baseShare: '底仓份额',
+    fastMaDays: '快线均线(日)', slowMaDays: '慢线均线(日)', cooldownDays: '冷静天数'
+  },
+  TRIPLE_MA: {
+    fullShare: '满仓份额', midShare: '中仓份额', baseShare: '底仓份额',
+    fastMaDays: '快线均线(日)', midMaDays: '中线均线(日)', slowMaDays: '慢线均线(日)',
+    cooldownDays: '冷静天数'
   }
 }
 
@@ -85,6 +95,8 @@ export const STRATEGY_TYPE_NAMES: Record<string, string> = {
   NDX_GRID: '纳指网格',
   PYRAMID_GRID: '金字塔网格',
   INV_PYRAMID_GRID: '倒金字塔网格',
+  DUAL_MA: '双均线右侧',
+  TRIPLE_MA: '三均线右侧',
   GRID: '网格交易(已下线)',
   VAL_PERCENTILE: '估值百分位(已下线)'
 }

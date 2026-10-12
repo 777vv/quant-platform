@@ -68,12 +68,18 @@ public class ImportController {
 
     /**
      * 批量导入候选（V5.41）：全市场场内 ETF 按条件筛选（规模=总市值口径，成立时间=上市日期近似）。
-     * 结果缓存 10 分钟；数据源封堵时返回友好错误（"稍后重试"）。
+     * V6.27 起支持场外指数基金（fundType=otc：东财基金排行「指数型」，按成立年限 + 近1年涨幅）。
+     * V6.28 起场外同样支持规模筛选（**最新季报口径净资产**，见 OtcCandidatesVO：快照未就绪时
+     * scaleReady=false、本次不按规模过滤）。结果缓存 10 分钟；数据源封堵时返回友好错误（"稍后重试"）。
      */
     @GetMapping("/import/batch/candidates")
-    public R<List<EtfCandidateVO>> candidates(
+    public R<Object> candidates(
             @RequestParam(defaultValue = "10") BigDecimal minScaleYi,
-            @RequestParam(defaultValue = "6") int minYears) {
+            @RequestParam(defaultValue = "6") int minYears,
+            @RequestParam(defaultValue = "etf") String fundType) {
+        if ("otc".equalsIgnoreCase(fundType)) {
+            return R.ok(importService.otcCandidates(minScaleYi, minYears));
+        }
         return R.ok(importService.etfCandidates(minScaleYi, minYears));
     }
 
@@ -91,6 +97,22 @@ public class ImportController {
     @GetMapping("/import/batch/progress")
     public R<BatchImportProgressVO> batchProgress(@RequestParam String taskId) {
         return R.ok(importService.batchProgress(taskId));
+    }
+
+    /**
+     * 自动导入预演/执行（V6.30，与周三 13:01 定时任务同一执行体）：规模 ≥ minScaleYi 亿、
+     * 成立/上市 ≥ minYears 年、且不在自选池的新基金（场内 + 场外）。
+     *
+     * <p>⚠️ **dryRun 默认 true（只看清单、不导入）**——本接口传 dryRun=false 会真实发起批量导入
+     * （写入自选池并拉取历史数据，可能耗时较长），调用前先确认（铁律 14）。
+     */
+    @SaCheckPermission(com.quant.common.auth.PermissionCodes.ACTION_IMPORT_FUND)
+    @PostMapping("/import/batch/auto")
+    public R<ImportService.AutoImportReport> autoImport(
+            @RequestParam(defaultValue = "10") BigDecimal minScaleYi,
+            @RequestParam(defaultValue = "2") int minYears,
+            @RequestParam(defaultValue = "true") boolean dryRun) {
+        return R.ok(importService.autoImportEligibleFunds(minScaleYi, minYears, dryRun));
     }
 
     /**

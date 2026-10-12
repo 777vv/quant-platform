@@ -131,6 +131,64 @@
       <SummaryList v-if="showCard" title="策略逻辑速览" :items="maTpSummaryItems" />
     </template>
 
+    <!-- 双均线（V6.32 用户新增）：快线值 > 慢线值 → 全仓；快线值 < 慢线值 → 底仓；目标仓位模型 + 冷静天数 -->
+    <template v-else-if="type === 'DUAL_MA'">
+      <el-form-item>
+        <template #label><ParamLabel text="底仓份额" help="快线在下（空头排列）时的目标仓位（份）：卖出后只保留这个份额。须小于满仓份额。没有「初始仓位份额」——回测首日即按当日两线状态对齐到目标仓位。" /></template>
+        <el-input-number v-model="form.baseShare" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="满仓份额" help="快线在上（多头排列）时的目标仓位（份）：买入直接买到这个份额。请与可用资金匹配，回测时本金必须买得起它。" /></template>
+        <el-input-number v-model="form.fullShare" :min="1" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="快线均线（日）" help="短周期均线（如 30）：快线值 > 慢线值（多头排列）→ 目标为满仓份额。收盘价的简单移动平均（含当日），取值 2~500 个交易日；须小于慢线周期。" /></template>
+        <el-input-number v-model="form.fastMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="慢线均线（日）" help="长周期均线（如 180）：快线值 < 慢线值（空头排列）→ 目标为底仓份额。取值 2~500 个交易日。周期越大状态切换越少越迟。" /></template>
+        <el-input-number v-model="form.slowMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="冷静天数" help="最近一次实际交易后的 N 个交易日内不调仓（0=不冷静）。状态每天按最新收盘重评，冷却期满当天按最新目标执行，信号不会丢。" /></template>
+        <el-input-number v-model="form.cooldownDays" :min="0" :max="500" :controls="false" />
+      </el-form-item>
+      <SummaryList v-if="showCard" title="策略逻辑速览" :items="dualMaSummaryItems" />
+    </template>
+
+    <!-- 三均线（V6.32 用户新增）：快/中/慢三条均线的排列映射到 全仓/中仓/底仓（六种排列按用户口径） -->
+    <template v-else-if="type === 'TRIPLE_MA'">
+      <el-form-item>
+        <template #label><ParamLabel text="底仓份额" help="慢线最高等「弱排列」下的目标仓位（份）。三档须满足 底仓 < 中仓 < 满仓。没有「初始仓位份额」——回测首日即按当日排列对齐到目标仓位。" /></template>
+        <el-input-number v-model="form.baseShare" :min="0" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="中仓份额" help="中线最高时的目标仓位（「中>快>慢」或「中>慢>快」，份）：介于底仓与满仓之间，作为中间档。" /></template>
+        <el-input-number v-model="form.midShare" :min="1" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="满仓份额" help="「快线 > 中线 > 慢线」时的目标仓位（份）：唯一的最强多头排列（快线领涨）才买满。请与可用资金匹配，回测时本金必须买得起它。" /></template>
+        <el-input-number v-model="form.fullShare" :min="1" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="快线均线（日）" help="最短周期均线（如 20）。取值 2~500 个交易日，须满足 快线 < 中线 < 慢线。" /></template>
+        <el-input-number v-model="form.fastMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="中线均线（日）" help="中等周期均线（如 60）。中线最高时（「中>快>慢」「中>慢>快」）→ 目标为中仓份额（中间档）。" /></template>
+        <el-input-number v-model="form.midMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="慢线均线（日）" help="最长周期均线（如 180）。慢线最高（空头排列）时目标为底仓份额。" /></template>
+        <el-input-number v-model="form.slowMaDays" :min="2" :max="500" :controls="false" />
+      </el-form-item>
+      <el-form-item>
+        <template #label><ParamLabel text="冷静天数" help="最近一次实际交易后的 N 个交易日内不调仓（0=不冷静）。状态每天按最新收盘重评，冷却期满当天按最新目标执行。" /></template>
+        <el-input-number v-model="form.cooldownDays" :min="0" :max="500" :controls="false" />
+      </el-form-item>
+      <SummaryList v-if="showCard" title="策略逻辑速览" :items="tripleMaSummaryItems" />
+    </template>
+
     <!-- 网格族（V5.27 红利/纳指网格；V5.28 金字塔/倒金字塔网格）：四个类型共用同一套参数与规则，
          差异只在默认值取向——金字塔族多一个「每格增减」参数控制逐格份额阶梯 -->
     <template v-else-if="isGridType">
@@ -349,6 +407,12 @@ const activeSummary = computed<{ title: string; items: string[] }>(() => {
   if (props.type === 'MA_TP_GRID') {
     return { title: '策略逻辑速览', items: maTpSummaryItems.value }
   }
+  if (props.type === 'DUAL_MA') {
+    return { title: '策略逻辑速览', items: dualMaSummaryItems.value }
+  }
+  if (props.type === 'TRIPLE_MA') {
+    return { title: '策略逻辑速览', items: tripleMaSummaryItems.value }
+  }
   if (isGridType.value) {
     return { title: '网格逻辑速览', items: gridSummaryItems.value }
   }
@@ -391,6 +455,25 @@ const maTpSummaryItems = computed<string[]>(() => [
   '**回踩均线可独立于基准均线**：如基准 120 / 回踩 60 = 回踩到 60 日线就补回初始份额，比等 120 日线更早；两者相同则行为等同"回到均线即归位"。',
   '**冷静天数**：最近一次实际交易后 N 个交易日内不调仓；状态每天按最新收盘重评，冷却期满当天按最新状态执行，信号不会丢。',
   '**均线周期越大越迟钝**、回测所需的历史预热越多（250 日均线约需一年）——区间开头预热不足时上下沿信号会推迟甚至为空。'
+])
+
+/** 双均线速览（V6.32 用户新增） */
+const dualMaSummaryItems = computed<string[]>(() => [
+  '**一句话**：快线（短均线）在慢线（长均线）**上方** → 目标**满仓份额**；快线在**下方** → 目标**底仓份额**；两线相等 → 维持现仓位。',
+  '**目标仓位模型**：每天收盘按两线相对位置算目标，实际 ≠ 目标 → 次日开盘价一次性调仓；已在目标则不动——信号不会丢，调仓频率由冷静期控制。',
+  '**没有「初始仓位份额」参数**：回测首日即按当日两线状态对齐到目标仓位（快线在上=直接建满仓、在下=只留底仓）。',
+  '**冷静天数**：最近一次实际交易后 N 个交易日内不调仓（0=不冷静）；期满当天按最新状态执行。',
+  '**均线周期越大**状态切换越少越迟、回测所需的历史预热越多（180 日均线约需一年）——回测起始日期要往前留足。'
+])
+
+/** 三均线速览（V6.32 用户新增；V6.33 起「中>快>慢」由全仓改为中仓） */
+const tripleMaSummaryItems = computed<string[]>(() => [
+  '**六种排列 → 目标仓位**：快>中>慢 → **全仓**；中>快>慢 → **中仓**；中>慢>快 → **中仓**；快>慢>中 → **底仓**；慢>快>中 → **底仓**；慢>中>快 → **底仓**。（V6.33 起只有 快>中>慢 才是全仓）',
+  '**任两线相等** → 状态不明确，维持现仓位不动。',
+  '**目标仓位模型**：每天收盘按三线排列算目标，实际 ≠ 目标 → 次日开盘价一次性调仓；已在目标则不动；调仓频率由冷静期控制。',
+  '**没有「初始仓位份额」参数**：回测首日即按当日排列对齐到目标仓位。',
+  '**三档份额须满足 底仓 < 中仓 < 满仓**；均线周期须满足 快线 < 中线 < 慢线（各自 2~500 个交易日）。',
+  '**冷静天数**：最近一次实际交易后 N 个交易日内不调仓；慢线周期越大回测预热需求越多（180 日约需一年）。'
 ])
 
 /** 网格族速览（内容不变） */
@@ -474,6 +557,24 @@ const defaults: Record<string, Record<string, unknown>> = {
     reboundMaDays: 120,
     upperPct: 10,
     lowerPct: 10,
+    cooldownDays: 5
+  },
+  // 双均线（V6.32 用户新增）：快线 30 / 慢线 180——快线在上=满仓、在下=底仓，冷静 5 天
+  DUAL_MA: {
+    baseShare: 5000,
+    fullShare: 20000,
+    fastMaDays: 30,
+    slowMaDays: 180,
+    cooldownDays: 5
+  },
+  // 三均线（V6.32 用户新增）：快 20 / 中 60 / 慢 180——三档 5000/10000/20000，冷静 5 天
+  TRIPLE_MA: {
+    baseShare: 5000,
+    midShare: 10000,
+    fullShare: 20000,
+    fastMaDays: 20,
+    midMaDays: 60,
+    slowMaDays: 180,
     cooldownDays: 5
   },
   // 红利网格（V5.27）：低波动慢牛（实测 515080 年化波动 13.7%、区间 1.395~1.637）→ 等差、约 1.4% 一格、

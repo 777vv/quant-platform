@@ -101,7 +101,7 @@ public class ImportController {
 
     /**
      * 自动导入预演/执行（V6.30，与周三 13:01 定时任务同一执行体）：规模 ≥ minScaleYi 亿、
-     * 成立/上市 ≥ minYears 年、且不在自选池的新基金（场内 + 场外）。
+     * 成立/上市 ≥ minYears 年（V6.40 起默认 6，与定时任务同口径）、且不在自选池的新基金（场内 + 场外）。
      *
      * <p>⚠️ **dryRun 默认 true（只看清单、不导入）**——本接口传 dryRun=false 会真实发起批量导入
      * （写入自选池并拉取历史数据，可能耗时较长），调用前先确认（铁律 14）。
@@ -110,7 +110,7 @@ public class ImportController {
     @PostMapping("/import/batch/auto")
     public R<ImportService.AutoImportReport> autoImport(
             @RequestParam(defaultValue = "10") BigDecimal minScaleYi,
-            @RequestParam(defaultValue = "2") int minYears,
+            @RequestParam(defaultValue = "6") int minYears,
             @RequestParam(defaultValue = "true") boolean dryRun) {
         return R.ok(importService.autoImportEligibleFunds(minScaleYi, minYears, dryRun));
     }

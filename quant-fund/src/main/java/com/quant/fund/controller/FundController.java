@@ -66,20 +66,22 @@ public class FundController {
     }
 
     /**
-     * 自选基金分页列表（服务端分页 + 服务端筛选：关键词/标签/类型）。
+     * 自选基金分页列表（服务端分页 + 服务端筛选：关键词/标签/类型/策略）。
      *
-     * @param keyword  关键词（基金代码或名称），为空表示不限
-     * @param tag      标签名，为空表示不限
-     * @param fundType 基金类型（1=场内 ETF / 2=场外指数基金，V6.31），为空表示不限
-     * @param page     页码（从 1 开始）
-     * @param size     每页条数
+     * @param keyword      关键词（基金代码或名称），为空表示不限
+     * @param tag          标签名，为空表示不限
+     * @param fundType     基金类型（1=场内 ETF / 2=场外指数基金，V6.31），为空表示不限
+     * @param strategyType 策略类型码（V6.35，如 MA_BREAK）：只保留配置了该策略的基金，为空表示不限
+     * @param page         页码（从 1 开始）
+     * @param size         每页条数
      */
     @GetMapping("/watchlist/page")
     public R<PageResult<WatchItemVO>> watchlistPage(@RequestParam(required = false) String keyword,
             @RequestParam(required = false) String tag,
             @RequestParam(required = false) Integer fundType,
+            @RequestParam(required = false) String strategyType,
             @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "10") long size) {
-        return R.ok(fundQueryService.pageWatchlist(keyword, tag, fundType, page, size));
+        return R.ok(fundQueryService.pageWatchlist(keyword, tag, fundType, strategyType, page, size));
     }
 
     /**

@@ -1,7 +1,10 @@
 #!/bin/sh
 # MySQL 每日自动备份（M6-02）
 # 用途：容器内循环执行 mysqldump，产出 gzip 压缩包到挂载卷 /backup，并按保留天数清理旧备份。
-# 设计说明：不依赖宿主机 cron，备份文件落在命名卷中，容器重建不丢；保留下载/恢复能力见 README。
+# 设计说明：不依赖宿主机 cron，备份文件落在命名卷中，容器重建不丢。
+# 查看备份：docker compose exec mysql-backup sh -c 'ls -lh /backup'
+# 恢复（最近一次）：docker compose exec mysql-backup sh -c "gunzip -c \$(ls -t /backup/quant-*.sql.gz | head -1) | mysql -h mysql -u root -p\$MYSQL_PWD quant"
+# 导出到宿主机：docker run --rm -v <项目>_backup-data:/backup -v "$PWD":/out alpine sh -c 'cp /backup/$(ls -t /backup | head -1) /out/'
 set -eu
 
 # 连接与备份参数（由 docker-compose 注入，均带默认值便于单机手动运行）

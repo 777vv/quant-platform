@@ -40,8 +40,8 @@ public class FundSyncJobs {
     @Value("${import.auto.min-scale-yi:10}")
     private BigDecimal autoMinScaleYi;
 
-    /** 自动导入的成立/上市年限下限（默认 2 年） */
-    @Value("${import.auto.min-years:2}")
+    /** 自动导入的成立/上市年限下限（V6.40 用户要求：默认 6 年） */
+    @Value("${import.auto.min-years:6}")
     private int autoMinYears;
 
     public FundSyncJobs(SyncService syncService, SyncSummaryService syncSummaryService,
@@ -75,7 +75,7 @@ public class FundSyncJobs {
     }
 
     /**
-     * 每周三 13:01（且为交易日，V6.30 用户要求）：自动导入"规模 ≥10 亿、成立 ≥2 年、且不在自选池"
+     * 每周三 13:01（且为交易日，V6.30 用户要求）：自动导入"规模 ≥10 亿、成立 ≥6 年（V6.40 由 2 年上调）、且不在自选池"
      * 的新基金（场内 ETF + 场外指数基金）。阈值可在配置里调整（import.auto.*）。
      * 实际导入走批量导入管线（串行分批、与数据同步任务互斥、封堵窗口自动暂停），
      * 手动手动预演用 POST /api/funds/import/batch/auto（默认 dryRun=true 只看清单）。

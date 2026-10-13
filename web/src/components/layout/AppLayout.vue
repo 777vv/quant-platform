@@ -18,19 +18,32 @@ router
     <el-container>
       <el-header class="app-header">
         <div class="header-title">{{ route.meta.title }}</div>
-        <el-dropdown @command="handleCommand">
-          <span class="header-user">
-            <el-icon><UserFilled /></el-icon>
-            {{ userStore.userInfo?.nickname || userStore.userInfo?.username || '用户' }}
-            <el-icon><ArrowDown /></el-icon>
-          </span>
-          <template #dropdown>
-            <!-- V5.45 用户口径：只保留退出登录；平台配置走侧栏菜单，此处不再重复入口 -->
-            <el-dropdown-menu>
-              <el-dropdown-item command="logout">退出登录</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <div class="header-right">
+          <!-- 源码地址（V6.37 用户要求）：跳 GitHub 仓库；新标签页打开，不离开平台。样式复用 .header-user -->
+          <a
+            class="header-user"
+            href="https://github.com/777vv/quant-platform"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="打开 GitHub 仓库"
+          >
+            <el-icon><Link /></el-icon>
+            源码地址
+          </a>
+          <el-dropdown @command="handleCommand">
+            <span class="header-user">
+              <el-icon><UserFilled /></el-icon>
+              {{ userStore.userInfo?.nickname || userStore.userInfo?.username || '用户' }}
+              <el-icon><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <!-- V5.45 用户口径：只保留退出登录；平台配置走侧栏菜单，此处不再重复入口 -->
+              <el-dropdown-menu>
+                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </el-header>
       <el-main class="app-main">
         <router-view />
@@ -157,6 +170,13 @@ async function handleCommand(command: string) {
   color: var(--q-text-primary);
 }
 
+/* 右上角组合（源码地址链接 + 账户下拉），与左侧标题两端对齐 */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+}
+
 .header-user {
   display: flex;
   align-items: center;
@@ -164,6 +184,8 @@ async function handleCommand(command: string) {
   cursor: pointer;
   color: var(--q-text-regular);
   font-size: var(--q-font-sm);
+  /* 源码地址是 <a>（V6.37）：重置浏览器默认下划线，观感与账户名一致 */
+  text-decoration: none;
 }
 
 .header-user:hover {

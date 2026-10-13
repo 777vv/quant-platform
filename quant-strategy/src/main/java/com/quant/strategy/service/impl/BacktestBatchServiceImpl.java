@@ -33,6 +33,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -72,6 +73,14 @@ public class BacktestBatchServiceImpl implements BacktestBatchService, Applicati
 
     private final ThreadPoolTaskExecutor batchExecutor;
 
+    /**
+     * 每日批量回测发起上限（V6.36 用户要求：每天最多 20 次，超限前端提示）。
+     * 自然日口径（与 AI 用量额度一致，LocalDate.now()），按「今天创建的批次行数」计（查询即算、无定时任务）；
+     * 校验在插入批次 / 提交线程之前，超限不落任何数据。阈值可配 {@code backtest.batch.daily-limit}（默认 20）。
+     */
+    @Value("${backtest.batch.daily-limit:20}")
+    private int dailyBatchLimit;
+
     public BacktestBatchServiceImpl(BacktestBatchMapper batchMapper, BacktestRecordMapper recordMapper,
                                     FundBasicMapper fundBasicMapper, BacktestServiceImpl backtestService,
                                     StrategyRegistry registry,
@@ -91,6 +100,15 @@ public class BacktestBatchServiceImpl implements BacktestBatchService, Applicati
         // 参数合法性先拦（复用策略自身的 validateParams，非法参数不建批次）
         com.quant.strategy.core.Strategy strategy = registry.getRequired(request.getStrategyType());
         strategy.validateParams(JsonUtils.mapper().readTree(paramsJson));
+
+        // 每日发起上限（V6.36 用户要求）：先于互斥与建数据检查——超限直接拒绝，今天不再消耗任何资源。
+        // 按"今天创建的批次行数"计，删除当天批次会腾出额度（按现存行数计的口径见 docs/02 V6.36）
+        Long todayCreated = batchMapper.selectCount(new LambdaQueryWrapper<BacktestBatch>()
+                .ge(BacktestBatch::getCreatedAt, LocalDate.now().atStartOfDay()));
+        if (todayCreated != null && todayCreated >= dailyBatchLimit) {
+            throw new BizException("今日批量回测发起次数已达上限（每天 " + dailyBatchLimit
+                    + " 次），请明天 0 点后再发起；也可调整 backtest.batch.daily-limit 配置");
+        }
 
         // 互斥：同一时间只允许一个运行中批次（用户拍板）
         Long running = batchMapper.selectCount(new LambdaQueryWrapper<BacktestBatch>()

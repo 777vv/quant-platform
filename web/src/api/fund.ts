@@ -459,6 +459,8 @@ export interface WatchQuery {
   tag?: string
   /** 基金类型（V6.31）：1=场内 ETF、2=场外指数基金；不传=不限 */
   fundType?: number
+  /** 策略类型码（V6.35，如 MA_BREAK）：只保留配置了该策略的基金；不传=不限 */
+  strategyType?: string
   /** 页码（从 1 开始） */
   page?: number
   /** 每页条数 */

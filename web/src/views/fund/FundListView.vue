@@ -34,6 +34,19 @@
           <el-option :value="1" label="场内 ETF" />
           <el-option :value="2" label="场外指数基金" />
         </el-select>
+        <!-- 策略查询条件（V6.35 用户要求）：筛"配置了这个策略"的基金。选项取自当前实际存在的策略配置
+             （/strategies/configs 去重，没被任何基金配置过的类型不出现，避免选了必空）；自选页签走服务端筛选，
+             持仓页签用同一份配置在本地过滤 -->
+        <el-select
+          v-model="strategyFilter"
+          clearable
+          placeholder="全部策略"
+          style="width: 150px"
+          @change="reloadWatch(1)"
+          @clear="reloadWatch(1)"
+        >
+          <el-option v-for="opt in strategyOptions" :key="opt.type" :value="opt.type" :label="opt.name" />
+        </el-select>
         <el-button @click="reloadWatch(1)">查询</el-button>
         <el-button v-if="userStore.can(PERM.ACTION_TAG)" @click="tagManageVisible = true">标签管理</el-button>
       </div>
@@ -258,6 +271,9 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { allFundTags, holdings, removeFund, syncFund, syncProgress, tagLibrary, watchlistPage } from '@/api/fund'
 import type { FundTagVO, HoldingVO, WatchItemVO } from '@/api/fund'
+import { allStrategyConfigs } from '@/api/strategy'
+import type { StrategyConfig } from '@/api/strategy'
+import { STRATEGY_TYPE_NAMES } from '@/utils/strategyParams'
 import TagManageDialog from '@/components/fund/TagManageDialog.vue'
 import FundTagEditDialog from '@/components/fund/FundTagEditDialog.vue'
 
@@ -300,11 +316,16 @@ const filteredHolding = computed(() => {
     if (typeFilter.value !== '' && item.fundType !== typeFilter.value) {
       return false
     }
+    // 策略筛选（V6.35）：持仓基金也要"配置了该策略"才保留（与自选页签的服务端筛选同一口径，
+    // 配置数据来自 strategyConfigs，启用/停用都算配置了）
+    if (strategyFilter.value && !(fundStrategyTypes.value[item.fundCode] ?? new Set()).has(strategyFilter.value)) {
+      return false
+    }
     return true
   })
 })
 
-/** 持仓表空态文案：把当前生效的筛选项说清楚（V6.31 起含类型） */
+/** 持仓表空态文案：把当前生效的筛选项说清楚（V6.31 起含类型，V6.35 起含策略） */
 const holdingEmptyText = computed(() => {
   const conds: string[] = []
   if (tagFilter.value) {
@@ -312,6 +333,9 @@ const holdingEmptyText = computed(() => {
   }
   if (typeFilter.value !== '') {
     conds.push(typeFilter.value === 1 ? '场内 ETF' : '场外指数基金')
+  }
+  if (strategyFilter.value) {
+    conds.push(`策略「${STRATEGY_TYPE_NAMES[strategyFilter.value] ?? strategyFilter.value}」`)
   }
   return conds.length > 0 ? `当前筛选（${conds.join('、')}）下无持仓基金` : '暂无持仓'
 })
@@ -352,6 +376,31 @@ const fundTagMap = ref<Record<string, string[]>>({})
 const tagFilter = ref('')
 /** 场内/场外筛选（V6.31 用户要求）：1=场内 ETF、2=场外指数基金、''=不限 */
 const typeFilter = ref<number | ''>('')
+/** 策略筛选（V6.35 用户要求）：''=不限，否则为策略类型码（如 MA_BREAK） */
+const strategyFilter = ref('')
+/** 全部策略配置（/strategies/configs 一次拉全量）：下拉选项与持仓页签的本地过滤共用 */
+const strategyConfigs = ref<StrategyConfig[]>([])
+
+/**
+ * 策略下拉选项：当前实际有配置的策略类型去重（没被任何基金配置过的类型不出现，选了必空）。
+ * 排序沿用 STRATEGY_TYPE_NAMES 的键序（震荡向上、均线突破、……），与策略配置区的阅读顺序一致。
+ */
+const strategyOptions = computed(() => {
+  const order = Object.keys(STRATEGY_TYPE_NAMES)
+  const types = [...new Set(strategyConfigs.value.map((c) => c.strategyType))]
+  return types
+    .map((type) => ({ type, name: STRATEGY_TYPE_NAMES[type] ?? type, order: order.indexOf(type) }))
+    .sort((a, b) => (a.order < 0 ? 1 : b.order < 0 ? -1 : a.order - b.order))
+})
+
+/** 基金代码 → 已配置的策略类型集合（持仓页签本地过滤用） */
+const fundStrategyTypes = computed(() => {
+  const map: Record<string, Set<string>> = {}
+  for (const config of strategyConfigs.value) {
+    ;(map[config.fundCode] ??= new Set<string>()).add(config.strategyType)
+  }
+  return map
+})
 const tagManageVisible = ref(false)
 const tagEditVisible = ref(false)
 const tagEditFund = ref('')
@@ -399,6 +448,11 @@ async function loadTags() {
   fundTagMap.value = await allFundTags()
 }
 
+/** 拉取全部策略配置（V6.35）：策略下拉的选项来源 + 持仓页签本地过滤的依据 */
+async function loadStrategyConfigs() {
+  strategyConfigs.value = await allStrategyConfigs()
+}
+
 /** 标签筛选或数据刷新后回到第一页（防止停留在超出范围的空页） */
 watch([filteredHolding, holdingItems], () => {
   const max = Math.max(1, Math.ceil(filteredHolding.value.length / holdingPageSize))
@@ -418,6 +472,7 @@ async function loadWatch() {
       keyword: keyword.value.trim() || undefined,
       tag: tagFilter.value || undefined,
       fundType: typeFilter.value === '' ? undefined : typeFilter.value,
+      strategyType: strategyFilter.value || undefined,
       page: watchPageNo.value,
       size: watchPageSize.value
     })
@@ -510,6 +565,7 @@ onMounted(() => {
   loadWatch()
   loadHoldings()
   loadTags()
+  loadStrategyConfigs()
 })
 
 onUnmounted(() => {

@@ -29,14 +29,17 @@ public interface FundQueryService {
      * 自选池分页查询（服务端分页 + 服务端筛选）。
      * 分页后关键词与标签筛选必须在服务端完成，否则只能筛到当前页的数据。
      *
-     * @param keyword  关键词（基金代码或名称，忽略大小写），为空表示不限
-     * @param tag      标签名（预定义标签库中的名称），为空表示不限
-     * @param fundType 基金类型（1=场内 ETF / 2=场外指数基金，V6.31），null 表示不限
-     * @param page     页码（从 1 开始）
-     * @param size     每页条数
+     * @param keyword      关键词（基金代码或名称，忽略大小写），为空表示不限
+     * @param tag          标签名（预定义标签库中的名称），为空表示不限
+     * @param fundType     基金类型（1=场内 ETF / 2=场外指数基金，V6.31），null 表示不限
+     * @param strategyType 策略类型码（V6.35 用户要求，如 MA_BREAK）：只保留配置了该策略的基金
+     *                     （启用/停用都算"配置了"），null/空白表示不限
+     * @param page         页码（从 1 开始）
+     * @param size         每页条数
      * @return 分页结果（按基金代码升序，顺序稳定以保证翻页不重复/不遗漏）
      */
-    PageResult<WatchItemVO> pageWatchlist(String keyword, String tag, Integer fundType, long page, long size);
+    PageResult<WatchItemVO> pageWatchlist(String keyword, String tag, Integer fundType, String strategyType,
+            long page, long size);
 
     FundDetailVO detail(String fundCode);
 

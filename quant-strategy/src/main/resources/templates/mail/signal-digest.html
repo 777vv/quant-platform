@@ -24,7 +24,7 @@
         </thead>
         <tbody>
         <tr th:each="s : ${signals}">
-          <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${s.fund}">510300</td>
+          <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${s.fund}">510300 沪深300ETF华泰柏瑞</td>
           <td style="padding:8px 10px;border:1px solid #ebeef5;" th:text="${s.strategy}">网格交易</td>
           <td style="padding:8px 10px;text-align:center;border:1px solid #ebeef5;">
             <span th:if="${s.direction == 'BUY'}" style="color:#f56c6c;font-weight:bold;">买入</span>

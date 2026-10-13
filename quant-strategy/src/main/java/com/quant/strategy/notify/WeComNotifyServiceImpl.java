@@ -240,17 +240,9 @@ public class WeComNotifyServiceImpl implements WeComNotifyService {
         return text.length() <= CONTENT_MAX_CHARS ? text : text.substring(0, CONTENT_MAX_CHARS);
     }
 
-    /** 基金名称批量解析（一次查库；查不到的基金回退为只显示代码） */
+    /** 基金名称批量解析（V6.39 起委托共用工具：一次查库；查不到的基金回退为只显示代码） */
     private Map<String, String> fundNames(List<SignalRecord> signals) {
-        List<String> codes = signals.stream().map(SignalRecord::getFundCode).distinct().toList();
-        if (codes.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, String> names = new HashMap<>();
-        fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
-                        .in(FundBasic::getFundCode, codes))
-                .forEach(fund -> names.put(fund.getFundCode(), fund.getFundName()));
-        return names;
+        return FundNameResolver.resolve(fundBasicMapper, signals);
     }
 
     /** 测试与推送共用的发送路径：取配置 → 校验齐全 → 取 token → 发 text 消息 */

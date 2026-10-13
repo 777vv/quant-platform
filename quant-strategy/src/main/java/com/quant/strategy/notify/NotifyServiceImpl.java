@@ -12,6 +12,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.quant.common.exception.BizException;
 import com.quant.common.spi.MailRecipientProvider;
 import com.quant.fund.dto.DashboardOverviewVO;
+import com.quant.fund.mapper.FundBasicMapper;
 import com.quant.strategy.core.StrategyRegistry;
 import com.quant.strategy.entity.SignalRecord;
 import com.quant.strategy.entity.SysMailConfig;
@@ -88,12 +89,15 @@ public class NotifyServiceImpl implements NotifyService {
     /** 通知范围（V6.26）：只有"持有过（含已清仓）且配置了策略"的基金才推送 */
     private final SignalNotifyScope notifyScope;
 
+    /** 基金档案 Mapper（V6.39：摘要邮件的基金列要带名称） */
+    private final FundBasicMapper fundBasicMapper;
+
     public NotifyServiceImpl(MailConfigService mailConfigService,
                              SysMailConfigMapper mapper,
                              ObjectProvider<MailRecipientProvider> recipientProvider,
                              SpringTemplateEngine templateEngine,
                              SignalRecordMapper signalRecordMapper, StrategyRegistry registry,
-                             SignalNotifyScope notifyScope) {
+                             SignalNotifyScope notifyScope, FundBasicMapper fundBasicMapper) {
         this.mailConfigService = mailConfigService;
         this.mapper = mapper;
         this.recipientProvider = recipientProvider;
@@ -101,6 +105,7 @@ public class NotifyServiceImpl implements NotifyService {
         this.signalRecordMapper = signalRecordMapper;
         this.registry = registry;
         this.notifyScope = notifyScope;
+        this.fundBasicMapper = fundBasicMapper;
     }
 
     @Override
@@ -368,12 +373,20 @@ public class NotifyServiceImpl implements NotifyService {
         }
     }
 
-    /** 通知行视图（record 访问器与模板取值兼容性差，统一转 Map） */
+    /**
+     * 通知行视图（record 访问器与模板取值兼容性差，统一转 Map）。
+     * V6.39 用户要求：基金列改为「代码 + 名称」（与微信消息 V6.26 同款，共用 {@link FundNameResolver}）——
+     * 光看代码认不出是哪只基金；查不到名称的基金回退为只显示代码。
+     */
     private List<Map<String, String>> toRows(List<SignalRecord> signals) {
+        Map<String, String> nameByCode = FundNameResolver.resolve(fundBasicMapper, signals);
         List<Map<String, String>> rows = new ArrayList<>(signals.size());
         for (SignalRecord signal : signals) {
             Map<String, String> row = new HashMap<>();
-            row.put("fund", signal.getFundCode());
+            String name = nameByCode.get(signal.getFundCode());
+            row.put("fund", name == null || name.isBlank()
+                    ? signal.getFundCode()
+                    : signal.getFundCode() + " " + name);
             row.put("strategy", strategyName(signal.getStrategyType()));
             row.put("direction", signal.getDirection());
             row.put("price", signal.getPriceAt() == null ? "-" : signal.getPriceAt().toPlainString());

@@ -13,5 +13,7 @@ spring:
 
 logging:
   level:
-    # 开发期业务包 DEBUG（含东财 client 请求日志）
-    com.quant: debug
+    # 业务包 INFO（V6.43 用户要求：dev 也不再刷 MyBatis SQL 参数/框架 DEBUG——此前 root=DEBUG + com.quant=debug
+    # 会把每条 insert 的 SQL 参数、Spring MVC 调试全量打进控制台）。要看东财请求诊断走 logs/eastmoney.log
+    #（logback 的专用通道，dev/prod 一致）；临时要业务 DEBUG 时改回 com.quant: debug 即可。
+    com.quant: info

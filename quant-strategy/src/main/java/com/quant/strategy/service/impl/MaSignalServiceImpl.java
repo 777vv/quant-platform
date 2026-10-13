@@ -5,13 +5,13 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.HashSet;
 import java.util.Set;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.quant.common.result.PageResult;
 import com.quant.fund.entity.FundBasic;
 import com.quant.fund.mapper.FundBasicMapper;
@@ -56,38 +56,29 @@ public class MaSignalServiceImpl implements MaSignalService {
     @Override
     @Transactional
     public int computeFromMaDaily() {
-        // 最近两个（价格）交易日的快照日
-        List<LocalDate> lastTwo = maDailyMapper.selectList(new QueryWrapper<FundMaDaily>()
-                .select("DISTINCT trade_date")
-                .orderByDesc("trade_date")
-                .last("LIMIT 2"))
-                .stream().map(FundMaDaily::getTradeDate).distinct().toList();
-        if (lastTwo.size() < 2) {
+        // V6.44 改口径：每只基金取**自己的**最近两个快照日判定上/下穿（signal_date = 基金自己的最新快照日）。
+        // 此前取"全局最近两日 + 基金交集"——任一晚快照残缺（如 10-12 只有 ETF、10-09 只有场外，10-09~10-13 实证）
+        // 全局日期就裂开、交集为 0，全体基金停摆；改为各基金独立判定后，某晚某条数据腿失败只影响对应基金，
+        // 互不拖累。快照表只存近期日期（refresh 每基金每天一行），全量读取开销可忽略。
+        List<FundMaDaily> all = maDailyMapper.selectList(new LambdaQueryWrapper<FundMaDaily>()
+                .orderByAsc(FundMaDaily::getFundCode)
+                .orderByAsc(FundMaDaily::getTradeDate));
+        if (all.isEmpty()) {
             return 0;
         }
-        LocalDate prevDate = lastTwo.get(1);
-        LocalDate currDate = lastTwo.get(0);
-
-        // 回捞两日的全部快照行，按基金分组：prev/curr 各一份均线值映射
-        Map<String, FundMaDaily> prevByCode = new HashMap<>();
-        Map<String, FundMaDaily> currByCode = new HashMap<>();
-        for (FundMaDaily row : maDailyMapper.selectList(new LambdaQueryWrapper<FundMaDaily>()
-                .in(FundMaDaily::getTradeDate, List.of(prevDate, currDate)))) {
-            if (currDate.equals(row.getTradeDate())) {
-                currByCode.put(row.getFundCode(), row);
-            } else {
-                prevByCode.put(row.getFundCode(), row);
-            }
+        Map<String, List<FundMaDaily>> rowsByCode = new LinkedHashMap<>();
+        for (FundMaDaily row : all) {
+            rowsByCode.computeIfAbsent(row.getFundCode(), k -> new ArrayList<>()).add(row);
         }
 
         int[] windows = {5, 10, 20, 30, 60, 90, 120, 250};
         int created = 0;
-        for (String fundCode : currByCode.keySet()) {
-            FundMaDaily prev = prevByCode.get(fundCode);
-            FundMaDaily curr = currByCode.get(fundCode);
-            if (prev == null) {
+        for (List<FundMaDaily> rows : rowsByCode.values()) {
+            if (rows.size() < 2) {
                 continue;
             }
+            FundMaDaily prev = rows.get(rows.size() - 2);
+            FundMaDaily curr = rows.get(rows.size() - 1);
             for (int i = 0; i < windows.length; i++) {
                 for (int j = i + 1; j < windows.length; j++) {
                     BigDecimal prevDiff = diffOf(prev, windows[i], windows[j]);
@@ -101,8 +92,8 @@ public class MaSignalServiceImpl implements MaSignalService {
                         continue;
                     }
                     MaSignal signal = new MaSignal();
-                    signal.setFundCode(fundCode);
-                    signal.setSignalDate(currDate);
+                    signal.setFundCode(curr.getFundCode());
+                    signal.setSignalDate(curr.getTradeDate());
                     signal.setMaShort(windows[i]);
                     signal.setMaLong(windows[j]);
                     signal.setDirection(currSign > 0 ? "UP" : "DOWN");

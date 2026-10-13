@@ -39,6 +39,22 @@ public class FundMaDailyJob {
         });
     }
 
+    /**
+     * 每交易日 07:30 快照补跑（V6.44，幂等）：场外基金 T 日净值多数在 T 日 20:00 之后才发布——
+     * 前一晚 23:00 的快照常常拿不到场外的最新数据日（10-12 实证：ETF 落 10-12、场外落在 10-09），
+     * 而 07:00 的净值补拉已把场外净值补齐。07:30 再跑一次快照，让每个交易日上午的快照都是
+     * "全池各基金到 T-1 日"的完整状态，下游 10:00 的均线信号判定不再受 23:00 那次是否完整影响。
+     * 纯本地计算（只读 K 线/净值表），与 23:00 主跑同幂等语义。
+     */
+    @Scheduled(cron = "0 30 7 * * MON-FRI", zone = "Asia/Shanghai")
+    public void computeMaDailyMorning() {
+        JobLogs.run("ma:daily:am", () -> {
+            if (!isClosedToday("ma:daily:am")) {
+                fundMaService.refresh();
+            }
+        });
+    }
+
     private boolean isClosedToday(String jobName) {
         if (tradingCalendarService.isTradingDay(LocalDate.now())) {
             return false;

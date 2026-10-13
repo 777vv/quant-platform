@@ -162,7 +162,7 @@ public class FundSyncJobs {
      * 交易时段（9:31-11:35 / 13:01-15:05）在任务层自判，非时段直接返回不产生请求；
      * 节假日由服务层自判（数据源自判 + 休市名单）。zone 显式钉死防 UTC 机器漂移（铁律 12）。
      */
-    @Scheduled(cron = "0 */4 * * * MON-FRI", zone = "Asia/Shanghai")
+    @Scheduled(cron = "0 */4 9-15 * * MON-FRI", zone = "Asia/Shanghai")
     public void syncHeldIntraday() {
         JobLogs.run("sync:held", () -> {
             if (!inTradingSession()) {
@@ -177,7 +177,7 @@ public class FundSyncJobs {
      * 盘中同步·自选中的非持仓基金：每 30 分钟一轮（分钟取 3/33，与持仓轮次的 0/4/8...错开，
      * 避免两轮同时开火挤占数据源）。
      */
-    @Scheduled(cron = "0 3/30 * * * MON-FRI", zone = "Asia/Shanghai")
+    @Scheduled(cron = "0 3/30 9-15 * * MON-FRI", zone = "Asia/Shanghai")
     public void syncOthersIntraday() {
         JobLogs.run("sync:others", () -> {
             if (!inTradingSession()) {

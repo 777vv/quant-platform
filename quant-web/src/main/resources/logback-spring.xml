@@ -98,12 +98,34 @@
             <appender-ref ref="ASYNC_APP"/>
             <appender-ref ref="ERROR_FILE"/>
         </root>
-        <!-- 显式 additivity=true：不覆盖上面 com.quant.ai.tool 的 additivity=false（工具日志只进 ai-tool.log） -->
-        <logger name="com.quant" level="DEBUG" additivity="true"/>
+        <!-- V6.43 用户要求：业务包不再开 DEBUG（否则 com.quant.fund.mapper 的 MyBatis SQL 参数
+             会全量写进 app.log）；东财请求诊断仍由上面专用 eastmoney.log（DEBUG，additivity=false）承载。
+             临时要业务 DEBUG 时在 yml 的 logging.level 里定向放开某个包即可。 -->
+        <logger name="com.quant" level="INFO" additivity="true"/>
 
     </springProfile>
 
     <springProfile name="dev">
+        <!-- V6.43：dev 与 prod 对齐——东财请求诊断走专用 eastmoney.log（DEBUG，additivity=false），
+             不再随 root 淹进控制台；root 由 DEBUG 收回 INFO（此前 root=DEBUG 会把 MyBatis SQL 参数、
+             Spring MVC 调试全量打进控制台，用户明确要求避免） -->
+        <appender name="EASTMONEY" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_PATH}/eastmoney.log</file>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOG_PATH}/eastmoney.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>100MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>2GB</totalSizeCap>
+            </rollingPolicy>
+            <encoder>
+                <pattern>${PATTERN}</pattern>
+                <charset>UTF-8</charset>
+            </encoder>
+        </appender>
+        <logger name="com.quant.fund.client" level="DEBUG" additivity="false">
+            <appender-ref ref="EASTMONEY"/>
+        </logger>
+
         <!-- dev 下工具调用日志也单独成文件；不再额外挂 CONSOLE（dev 的 root 本身就是 CONSOLE，
              挂了会因 additivity 观感混乱出现"像重复"的输出；要看控制台直接 tail ai-tool.log 或看 root 日志） -->
         <appender name="AITOOL" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -122,7 +144,7 @@
         <logger name="com.quant.ai.tool" level="INFO" additivity="false">
             <appender-ref ref="AITOOL"/>
         </logger>
-        <root level="DEBUG">
+        <root level="INFO">
             <appender-ref ref="CONSOLE"/>
         </root>
     </springProfile>

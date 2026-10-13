@@ -48,8 +48,9 @@ import com.quant.fund.service.TaskProgressStore;
 import com.quant.fund.service.TradingCalendarService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -129,6 +130,9 @@ public class SyncServiceImpl implements SyncService {
 
     private final StringRedisTemplate redisTemplate;
 
+    /** 异步任务执行器（V6.41：手动同步经由它提交，替代失效的 @Async 自调用） */
+    private final ThreadPoolTaskExecutor taskExecutor;
+
     public SyncServiceImpl(EastmoneyClient client, FundBasicMapper fundBasicMapper, FundEtfKlineMapper klineMapper,
                            FundNavMapper navMapper, IndexValuationMapper valuationMapper,
                            IndexQuoteMapper indexQuoteMapper, SyncLogMapper syncLogMapper,
@@ -136,7 +140,8 @@ public class SyncServiceImpl implements SyncService {
                            DashboardProperties dashboardProperties, LockUtils lockUtils,
                            StringRedisTemplate redisTemplate, FundPositionMapper positionMapper,
                            DividendService dividendService, FundScaleHistoryService scaleHistoryService,
-                           TradingCalendarService tradingCalendarService) {
+                           TradingCalendarService tradingCalendarService,
+                           @Qualifier("taskExecutor") ThreadPoolTaskExecutor taskExecutor) {
         this.client = client;
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
@@ -153,8 +158,17 @@ public class SyncServiceImpl implements SyncService {
         this.dividendService = dividendService;
         this.scaleHistoryService = scaleHistoryService;
         this.tradingCalendarService = tradingCalendarService;
+        this.taskExecutor = taskExecutor;
     }
 
+    /**
+     * 手动单基金增量同步（V6.41 重构，接口毫秒级返回 taskId）：
+     * ① 同基金互斥——上一轮没结束再点，直接拒绝（此前无锁，前端 60 秒超时后用户反复点击会堆叠多个并发同步，
+     *    互相抢东财配额越跑越慢，即"一直在同步"的根因之一）；② 真异步——此前同类内自调用
+     *    {@code runManualSync} 导致 @Async 失效、整个同步阻塞在 HTTP 请求线程里（前端 60 秒超时静默失败），
+     *    现改为显式提交 {@code taskExecutor}（与批量回测恢复同一做法）。
+     * 锁持有人是异步任务本身（finally 释放），持锁上限 30 分钟兜底。
+     */
     @Override
     public String manualSync(String fundCode) {
         FundBasic fund = fundBasicMapper.selectOne(
@@ -162,9 +176,19 @@ public class SyncServiceImpl implements SyncService {
         if (fund == null || fund.getStatus() != 1) {
             throw new BizException("基金不在自选池: " + fundCode);
         }
+        LockUtils.MultiLock lock = lockUtils.tryLockAll(List.of("sync:manual:" + fundCode), 30);
+        if (lock == null) {
+            throw new BizException("该基金正在同步中，请等本轮结束再试");
+        }
         String taskId = UUID.randomUUID().toString().replace("-", "");
         progressStore.save(new TaskProgressVO(taskId, TaskProgressVO.RUNNING, "开始增量同步", 0, 0, null));
-        runManualSync(taskId, fund);
+        taskExecutor.execute(() -> {
+            try {
+                runManualSync(taskId, fund);
+            } finally {
+                lock.close();
+            }
+        });
         return taskId;
     }
 
@@ -177,8 +201,12 @@ public class SyncServiceImpl implements SyncService {
         return progress;
     }
 
-    @Async("taskExecutor")
-    protected void runManualSync(String taskId, FundBasic fund) {
+    /**
+     * 手动同步执行体（由 {@link #manualSync} 经 taskExecutor 提交，不再依赖 @Async——
+     * V6.41 前 @Async 标注因同类自调用从未生效）。
+     * 失败按铁律 13 记 error + 完整堆栈 + 基金代码，并写 FAILED 进度供前端提示。
+     */
+    private void runManualSync(String taskId, FundBasic fund) {
         try {
             // 手动同步强制刷档案（用户明确点了同步，希望立刻看到规模/费率）
             int added = syncFundData(fund);

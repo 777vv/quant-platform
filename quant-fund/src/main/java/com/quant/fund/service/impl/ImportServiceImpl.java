@@ -160,15 +160,20 @@ public class ImportServiceImpl implements ImportService {
             return new FundCheckVO(fundCode, profile.name(), null, null, profile.fundType(), profile.company(),
                     null, null, profile.estabDate(), false,
                     "非指数型基金（类型：" + profile.fundType() + "），平台仅支持指数基金",
-                    inPool, removedFromPool, lastSyncDate);
+                    inPool, removedFromPool, lastSyncDate,
+                    profile.fundScale(), profile.fundScaleDate(),
+                    profile.mgmtFeeRate(), profile.custFeeRate(), profile.salesFeeRate());
         }
         // 有场内行情 → ETF；否则为场外指数基金
         Integer market = detectMarket(fundCode);
         Integer fundType = market != null ? FundTypeEnum.ETF.getCode() : FundTypeEnum.OTC.getCode();
         String marketCode = market == null ? null : (market == 1 ? "SH" : "SZ");
+        // 规模/费率随档案透传（V6.42）：check 本就拉了 f10 档案，零额外请求——导入落库时即可带上
         return new FundCheckVO(fundCode, profile.name(), fundType, marketCode, profile.fundType(), profile.company(),
                 profile.indexCode(), profile.indexName(), profile.estabDate(), true, null,
-                inPool, removedFromPool, lastSyncDate);
+                inPool, removedFromPool, lastSyncDate,
+                profile.fundScale(), profile.fundScaleDate(),
+                profile.mgmtFeeRate(), profile.custFeeRate(), profile.salesFeeRate());
     }
 
     @Override
@@ -859,6 +864,23 @@ public class ImportServiceImpl implements ImportService {
         fund.setIndexName(check.indexName());
         fund.setInceptionDate(check.estabDate());
         fund.setFundCompany(check.fundCompany());
+        // 档案字段随 check 透传落库（V6.42）：披露净资产/费率在导入完成时即可用，不必等夜间同步刷档案。
+        // null（档案未解析到）不覆盖既有值——重新导入时不能把已刷到的规模/费率抹成空。
+        if (check.fundScale() != null) {
+            fund.setFundScale(check.fundScale());
+        }
+        if (check.fundScaleDate() != null) {
+            fund.setFundScaleDate(check.fundScaleDate());
+        }
+        if (check.mgmtFeeRate() != null) {
+            fund.setMgmtFeeRate(check.mgmtFeeRate());
+        }
+        if (check.custFeeRate() != null) {
+            fund.setCustFeeRate(check.custFeeRate());
+        }
+        if (check.salesFeeRate() != null) {
+            fund.setSalesFeeRate(check.salesFeeRate());
+        }
         fund.setStatus(1);
         if (maxDate != null) {
             fund.setLastSyncDate(maxDate);

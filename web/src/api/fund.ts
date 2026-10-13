@@ -30,6 +30,16 @@ export interface FundCheckVO {
   removedFromPool: boolean
   /** 本地已有历史数据的截止日（null＝没有历史数据） */
   lastSyncDate: string | null
+  /** 披露净资产（亿元，V6.42 随档案透传：导入落库即有规模，null=档案未解析到） */
+  fundScale: number | null
+  /** 披露净资产截止日（yyyy-MM-dd） */
+  fundScaleDate: string | null
+  /** 管理费率（%/年，null=档案未解析到） */
+  mgmtFeeRate: number | null
+  /** 托管费率（%/年，null=档案未解析到） */
+  custFeeRate: number | null
+  /** 销售服务费率（%/年，null=不适用） */
+  salesFeeRate: number | null
 }
 
 export interface TaskProgressVO {

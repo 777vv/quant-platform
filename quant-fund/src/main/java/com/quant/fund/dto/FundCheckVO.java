@@ -38,5 +38,15 @@ public record FundCheckVO(
         /** 是否**曾导入、已移出自选**（fund_basic.status=0）：是则本次导入会把它恢复到自选池 */
         boolean removedFromPool,
         /** 本地已有历史数据的截止日（null＝没有历史数据；用于告知本次重新拉取的范围） */
-        LocalDate lastSyncDate) {
+        LocalDate lastSyncDate,
+        /** 披露净资产（亿元，档案 f10；V6.42 透传入 upsert——导入即有规模，null=档案未解析到） */
+        java.math.BigDecimal fundScale,
+        /** 披露净资产截止日（季报/档案口径） */
+        LocalDate fundScaleDate,
+        /** 管理费率（%/年，null=档案未解析到） */
+        java.math.BigDecimal mgmtFeeRate,
+        /** 托管费率（%/年，null=档案未解析到） */
+        java.math.BigDecimal custFeeRate,
+        /** 销售服务费率（%/年，null=不适用） */
+        java.math.BigDecimal salesFeeRate) {
 }

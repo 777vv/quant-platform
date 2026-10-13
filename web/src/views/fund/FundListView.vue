@@ -168,7 +168,7 @@
                 trigger="click"
                 @command="(cmd: string) => onRowCommand(cmd, row)"
               >
-                <el-button size="small" :loading="syncingCode === row.fundCode">
+                <el-button size="small" :loading="syncingCodes.has(row.fundCode)">
                   更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
                 </el-button>
                 <template #dropdown>
@@ -299,8 +299,10 @@ const holdingLoading = ref(false)
 /** 持仓分页（V5.35）：市值降序后每页 10 条 */
 const holdingPage = ref(1)
 const holdingPageSize = 10
-const syncingCode = ref('')
-let pollTimer: number | undefined
+/** 正在同步的基金集合（V6.41 改为 Set：允许两只基金同时同步，各自的转圈互不干扰） */
+const syncingCodes = ref(new Set<string>())
+/** 每只基金独立的进度轮询句柄（V6.41 改为 Map：此前共用一个变量，连点两只基金会互相覆盖、泄漏定时器） */
+const syncPollTimers = new Map<string, number>()
 let keywordTimer: number | undefined
 
 /**
@@ -526,26 +528,51 @@ async function loadHoldings() {
   }
 }
 
+/** 停掉某只基金的轮询并清掉它的转圈状态（V6.41：成功/失败/放弃轮询三个出口共用） */
+function stopSyncPoll(code: string) {
+  const timer = syncPollTimers.get(code)
+  if (timer) {
+    window.clearInterval(timer)
+  }
+  syncPollTimers.delete(code)
+  syncingCodes.value.delete(code)
+}
+
 function handleSync(row: WatchItemVO) {
-  syncingCode.value = row.fundCode
+  // 双击防护（后端另有同基金互斥锁兜底）
+  if (syncingCodes.value.has(row.fundCode)) {
+    return
+  }
+  syncingCodes.value.add(row.fundCode)
   syncFund(row.fundCode)
     .then((res) => {
-      pollTimer = window.setInterval(async () => {
-        const p = await syncProgress(res.taskId)
-        if (p.status !== 'RUNNING') {
-          window.clearInterval(pollTimer)
-          syncingCode.value = ''
-          if (p.status === 'DONE') {
-            ElMessage.success(`${row.fundName}：${p.step}`)
-            loadWatch()
-          } else {
-            ElMessage.error(p.message || '同步失败')
+      // 连续失败上限（V6.41）：进度接口报错（后端重启/键过期/网络抖动）时不再无限轮询
+      let failures = 0
+      const timer = window.setInterval(async () => {
+        try {
+          const p = await syncProgress(res.taskId)
+          failures = 0
+          if (p.status !== 'RUNNING') {
+            stopSyncPoll(row.fundCode)
+            if (p.status === 'DONE') {
+              ElMessage.success(`${row.fundName}：${p.step}`)
+              loadWatch()
+            } else {
+              ElMessage.error(p.message || '同步失败')
+            }
+          }
+        } catch {
+          failures += 1
+          if (failures >= 3) {
+            stopSyncPoll(row.fundCode)
+            ElMessage.error(`${row.fundName}：进度查询失败，已停止轮询（同步可能仍在后台进行，稍后刷新页面查看）`)
           }
         }
       }, 1200)
+      syncPollTimers.set(row.fundCode, timer)
     })
     .catch(() => {
-      syncingCode.value = ''
+      stopSyncPoll(row.fundCode)
     })
 }
 
@@ -569,7 +596,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  window.clearInterval(pollTimer)
+  // V6.41：清理全部同步轮询定时器（此前共用变量只清最后一个，泄漏的会跨页面一直发请求）
+  syncPollTimers.forEach((timer) => window.clearInterval(timer))
+  syncPollTimers.clear()
   if (keywordTimer) {
     window.clearTimeout(keywordTimer)
   }

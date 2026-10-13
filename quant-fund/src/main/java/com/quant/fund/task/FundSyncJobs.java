@@ -8,10 +8,13 @@ import com.quant.common.log.JobLogs;
 import com.quant.fund.service.ImportService;
 import com.quant.fund.service.SyncService;
 import com.quant.fund.service.SyncSummaryService;
+import com.quant.fund.service.TaskProgressStore;
 import com.quant.fund.service.TradingCalendarService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -36,6 +39,9 @@ public class FundSyncJobs {
     /** 自动导入新基金（V6.30，周三 13:01 定时任务）复用批量导入管线 */
     private final ImportService importService;
 
+    /** 异步任务进度存储（V6.41：启动时恢复遗留的 RUNNING 任务） */
+    private final TaskProgressStore progressStore;
+
     /** 自动导入的规模下限（亿元，季报/实时口径与候选接口一致；默认 10） */
     @Value("${import.auto.min-scale-yi:10}")
     private BigDecimal autoMinScaleYi;
@@ -45,11 +51,25 @@ public class FundSyncJobs {
     private int autoMinYears;
 
     public FundSyncJobs(SyncService syncService, SyncSummaryService syncSummaryService,
-                        TradingCalendarService tradingCalendarService, ImportService importService) {
+                        TradingCalendarService tradingCalendarService, ImportService importService,
+                        TaskProgressStore progressStore) {
         this.syncService = syncService;
         this.syncSummaryService = syncSummaryService;
         this.tradingCalendarService = tradingCalendarService;
         this.importService = importService;
+        this.progressStore = progressStore;
+    }
+
+    /**
+     * 应用启动即执行（V6.41）：进程重启会中断进行中的手动同步/导入任务，其进度键会以 RUNNING
+     * 悬挂在 Redis 里（最多 1 小时），前端轮询会一直"同步中"——启动时统一标记为失败。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void failStaleRunningTasks() {
+        int fixed = progressStore.failRunningOnStartup();
+        if (fixed > 0) {
+            LOGGER.warn("启动恢复：{} 个遗留的 RUNNING 任务已标记为失败（应用重启中断）", fixed);
+        }
     }
 
     /**

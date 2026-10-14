@@ -98,13 +98,13 @@ public class EastmoneyClient {
             Map.entry("上证科创板50成份指数", "000688"),
             Map.entry("红利指数", "000015"));
 
+    /** 实时行情路径（V6.46 起不带域名，由 {@link #getQuoteAcrossHosts} 在 push2 分片域名间容灾） */
     private static final String URL_ETF_REALTIME =
-            "https://push2.eastmoney.com/api/qt/stock/get?secid={secid}"
-                    + "&fields=f57,f58,f43,f60,f170,f107&fltt=2";
+            "/api/qt/stock/get?secid={secid}&fields=f57,f58,f43,f60,f170,f107&fltt=2";
 
     /** 场内 ETF 份额（f84）：东财行情"总股本"字段对 ETF 即份额（实测 f84 × 最新价 = f116 总市值 ✓） */
     private static final String URL_ETF_SHARE =
-            "https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f57,f58,f84&fltt=2";
+            "/api/qt/stock/get?secid={secid}&fields=f57,f58,f84&fltt=2";
 
     private static final String URL_ETF_KLINE_PATH =
             "/api/qt/stock/kline/get?secid={secid}"
@@ -123,14 +123,28 @@ public class EastmoneyClient {
             "https://48.push2his.eastmoney.com"
     };
 
+    /**
+     * 行情接口域名列表（V6.46）：push2 与 push2his 同款官方编号分片，网页端即按 {N}.push2 调用。
+     * 实测封堵按域名/路径生效（push2 主域 EOF 断连时 push2his 分片正常），换域即绕过——
+     * 此前实时行情/份额/指数批量只有主域一个地址，主域被限流的窗口内盘中同步整轮失败
+     * （10-14 上午 513300/159915/515390 连续多轮实证）。
+     */
+    private static final String[] PUSH2_HOSTS = {
+            "https://push2.eastmoney.com",
+            "https://1.push2.eastmoney.com",
+            "https://24.push2.eastmoney.com",
+            "https://48.push2.eastmoney.com"
+    };
+
     private static final String URL_OTC_NAV =
             "https://api.fund.eastmoney.com/f10/lsjz?fundCode={code}&pageIndex={pageIndex}"
                     + "&pageSize={pageSize}&startDate={startDate}&endDate={endDate}";
 
     private static final String REFERER_F10 = "http://fundf10.eastmoney.com/jbgk_{code}.html";
 
+    /** 批量全球指数行情路径（V6.46 起不带域名，走 push2 分片容灾） */
     private static final String URL_INDEX_QUOTES =
-            "https://push2.eastmoney.com/api/qt/ulist.np/get?secids={secids}"
+            "/api/qt/ulist.np/get?secids={secids}"
                     + "&fields=f2,f3,f4,f12,f13,f14,f124&fltt=2";
 
     private static final String URL_INDEX_VALUATION =
@@ -303,16 +317,10 @@ public class EastmoneyClient {
     public record DividendItem(LocalDate recordDate, LocalDate exDate, LocalDate payDate, BigDecimal per10Amount) {
     }
 
-    /** market: 1=沪 0=深；无行情（非场内/请求被拒）返回 empty。探测用途：单次尝试不重试 */
+    /** market: 1=沪 0=深；无行情（非场内/请求被拒）返回 empty。探测用途：跨分片各一次尝试、不重试 */
     public Optional<EtfRealtime> fetchEtfRealtime(int market, String code) {
         String url = URL_ETF_REALTIME.replace("{secid}", market + "." + code);
-        String body;
-        try {
-            body = tryGetOnce(url);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return Optional.empty();
-        }
+        String body = getQuoteAcrossHosts(url, null);
         if (body == null) {
             return Optional.empty();
         }
@@ -330,12 +338,13 @@ public class EastmoneyClient {
 
     /**
      * 场内 ETF 当日份额（份，V6.15）：取东财行情的 f84（对 ETF 即"总股本"＝份额）。
-     * 走与行情同一条链路（主域 + 备用域、带重试），失败返回 empty 由调用方跳过（次日重试）。
+     * V6.46 起走 push2 分片容灾（失败降级不变：返回 empty 由调用方跳过，次日重试）。
      */
     public Optional<BigDecimal> fetchEtfShare(int market, String code) {
         String url = URL_ETF_SHARE.replace("{secid}", market + "." + code);
         try {
-            JsonNode data = getJson(url, "https://quote.eastmoney.com/").path("data");
+            String body = getQuoteAcrossHosts(url, "https://quote.eastmoney.com/");
+            JsonNode data = JsonUtils.mapper().readTree(body).path("data");
             BigDecimal shares = data.isMissingNode() || data.isNull() ? null : decimal(data.path("f84"));
             return shares == null || shares.compareTo(BigDecimal.ZERO) <= 0 ? Optional.empty() : Optional.of(shares);
         } catch (Exception e) {
@@ -346,19 +355,63 @@ public class EastmoneyClient {
 
     /** 单次限频请求：非 2xx/连接异常返回 null（用于场内探测，push2 对无效 secid 会直接断连） */
     private synchronized String tryGetOnce(String url) throws InterruptedException {
+        return tryGetOnce(url, null, "探测请求（视为非场内）");
+    }
+
+    /**
+     * 单次 GET（带全局限频；referer 可空；任何异常返回 null 不抛出）。
+     * 探测（detectMarket）与 push2 分片容灾（{@link #getQuoteAcrossHosts}）共用；
+     * scene 仅用于失败日志的场景标识。
+     */
+    private synchronized String tryGetOnce(String url, String referer, String scene) throws InterruptedException {
         long wait = lastRequestAt + properties.getIntervalMs() - System.currentTimeMillis();
         if (wait > 0) {
             Thread.sleep(wait);
         }
         try {
-            String body = restClient.get().uri(url).retrieve().body(String.class);
+            RestClient.RequestHeadersSpec<?> spec = restClient.get().uri(url);
+            if (StrUtils.isNotBlank(referer)) {
+                spec = spec.header("Referer", referer);
+            }
+            String body = spec.retrieve().body(String.class);
             lastRequestAt = System.currentTimeMillis();
             return body;
         } catch (Exception e) {
             lastRequestAt = System.currentTimeMillis();
-            LOGGER.error("探测请求无响应(视为非场内): {}", url, e);
+            LOGGER.error("{}请求无响应: {}", scene, url, e);
             return null;
         }
+    }
+
+    /**
+     * push2 行情接口的域名容灾（V6.46，与 K 线快速通道同一思路）：同一 API 路径在
+     * {@link #PUSH2_HOSTS} 各分片域名上依次尝试，每域 1 次、域间短间隔，全部失败抛最后一个错误。
+     * 实测封堵按域名/路径生效（主域 EOF 断连、短惩罚窗口约 30-60 秒），换域即绕过；
+     * 四个域名最坏增加约 1.5 秒（3 × FAST_PATH_HOST_GAP_MS）+ 限频间隔，盘中 4 分钟一轮可承受。
+     *
+     * @param path    API 路径与查询串（不带域名）
+     * @param referer 可空；份额/板块等接口带 quote.eastmoney.com
+     * @return 原始 JSON 文本
+     */
+    private String getQuoteAcrossHosts(String path, String referer) {
+        BizException last = null;
+        for (int i = 0; i < PUSH2_HOSTS.length; i++) {
+            String body;
+            try {
+                body = tryGetOnce(PUSH2_HOSTS[i] + path, referer, "行情[" + PUSH2_HOSTS[i] + "]");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new BizException("行情请求被中断");
+            }
+            if (body != null) {
+                return body;
+            }
+            last = new BizException("行情接口[" + PUSH2_HOSTS[i] + "]请求失败");
+            if (i < PUSH2_HOSTS.length - 1) {
+                sleep(FAST_PATH_HOST_GAP_MS);
+            }
+        }
+        throw last;
     }
 
     /**
@@ -530,10 +583,10 @@ public class EastmoneyClient {
         return new NavPage(pageIndex, actualPageSize, total, items);
     }
 
-    /** 批量拉取全球指数实时行情（secid 列表一次请求，fltt=2 直接返回小数） */
+    /** 批量拉取全球指数实时行情（secid 列表一次请求，fltt=2 直接返回小数；V6.46 起走 push2 分片容灾） */
     public List<IndexQuoteItem> fetchIndexQuotes(List<String> secids) {
         String url = URL_INDEX_QUOTES.replace("{secids}", String.join(",", secids));
-        JsonNode diff = getJson(url).path("data").path("diff");
+        JsonNode diff = JsonUtils.mapper().readTree(getQuoteAcrossHosts(url, null)).path("data").path("diff");
         List<IndexQuoteItem> items = new ArrayList<>();
         if (diff.isArray()) {
             for (JsonNode node : diff) {
@@ -558,7 +611,7 @@ public class EastmoneyClient {
      * 拉取全市场场内基金（ETF）列表（V5.41 批量导入候选）：按总市值降序，逐页抓全。
      * 字段：f12=代码 f14=名称 f20=总市值(元) f26=上市日期(YYYYMMDD)。
      * 规模用总市值近似（份额×市价 ≈ 净资产规模）；"成立时间"用上市日期近似（相差通常数周内）。
-     * 数据源间歇封堵由 getWithRetry + 上层重试兜底；页数上限 30（约 3000 只，防异常死循环）。
+     * 数据源间歇封堵由 push2 分片容灾（getQuoteAcrossHosts，V6.46）+ 上层空页重试兜底；页数上限 30（约 3000 只，防异常死循环）。
      *
      * <p>V5.47：排除货币基金板块 b:MK0022（实测 27 只货币 ETF 全部在此板块，如华宝添益/银华日利；
      * 主力股票 ETF 在 MK0021、跨境在 MK0023、商品等在 MK0024，均无货币基金）——
@@ -568,14 +621,15 @@ public class EastmoneyClient {
         List<EtfBoardItem> items = new ArrayList<>();
         int total = Integer.MAX_VALUE;
         for (int pn = 1; pn <= 30 && items.size() < total; pn++) {
-            String url = "https://push2.eastmoney.com/api/qt/clist/get?pn=" + pn
+            // V6.46：push2 分片容灾（每页在每个分片域名上依次尝试，域间 500ms）
+            String path = "/api/qt/clist/get?pn=" + pn
                     + "&pz=100&po=1&np=1&fltt=2&invt=2&fid=f20"
                     + "&fs=b:MK0021,b:MK0023,b:MK0024&fields=f12,f14,f20,f26";
             // 空页重试：分页中途出现空 diff 多为数据源抖动，静默当"数据末尾"会截断清单
             // （实测 1628 只只抓到 122 只），必须重试；仍空则显式报错走降级，绝不静默少数据
             int added = 0;
             for (int attempt = 1; attempt <= 3 && added == 0; attempt++) {
-                JsonNode root = getJson(url, "https://quote.eastmoney.com/");
+                JsonNode root = JsonUtils.mapper().readTree(getQuoteAcrossHosts(path, "https://quote.eastmoney.com/"));
                 JsonNode data = root.path("data");
                 total = data.path("total").asInt(0);
                 JsonNode diff = data.path("diff");

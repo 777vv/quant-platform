@@ -38,6 +38,7 @@ import com.quant.fund.service.CashAccountingService;
 import com.quant.fund.service.FundQueryService;
 import com.quant.fund.service.ProfitStatsService;
 import com.quant.fund.service.TradeService;
+import com.quant.fund.service.TradingCalendarService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -103,11 +104,15 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
 
     private final StringRedisTemplate redisTemplate;
 
+    /** 交易日判定（V6.47：当日盈亏汇总的展示闸门——非交易日或全部持仓未知时为 null） */
+    private final TradingCalendarService tradingCalendarService;
+
     public ProfitStatsServiceImpl(FundBasicMapper fundBasicMapper, FundEtfKlineMapper klineMapper,
                                   FundNavMapper navMapper, TradeFlowMapper tradeFlowMapper,
                                   FundQueryService fundQueryService, TradeService tradeService,
                                   CashAccountingService cashAccountingService,
-                                  EastmoneyClient eastmoneyClient, StringRedisTemplate redisTemplate) {
+                                  EastmoneyClient eastmoneyClient, StringRedisTemplate redisTemplate,
+                                  TradingCalendarService tradingCalendarService) {
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
         this.navMapper = navMapper;
@@ -117,6 +122,7 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         this.cashAccountingService = cashAccountingService;
         this.eastmoneyClient = eastmoneyClient;
         this.redisTemplate = redisTemplate;
+        this.tradingCalendarService = tradingCalendarService;
     }
 
     /** 汇总备忘有效期：仪表盘 /assets 与 /overview 两次相邻调用共享一次计算（数据只在同步时点变化） */
@@ -145,15 +151,27 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
                 new LambdaQueryWrapper<FundBasic>().eq(FundBasic::getStatus, 1)));
         BigDecimal marketValue = BigDecimal.ZERO;
         BigDecimal totalCost = BigDecimal.ZERO;
-        BigDecimal dayPnl = BigDecimal.ZERO;
         BigDecimal floating = BigDecimal.ZERO;
         BigDecimal realized = BigDecimal.ZERO;
+        // 当日盈亏（V6.47 用户口径）：① 非交易日 → null（前端显示 --）；
+        // ② 交易日 → 只汇总"当日数据已知"的持仓，且至少一只已知才出数（全部未知时 0 会误导为"无变动"）；
+        // 未同步的基金不参与汇总，也不拿上一交易日的涨跌冒充今天的
+        BigDecimal dayPnl = null;
+        int dayPnlKnown = 0;
+        boolean tradingDayToday = tradingCalendarService.isTradingDay();
         for (HoldingVO holding : holdings) {
             marketValue = marketValue.add(nvl(holding.marketValue()));
             totalCost = totalCost.add(nvl(holding.avgCostPrice()).multiply(nvl(holding.totalShare())));
-            dayPnl = dayPnl.add(nvl(holding.dayPnl()));
             floating = floating.add(nvl(holding.floatingPnl()));
             realized = realized.add(nvl(holding.realizedPnl()));
+            if (tradingDayToday && holding.dayPnl() != null) {
+                dayPnl = dayPnl == null ? BigDecimal.ZERO : dayPnl;
+                dayPnl = dayPnl.add(holding.dayPnl());
+                dayPnlKnown++;
+            }
+        }
+        if (dayPnl != null && dayPnlKnown == 0) {
+            dayPnl = null;
         }
         BigDecimal totalPnl = floating.add(realized);
         // 现金余额与净投入统一由 CashAccountingService 计算（与转出额度校验共用同一口径）【V1.9 ㊾】
@@ -174,7 +192,8 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         PeriodPnl month = periodPnlOf(LocalDate.now().withDayOfMonth(1),
                 sliceFrom(longSeries, LocalDate.now().withDayOfMonth(1).minusMonths(FIRST_PERIOD_LOOKBACK_MONTHS)));
         PeriodPnl year = periodPnlOf(yearStart, sliceFrom(longSeries, yearStart.minusMonths(FIRST_PERIOD_LOOKBACK_MONTHS)));
-        AssetSummaryVO result = new AssetSummaryVO(money(totalAssets), money(cash), money(marketValue), money(totalCost), money(dayPnl),
+        AssetSummaryVO result = new AssetSummaryVO(money(totalAssets), money(cash), money(marketValue), money(totalCost),
+                dayPnl == null ? null : money(dayPnl),
                 money(floating), floatingPct, money(realized), money(totalPnl), totalPnlPct, weekPnlOf(
                         sliceFrom(longSeries, LocalDate.now().minusDays(14))),
                 month.pnl(), month.pct(), year.pnl(), year.pct(),

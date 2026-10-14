@@ -31,6 +31,18 @@ public interface TradingCalendarService {
     }
 
     /**
+     * 数据日期是否属于当前交易日（V6.47）：今天必须是交易日，且数据日期=今天。
+     * 当日盈亏/当日涨跌幅类字段的展示闸门——非交易日、或某基金今天的数据尚未同步过来时，
+     * 用前一个交易日的数据算"当日"盈亏是把旧涨跌冒充今天的，应视为"未知"（前端显示横杠）。
+     *
+     * @param dataDate 行情/快照的数据日期（null 视为不满足）
+     * @return true=可以展示当日口径数值
+     */
+    default boolean isCurrentTradingDate(LocalDate dataDate) {
+        return dataDate != null && isTradingDay(LocalDate.now()) && dataDate.equals(LocalDate.now());
+    }
+
+    /**
      * 记录平台盘面自判确认的休市日（幂等：该日期已有记录则不动）。
      *
      * @param date   确认休市的日期

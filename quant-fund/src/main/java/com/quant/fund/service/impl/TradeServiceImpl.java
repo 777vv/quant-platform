@@ -24,6 +24,7 @@ import com.quant.fund.mapper.TradeFlowMapper;
 import com.quant.fund.service.CashAccountingService;
 import com.quant.fund.service.FundQueryService;
 import com.quant.fund.service.TradeService;
+import com.quant.fund.service.TradingCalendarService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,14 +45,19 @@ public class TradeServiceImpl implements TradeService {
 
     private final FundQueryService fundQueryService;
 
+    /** 交易日判定（V6.47：当日盈亏的展示闸门——数据日期非当前交易日即为"未知"） */
+    private final TradingCalendarService tradingCalendarService;
+
     public TradeServiceImpl(TradeFlowMapper tradeFlowMapper, FundPositionMapper positionMapper,
                             FundBasicMapper fundBasicMapper, FundQueryService fundQueryService,
-                            CashAccountingService cashAccountingService) {
+                            CashAccountingService cashAccountingService,
+                            TradingCalendarService tradingCalendarService) {
         this.tradeFlowMapper = tradeFlowMapper;
         this.positionMapper = positionMapper;
         this.fundBasicMapper = fundBasicMapper;
         this.fundQueryService = fundQueryService;
         this.cashAccountingService = cashAccountingService;
+        this.tradingCalendarService = tradingCalendarService;
     }
 
     @Override
@@ -282,6 +288,9 @@ public class TradeServiceImpl implements TradeService {
                 continue;
             }
             LastQuote quote = fundQueryService.lastQuote(fund);
+            // 当日盈亏闸门（V6.47 用户口径）：数据日期≠今天（或今天非交易日）即为"未知"——
+            // 不拿上一交易日的涨跌冒充今天的（典型场景：盘中同步被数据源封堵，某基金当天没同步过来）
+            boolean quoteCurrent = tradingCalendarService.isCurrentTradingDate(quote == null ? null : quote.date());
             BigDecimal price = quote == null ? null : quote.price();
             BigDecimal share = position.getTotalShare();
             BigDecimal marketValue = price == null ? null : price.multiply(share).setScale(2, java.math.RoundingMode.HALF_UP);
@@ -289,7 +298,7 @@ public class TradeServiceImpl implements TradeService {
                     : marketValue.subtract(position.getTotalCost()).setScale(2, java.math.RoundingMode.HALF_UP);
             BigDecimal floatingPct = floating == null || position.getTotalCost().compareTo(BigDecimal.ZERO) == 0 ? null
                     : floating.multiply(BigDecimal.valueOf(100)).divide(position.getTotalCost(), 2, java.math.RoundingMode.HALF_UP);
-            BigDecimal dayPnl = quote == null || quote.prevPrice() == null || price == null ? null
+            BigDecimal dayPnl = !quoteCurrent || quote == null || quote.prevPrice() == null || price == null ? null
                     : price.subtract(quote.prevPrice()).multiply(share).setScale(2, java.math.RoundingMode.HALF_UP);
             String typeDesc = FundTypeEnum.ETF.getCode() == fund.getFundType()
                     ? FundTypeEnum.ETF.getDesc() : FundTypeEnum.OTC.getDesc();

@@ -892,15 +892,16 @@ function navOption(points: SeriesPoint[], mode: 'unitNav' | 'accNav' | 'adjNav')
   const yieldOn = showYield.value
   const scaleOn = showScale.value
   // 净值图没有成交量副图：网格直接从主图下方排起（MACD 打开时网格 1 归 MACD）
+  // V6.45 修复：第二根 x/y 轴此前**无条件**添加（gridIndex=1）——MACD 关闭且无其他副图时网格只有 1 个，
+  // 孤儿轴引用不存在的网格，ECharts setOption 抛 "__ec_inner_47" 内部错误、图表整块空白（场外基金默认状态必现；
+  // 场内 K 线因恒有成交量网格未受影响）。改为仅 MACD 开启时添加占位轴——股息率/规模/估值副图自带各自的轴。
   const grids: Record<string, unknown>[] = toGridOption(subChartGrids(false))
-  const xAxes: Record<string, unknown>[] = [
-    { type: 'category', data: dates },
-    { type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false } }
-  ]
-  const yAxes: Record<string, unknown>[] = [
-    { type: 'value', scale: true },
-    { gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false } }
-  ]
+  const xAxes: Record<string, unknown>[] = [{ type: 'category', data: dates }]
+  const yAxes: Record<string, unknown>[] = [{ type: 'value', scale: true }]
+  if (macdOn) {
+    xAxes.push({ type: 'category', gridIndex: 1, data: dates, axisLabel: { show: false } })
+    yAxes.push({ gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false } })
+  }
   const series: Record<string, unknown>[] = [
     {
       type: 'line',

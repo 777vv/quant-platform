@@ -17,7 +17,6 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.quant.common.exception.BizException;
 import com.quant.common.util.JsonUtils;
-import com.quant.fund.client.EastmoneyClient;
 import com.quant.fund.dto.AssetSummaryVO;
 import com.quant.fund.dto.DashboardOverviewVO;
 import com.quant.fund.dto.HoldingVO;
@@ -41,10 +40,8 @@ import com.quant.fund.service.TradeService;
 import com.quant.fund.service.TradingCalendarService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import tools.jackson.core.type.TypeReference;
 
 /**
  * 收益统计引擎实现（FR1，M4-01）。
@@ -60,25 +57,11 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ProfitStatsServiceImpl.class);
 
-    /** 沪深300 指数（东财 secid 前缀 1 = 上交所） */
-    private static final int BENCH_MARKET = 1;
-
-    /** 沪深300 指数代码（收益曲线基准） */
-    private static final String BENCH_CODE = "000300";
-
-    /** 基准日 K 的 Redis 缓存键（值为 List&lt;BenchPoint&gt; JSON） */
-    private static final String BENCH_CACHE_KEY = "quote:index:kline:000300";
-
-    /** 基准缓存时长：6 小时（日 K 数据日内不变） */
-    private static final Duration BENCH_CACHE_TTL = Duration.ofHours(6);
-
     /**
-     * 基准拉取降级标记：快速通道也失败时置位并保留 10 分钟。
-     * 期间直接返回空基准（曲线不含基准线），不再每次打开仪表盘都去撞一次被封堵的数据源。
+     * 收益曲线基准基金（V6.48 用户口径）：基准线不实时拉东财，查本地库日 K——
+     * 依次尝试 510300 → 510310 → 510330，取第一只有数据的（前复权收盘价与指数走势形态一致）。
      */
-    private static final String BENCH_DEGRADED_KEY = "quote:benchmark:degraded";
-
-    private static final Duration BENCH_DEGRADED_TTL = Duration.ofMinutes(10);
+    private static final String[] BENCH_LOCAL_CODES = {"510300", "510310", "510330"};
 
     /** 前向填充时额外向前多加载的天数，保证区间首日有价格基准 */
     private static final int FILL_LOOKBACK_DAYS = 14;
@@ -100,10 +83,6 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
 
     private final CashAccountingService cashAccountingService;
 
-    private final EastmoneyClient eastmoneyClient;
-
-    private final StringRedisTemplate redisTemplate;
-
     /** 交易日判定（V6.47：当日盈亏汇总的展示闸门——非交易日或全部持仓未知时为 null） */
     private final TradingCalendarService tradingCalendarService;
 
@@ -111,7 +90,6 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
                                   FundNavMapper navMapper, TradeFlowMapper tradeFlowMapper,
                                   FundQueryService fundQueryService, TradeService tradeService,
                                   CashAccountingService cashAccountingService,
-                                  EastmoneyClient eastmoneyClient, StringRedisTemplate redisTemplate,
                                   TradingCalendarService tradingCalendarService) {
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
@@ -120,8 +98,6 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         this.fundQueryService = fundQueryService;
         this.tradeService = tradeService;
         this.cashAccountingService = cashAccountingService;
-        this.eastmoneyClient = eastmoneyClient;
-        this.redisTemplate = redisTemplate;
         this.tradingCalendarService = tradingCalendarService;
     }
 
@@ -555,48 +531,29 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         return pct;
     }
 
-    /** 沪深300 日 K（缓存优先）；东财 push2his 对指数 secid 同样适用 */
+    /**
+     * 沪深300 基准序列（V6.48 用户口径）：**不再实时拉东财**，直接查本地库的 510300 日 K
+     * （前复权收盘价与指数走势形态一致，作收益对比基准足够）；510300 查询失败或本地无数据时
+     * 依次回退 510310、510330。纯本地 SQL 零外呼，收益曲线不再受数据源封堵影响。
+     */
     private TreeMap<LocalDate, BigDecimal> benchmarkCloses(LocalDate from) {
-        String cached = redisTemplate.opsForValue().get(BENCH_CACHE_KEY);
-        if (cached != null) {
-            return toCloseMap(JsonUtils.mapper().readValue(cached, new TypeReference<List<BenchPoint>>() {
-            }));
+        for (String code : BENCH_LOCAL_CODES) {
+            try {
+                TreeMap<LocalDate, BigDecimal> map = new TreeMap<>();
+                klineMapper.selectList(new LambdaQueryWrapper<FundEtfKline>()
+                                .eq(FundEtfKline::getFundCode, code)
+                                .ge(FundEtfKline::getTradeDate, from))
+                        .forEach(row -> map.put(row.getTradeDate(), row.getClose()));
+                if (!map.isEmpty()) {
+                    return map;
+                }
+                LOGGER.warn("基准基金[{}]本地无日K数据，尝试下一个备用", code);
+            } catch (Exception e) {
+                LOGGER.error("基准基金[{}]本地日K查询失败，尝试下一个备用", code, e);
+            }
         }
-        // 已知数据源处于封堵窗口：直接返回空基准，别让每次打开仪表盘都白等一次拉取
-        if ("1".equals(redisTemplate.opsForValue().get(BENCH_DEGRADED_KEY))) {
-            LOGGER.info("基准处于降级窗口，本轮跳过拉取");
-            return new TreeMap<>();
-        }
-        List<EastmoneyClient.KlineItem> items;
-        try {
-            // ⚠️ 请求路径必须用**快速通道**（只试主域 + 1 个备用域、不重试、域名间不停顿）：
-            // 带域名退避的 fetchEtfKline 在数据源封堵时要 60-75 秒才失败，
-            // 会把 /dashboard/profit/curve 直接拖超时（实测 76 秒），
-            // 且失败不写缓存 → 每次打开页面都要重跑一遍
-            items = eastmoneyClient.fetchEtfKlineFast(BENCH_MARKET, BENCH_CODE, from, LocalDate.now());
-        } catch (Exception e) {
-            redisTemplate.opsForValue().set(BENCH_DEGRADED_KEY, "1", BENCH_DEGRADED_TTL);
-            LOGGER.error("沪深300基准行情拉取失败（10 分钟内不再重试），曲线将不含基准线", e);
-            return new TreeMap<>();
-        }
-        if (items.isEmpty()) {
-            redisTemplate.opsForValue().set(BENCH_DEGRADED_KEY, "1", BENCH_DEGRADED_TTL);
-            return new TreeMap<>();
-        }
-        // 成功即清掉降级标记，恢复正常的缓存刷新
-        redisTemplate.delete(BENCH_DEGRADED_KEY);
-        List<BenchPoint> points = items.stream()
-                .map(item -> new BenchPoint(item.date().toString(), item.close())).toList();
-        redisTemplate.opsForValue().set(BENCH_CACHE_KEY, JsonUtils.toJson(points), BENCH_CACHE_TTL);
-        return toCloseMap(points);
-    }
-
-    private TreeMap<LocalDate, BigDecimal> toCloseMap(List<BenchPoint> points) {
-        TreeMap<LocalDate, BigDecimal> map = new TreeMap<>();
-        if (points != null) {
-            points.forEach(point -> map.put(LocalDate.parse(point.date()), point.close()));
-        }
-        return map;
+        LOGGER.warn("基准序列不可用（{} 本地均无数据），曲线将不含基准线", String.join("/", BENCH_LOCAL_CODES));
+        return new TreeMap<>();
     }
 
     /** 基金日期→价格映射：ETF 前复权收盘价 / 场外单位净值 */
@@ -728,7 +685,4 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
     private record PeriodPnl(BigDecimal pnl, BigDecimal pct) {
     }
 
-    /** 基准缓存点（JSON 序列化用） */
-    private record BenchPoint(String date, BigDecimal close) {
-    }
 }

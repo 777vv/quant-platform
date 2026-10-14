@@ -9,11 +9,13 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -596,8 +598,19 @@ public class SyncServiceImpl implements SyncService {
      */
     private void estimateEtfDailyScale(FundBasic fund) {
         try {
-            Integer market = "SH".equals(fund.getMarket()) ? 1 : 0;
-            java.util.Optional<BigDecimal> shares = client.fetchEtfShare(market, fund.getFundCode());
+            // 份额日内不变（V6.48 P1-2）：当日抓取成功后盘中各轮直接复用，减少 push2 请求
+            String cached = shareOfDayCache.get(fund.getFundCode());
+            java.util.Optional<BigDecimal> shares;
+            if (cached != null && cached.startsWith(LocalDate.now().toString() + "|")) {
+                shares = java.util.Optional.of(new BigDecimal(cached.split("\\|", 2)[1]));
+            } else {
+                Integer market = "SH".equals(fund.getMarket()) ? 1 : 0;
+                shares = client.fetchEtfShare(market, fund.getFundCode());
+                if (shares.isPresent()) {
+                    shareOfDayCache.put(fund.getFundCode(),
+                            LocalDate.now().toString() + "|" + shares.get().toPlainString());
+                }
+            }
             if (shares.isEmpty()) {
                 return;
             }
@@ -851,6 +864,9 @@ public class SyncServiceImpl implements SyncService {
     /** 盘中同步封堵窗口暂停时长（毫秒）：连续 3 只失败后暂停探窗，避免逐只烧重试退避 */
     private static final long INTRADAY_PAUSE_MILLIS = 90_000;
 
+    // 份额当日缓存（V6.48 P1-2）：code → "yyyy-MM-dd|份额"，盘中各轮复用当日已抓取的份额（f84 日内不变）
+    private final Map<String, String> shareOfDayCache = new ConcurrentHashMap<>();
+
     /**
      * 盘中同步·持仓基金（V5.42，用户口径：池子扩到几百只后，5 分钟全量一轮跑不完，拆两档）：
      * 持仓基金每 4 分钟一轮（调度在 FundSyncJobs，交易时段闸门在任务层）。
@@ -895,11 +911,39 @@ public class SyncServiceImpl implements SyncService {
             int ok = 0;
             List<String> errors = new ArrayList<>();
             int consecutiveFailures = 0;
+            // V6.48 P1-2：一次批量行情拿本轮全部基金的当日 OHLC（替代逐基金 K 线慢通道——
+            // 请求次数 N → 1，且批量单请求失败不再触发"4 域名 × 3 重试"的分钟级退避）。
+            // 批量整体失败时逐基金回退原路径；数据落后超过一天（需补历史）的基金也走原路径。
+            Map<String, EastmoneyClient.EtfQuoteBatchItem> quotes = new HashMap<>();
+            try {
+                List<String> secids = funds.stream()
+                        .map(f -> ("SH".equals(f.getMarket()) ? 1 : 0) + "." + f.getFundCode())
+                        .toList();
+                for (EastmoneyClient.EtfQuoteBatchItem item : client.fetchEtfQuoteBatch(secids)) {
+                    quotes.put(item.code(), item);
+                }
+                LOGGER.info("盘中同步[{}]批量行情拉取成功：{}/{} 只", scope, quotes.size(), funds.size());
+            } catch (Exception e) {
+                LOGGER.error("盘中同步[{}]批量行情拉取失败，本轮回退逐基金拉取", scope, e);
+            }
             for (FundBasic fund : funds) {
                 try {
-                    syncFundData(fund, false);
-                    ok++;
-                    consecutiveFailures = 0;
+                    EastmoneyClient.EtfQuoteBatchItem quote = quotes.get(fund.getFundCode());
+                    if (quote != null && isBarUpdatable(fund)) {
+                        if (upsertIntradayBar(fund, quote)) {
+                            refreshBasicData(fund, false);
+                            ok++;
+                            consecutiveFailures = 0;
+                        } else {
+                            // 当日无成交（停牌/数据不全）：视为本轮未知，不计成功也不算失败
+                            LOGGER.info("盘中同步[{}][{}]当日行情数据不全，跳过", scope, fund.getFundCode());
+                        }
+                    } else {
+                        // 批量失败 / 返回里缺这只 / 数据落后超过一天需补历史 → 原逐基金路径
+                        syncFundData(fund, false);
+                        ok++;
+                        consecutiveFailures = 0;
+                    }
                 } catch (Exception e) {
                     consecutiveFailures++;
                     LOGGER.error("盘中同步[{}][{}]失败", scope, fund.getFundCode(), e);
@@ -936,6 +980,50 @@ public class SyncServiceImpl implements SyncService {
         return positionMapper.selectList(new LambdaQueryWrapper<FundPosition>()
                         .gt(FundPosition::getTotalShare, BigDecimal.ZERO))
                 .stream().map(FundPosition::getFundCode).collect(Collectors.toSet());
+    }
+
+    /**
+     * 该基金的当日 bar 是否可由批量行情覆盖（V6.48 P1-2）：last_sync_date 为今天或昨天——
+     * 昨天的 bar 已由收盘任务定稿，缺口最多"今天"这一根未定稿 bar，批量行情可直接覆盖；
+     * 数据落后超过一天说明中间缺了历史 bar，必须走原逐基金全量补齐。
+     */
+    private boolean isBarUpdatable(FundBasic fund) {
+        LocalDate last = fund.getLastSyncDate();
+        return last != null && !last.isBefore(LocalDate.now().minusDays(1));
+    }
+
+    /**
+     * 用批量实时行情覆盖/写入"今天"这根未定稿 bar（open/high/low/close/volume 均为当日累计口径；
+     * 收盘后 15:30 全量覆盖任务会以权威 K 线数据重写）。OHLC 任一缺失（停牌/无成交）返回 false 不写。
+     */
+    private boolean upsertIntradayBar(FundBasic fund, EastmoneyClient.EtfQuoteBatchItem quote) {
+        if (quote.open() == null || quote.high() == null || quote.low() == null || quote.last() == null) {
+            return false;
+        }
+        LocalDate today = LocalDate.now();
+        FundEtfKline row = klineMapper.selectOne(new LambdaQueryWrapper<FundEtfKline>()
+                .eq(FundEtfKline::getFundCode, fund.getFundCode())
+                .eq(FundEtfKline::getTradeDate, today));
+        boolean exists = row != null;
+        if (row == null) {
+            row = new FundEtfKline();
+            row.setFundCode(fund.getFundCode());
+            row.setTradeDate(today);
+        }
+        row.setOpen(quote.open());
+        row.setClose(quote.last());
+        row.setHigh(quote.high());
+        row.setLow(quote.low());
+        if (quote.volumeHands() != null) {
+            row.setVolume(quote.volumeHands());
+        }
+        if (exists) {
+            klineMapper.updateById(row);
+        } else {
+            klineMapper.insert(row);
+        }
+        updateLastSync(fund, today);
+        return true;
     }
 
     /**

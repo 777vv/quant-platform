@@ -147,6 +147,45 @@ public class EastmoneyClient {
             "/api/qt/ulist.np/get?secids={secids}"
                     + "&fields=f2,f3,f4,f12,f13,f14,f124&fltt=2";
 
+    /** 批量实时行情路径（V6.48 P1-2 盘中同步专用：一次请求拿全部持仓的当日 OHLC，替代逐基金 K 线慢通道） */
+    private static final String URL_QUOTE_BATCH =
+            "/api/qt/ulist.np/get?secids={secids}"
+                    + "&fields=f12,f13,f17,f15,f16,f2,f18,f5&fltt=2&invt=2";
+
+    /**
+     * 批量实时行情条目（盘中同步专用）。volume 为**手**（与 K 线接口 volume 同量纲，
+     * 实测 513300 当日 f5=129.5 万手 ↔ 份额 1.295 亿份 × 价格吻合）；当日 bar 收盘后由 15:30 全量覆盖任务以权威数据重写。
+     */
+    public record EtfQuoteBatchItem(String code, int market, BigDecimal open, BigDecimal high, BigDecimal low,
+                                    BigDecimal last, BigDecimal prevClose, Long volumeHands) {
+    }
+
+    /**
+     * 批量实时行情（V6.48 P1-2）：ulist.np 一次请求拿全部 secid 的当日开高低收/最新价/昨收/成交量，
+     * 替代盘中同步里逐基金的 K 线慢通道（原每基金失败时最多 4 域名 × 3 重试的分钟级退避）。
+     * 走 push2 分片容灾；secids 建议单批 ≤ 50。
+     */
+    public List<EtfQuoteBatchItem> fetchEtfQuoteBatch(List<String> secids) {
+        String url = URL_QUOTE_BATCH.replace("{secids}", String.join(",", secids));
+        JsonNode diff = JsonUtils.mapper().readTree(getQuoteAcrossHosts(url, "https://quote.eastmoney.com/"))
+                .path("data").path("diff");
+        List<EtfQuoteBatchItem> items = new ArrayList<>();
+        if (diff.isArray()) {
+            for (JsonNode node : diff) {
+                items.add(new EtfQuoteBatchItem(
+                        node.path("f12").asText(),
+                        node.path("f13").asInt(),
+                        decimal(node.path("f17")),
+                        decimal(node.path("f15")),
+                        decimal(node.path("f16")),
+                        decimal(node.path("f2")),
+                        decimal(node.path("f18")),
+                        node.path("f5").canConvertToLong() ? node.path("f5").asLong() : null));
+            }
+        }
+        return items;
+    }
+
     private static final String URL_INDEX_VALUATION =
             "https://www.csindex.com.cn/csindex-home/perf/index-perf?indexCode={indexCode}"
                     + "&startDate={startDate}&endDate={endDate}";

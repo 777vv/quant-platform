@@ -2,7 +2,9 @@ package com.quant.fund.service.impl;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -69,6 +71,12 @@ public class MarketSignalServiceImpl implements MarketSignalService {
 
     private final FundTagService fundTagService;
 
+    /** overview 备忘缓存（V6.48 P1）：key=peWindow，60 秒内重复打开直接回缓存 */
+    private static final Duration OVERVIEW_CACHE_TTL = Duration.ofSeconds(60);
+    private volatile MarketSignalVO overviewCached;
+    private volatile String overviewCachedKey;
+    private volatile java.time.LocalDateTime overviewCachedAt;
+
     public MarketSignalServiceImpl(FundBasicMapper fundBasicMapper, FundEtfKlineMapper klineMapper,
                                    FundNavMapper navMapper, IndexValuationMapper valuationMapper,
                                    FundQueryService fundQueryService, DividendYieldService dividendYieldService,
@@ -84,6 +92,22 @@ public class MarketSignalServiceImpl implements MarketSignalService {
 
     @Override
     public MarketSignalVO overview(String peWindow) {
+        // 备忘缓存（V6.48 P1）：全池价格序列+均线+估值分位一次全量计算在服务器上要数秒，
+        // 而数据只在盘中/收盘同步时点变化——60 秒内的重复打开直接回缓存，key 区分 peWindow
+        if (overviewCached != null && overviewCachedKey != null && overviewCachedKey.equals(peWindow)
+                && overviewCachedAt != null
+                && Duration.between(overviewCachedAt, LocalDateTime.now()).compareTo(OVERVIEW_CACHE_TTL) < 0) {
+            return overviewCached;
+        }
+        MarketSignalVO result = overviewCompute(peWindow);
+        overviewCached = result;
+        overviewCachedKey = peWindow;
+        overviewCachedAt = LocalDateTime.now();
+        return result;
+    }
+
+    /** overview 实际计算（被 60 秒备忘缓存包裹，V6.48 P1） */
+    private MarketSignalVO overviewCompute(String peWindow) {
         int windowYears = windowYearsOf(peWindow);
         List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
                 .eq(FundBasic::getStatus, 1).orderByAsc(FundBasic::getFundCode));

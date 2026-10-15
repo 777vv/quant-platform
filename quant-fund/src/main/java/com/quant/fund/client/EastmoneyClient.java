@@ -140,6 +140,12 @@ public class EastmoneyClient {
             "https://api.fund.eastmoney.com/f10/lsjz?fundCode={code}&pageIndex={pageIndex}"
                     + "&pageSize={pageSize}&startDate={startDate}&endDate={endDate}";
 
+    /**
+     * V6.49 修复（东财接口变更）：f10/lsjz 的 startDate/endDate 参数**只认 yyyy-MM-dd 横杠格式**——
+     * 2026-10-13 前后东财收紧参数校验，紧凑格式（20261013）一律返回空列表，导致场外净值增量同步
+     * 静默拉空（"无新数据"）、净值停留在 10-12（10-15 上午用户反馈 + 实测 curl 对照定位）。
+     */
+
     private static final String REFERER_F10 = "http://fundf10.eastmoney.com/jbgk_{code}.html";
 
     /** 批量全球指数行情路径（V6.46 起不带域名，走 push2 分片容灾） */
@@ -598,8 +604,9 @@ public class EastmoneyClient {
         String url = URL_OTC_NAV.replace("{code}", code)
                 .replace("{pageIndex}", String.valueOf(pageIndex))
                 .replace("{pageSize}", String.valueOf(pageSize))
-                .replace("{startDate}", beg == null ? "" : COMPACT.format(beg))
-                .replace("{endDate}", end == null ? "" : COMPACT.format(end));
+                // 横杠格式 yyyy-MM-dd（V6.49）：东财 lsjz 不认紧凑格式，紧凑日期会让整个区间返回空
+                .replace("{startDate}", beg == null ? "" : beg.format(DateTimeFormatter.ISO_LOCAL_DATE))
+                .replace("{endDate}", end == null ? "" : end.format(DateTimeFormatter.ISO_LOCAL_DATE));
         JsonNode root = getJson(url, REFERER_F10.replace("{code}", code));
         JsonNode list = root.path("Data").path("LSJZList");
         List<NavItem> items = new ArrayList<>();

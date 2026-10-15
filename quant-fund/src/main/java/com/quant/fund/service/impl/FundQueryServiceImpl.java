@@ -37,7 +37,6 @@ import com.quant.fund.service.FundQueryService;
 import com.quant.fund.service.FundScaleHistoryService;
 import com.quant.fund.service.DividendYieldService;
 import com.quant.fund.service.FundTagService;
-import com.quant.fund.service.TradingCalendarService;
 import org.springframework.stereotype.Service;
 
 /**
@@ -69,14 +68,10 @@ public class FundQueryServiceImpl implements FundQueryService {
     /** 规模历史（V6.15）：列表/详情展示"每日估算规模"用 */
     private final FundScaleHistoryService scaleHistoryService;
 
-    /** 交易日判定（V6.47：当日涨跌幅的展示闸门——数据日期非当前交易日即为"未知"） */
-    private final TradingCalendarService tradingCalendarService;
-
     public FundQueryServiceImpl(FundBasicMapper fundBasicMapper, FundEtfKlineMapper klineMapper,
                                 FundNavMapper navMapper, IndexValuationMapper valuationMapper,
                                 FundPositionMapper positionMapper, FundTagService fundTagService,
-                                DividendYieldService dividendYieldService, FundScaleHistoryService scaleHistoryService,
-                                TradingCalendarService tradingCalendarService) {
+                                DividendYieldService dividendYieldService, FundScaleHistoryService scaleHistoryService) {
         this.fundBasicMapper = fundBasicMapper;
         this.klineMapper = klineMapper;
         this.navMapper = navMapper;
@@ -85,7 +80,6 @@ public class FundQueryServiceImpl implements FundQueryService {
         this.fundTagService = fundTagService;
         this.dividendYieldService = dividendYieldService;
         this.scaleHistoryService = scaleHistoryService;
-        this.tradingCalendarService = tradingCalendarService;
     }
 
     /** 下拉选项缓存（V6.01）：15 分钟过期回源；单用户系统本地缓存即可，重启失效无妨 */
@@ -103,7 +97,7 @@ public class FundQueryServiceImpl implements FundQueryService {
         List<com.quant.fund.dto.FundOptionVO> fresh = fundBasicMapper.selectList(
                         new LambdaQueryWrapper<com.quant.fund.entity.FundBasic>()
                                 .eq(com.quant.fund.entity.FundBasic::getStatus, 1)
-                                .orderByAsc(com.quant.fund.entity.FundBasic::getFundCode))
+                                .orderByAsc(com.quant.fund.entity.FundBasic::getFundName))
                 .stream()
                 .map(fund -> {
                     com.quant.fund.dto.FundOptionVO vo = new com.quant.fund.dto.FundOptionVO();
@@ -266,16 +260,15 @@ public class FundQueryServiceImpl implements FundQueryService {
     private WatchItemVO toWatchItem(FundBasic fund, Set<String> holdings, Map<String, BigDecimal> ttmYields,
             FundScaleHistoryService.EstimatedScale estimated) {
         LastQuote quote = lastQuote(fund);
-        // 当日涨跌幅闸门（V6.47 用户口径）：数据日期≠今天（或今天非交易日）即为"未知"，
-        // 不拿上一交易日的涨跌冒充今天的——最新价本身仍照常展示
-        boolean quoteCurrent = tradingCalendarService.isCurrentTradingDate(quote == null ? null : quote.date());
+        // 涨跌幅口径（V6.50 用户定稿）：显示**最新已知数据**的涨跌——场外基金净值滞后时
+        // 显示上一交易日的涨跌，当天数据同步后自动切换为当天；不再因"数据日期≠今天"而隐藏
         BigDecimal percentile = fund.getIndexCode() == null ? null : percentileOfIndexPe(fund.getIndexCode(), 10);
         return new WatchItemVO(
                 fund.getFundCode(), fund.getFundName(), fund.getFundType(),
                 FundTypeEnum.ETF.getCode() == fund.getFundType() ? FundTypeEnum.ETF.getDesc() : FundTypeEnum.OTC.getDesc(),
                 fund.getIndexName(), fund.getIndexCode(),
                 quote == null ? null : quote.price(),
-                quoteCurrent ? quote.changePct() : null,
+                quote == null ? null : quote.changePct(),
                 percentile, fund.getLastSyncDate(), fund.getLastSyncAt(), fund.getInceptionDate(),
                 estimated == null ? null : estimated.scale(), estimated == null ? null : estimated.date(),
                 fund.getFundScale(), fund.getFundScaleDate(),
@@ -304,8 +297,7 @@ public class FundQueryServiceImpl implements FundQueryService {
         FundBasic fund = getByCodeRequired(fundCode);
         LastQuote quote = lastQuote(fund);
         FundScaleHistoryService.EstimatedScale estimated = scaleHistoryService.latestEstimated(fund.getFundCode());
-        // 涨跌幅闸门与列表同口径（V6.47）：数据日期≠当前交易日即为"未知"，前端显示 --
-        boolean quoteCurrent = tradingCalendarService.isCurrentTradingDate(quote == null ? null : quote.date());
+        // 涨跌幅与列表同口径（V6.50）：显示最新已知数据的涨跌（场外滞后时即上一交易日的涨跌）
         return new FundDetailVO(
                 fund.getFundCode(), fund.getFundName(), fund.getFundType(), typeDesc(fund),
                 fund.getMarket(), fund.getIndexCode(), fund.getIndexName(), fund.getInceptionDate(),
@@ -316,7 +308,7 @@ public class FundQueryServiceImpl implements FundQueryService {
                 fund.getMgmtFeeRate(), fund.getCustFeeRate(), fund.getSalesFeeRate(),
                 fund.getPremiumRate(), fund.getPremiumDate(),
                 quote == null ? null : quote.price(),
-                quoteCurrent ? quote.changePct() : null,
+                quote == null ? null : quote.changePct(),
                 quote == null ? null : quote.date(),
                 fund.getLastSyncDate());
     }

@@ -179,13 +179,7 @@ public class FundSyncJobs {
      */
     @Scheduled(cron = "0 3/30 9-15 * * MON-FRI", zone = "Asia/Shanghai")
     public void syncOthersIntraday() {
-        JobLogs.run("sync:others", () -> {
-            if (!inTradingSession()) {
-                LOGGER.info("非交易时段，任务[sync:others]跳过");
-                return;
-            }
-            syncService.syncNonHeldFundsIntraday();
-        });
+        JobLogs.run("sync:others", syncService::syncNonHeldFundsIntraday);
     }
 
     /** 交易时段自判（9:30-11:35 / 13:00-15:05）：给到两端各 1 分钟余量，等开盘首根 bar 落地 */

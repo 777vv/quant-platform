@@ -576,11 +576,16 @@ public class SyncServiceImpl implements SyncService {
             }
             BigDecimal scaleYi = disclosed.multiply(latest.getUnitNav())
                     .divide(base.getUnitNav(), 2, RoundingMode.HALF_UP);
-            scaleHistoryService.recordEstimated(fund.getFundCode(), latest.getNavDate(), scaleYi);
-            LOGGER.info("基金[{}]每日规模估算（场外）：披露 {} 亿元（{}）/ 净值 {} + 最新净值 {}（{}） = {} 亿元",
+            // 总份额估算（V6.55）：披露净资产(元) ÷ 披露截止日单位净值 ≈ 份额；场外无二级市场成交数据，成交字段为 null
+            BigDecimal totalShare = disclosed.multiply(BigDecimal.valueOf(100000000L))
+                    .divide(base.getUnitNav(), 2, RoundingMode.HALF_UP);
+            scaleHistoryService.recordEstimated(fund.getFundCode(), latest.getNavDate(), scaleYi,
+                    totalShare, null, null);
+            LOGGER.info("基金[{}]每日规模估算（场外）：披露 {} 亿元（{}）/ 净值 {} + 最新净值 {}（{}） = {} 亿元，"
+                            + "总份额约 {} 份",
                     fund.getFundCode(), disclosed.toPlainString(), disclosedDate,
                     base.getUnitNav().toPlainString(), latest.getUnitNav().toPlainString(), latest.getNavDate(),
-                    scaleYi.toPlainString());
+                    scaleYi.toPlainString(), totalShare.toPlainString());
         } catch (Exception e) {
             LOGGER.error("基金[{}]场外每日规模估算失败（次日重试）", fund.getFundCode(), e);
         }
@@ -624,10 +629,21 @@ public class SyncServiceImpl implements SyncService {
             // 规模（亿元）= 份额（份） × 单位净值（元） ÷ 1e8
             BigDecimal scaleYi = shares.get().multiply(latest.unitNav())
                     .divide(BigDecimal.valueOf(100000000L), 2, RoundingMode.HALF_UP);
-            scaleHistoryService.recordEstimated(fund.getFundCode(), latest.date(), scaleYi);
-            LOGGER.info("基金[{}]每日规模估算：份额 {} 份 × 净值 {}（{}） = {} 亿元",
+            // 当日成交（V6.55）：取与本次统计日同一根 K 线——volume 单位为手（×100 得份额）、amount 为元；
+            // K 线尚未定稿或缺失时传 null（库内已有值不会被覆盖）
+            FundEtfKline bar = klineMapper.selectOne(new LambdaQueryWrapper<FundEtfKline>()
+                    .eq(FundEtfKline::getFundCode, fund.getFundCode())
+                    .eq(FundEtfKline::getTradeDate, latest.date()));
+            BigDecimal tradeShare = bar == null || bar.getVolume() == null ? null
+                    : BigDecimal.valueOf(bar.getVolume()).multiply(BigDecimal.valueOf(100));
+            BigDecimal tradeAmount = bar == null ? null : bar.getAmount();
+            scaleHistoryService.recordEstimated(fund.getFundCode(), latest.date(), scaleYi,
+                    shares.get(), tradeShare, tradeAmount);
+            LOGGER.info("基金[{}]每日规模估算：份额 {} 份 × 净值 {}（{}） = {} 亿元，当日成交 {} 份 / {} 元",
                     fund.getFundCode(), shares.get().toPlainString(), latest.unitNav().toPlainString(),
-                    latest.date(), scaleYi.toPlainString());
+                    latest.date(), scaleYi.toPlainString(),
+                    tradeShare == null ? "--" : tradeShare.toPlainString(),
+                    tradeAmount == null ? "--" : tradeAmount.toPlainString());
         } catch (Exception e) {
             LOGGER.error("基金[{}]每日规模估算失败（次日重试）", fund.getFundCode(), e);
         }

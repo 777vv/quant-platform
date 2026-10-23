@@ -17,6 +17,14 @@
         <el-select v-model="filterDirection" placeholder="全部方向" clearable style="width: 120px" @change="reload(1)">
           <el-option v-for="item in DIRECTIONS" :key="item.value" :value="item.value" :label="item.label" />
         </el-select>
+        <!-- 标签/类型筛选（V6.52 用户要求，参照基金池列表） -->
+        <el-select v-model="filterTag" placeholder="全部标签" clearable style="width: 140px" @change="reload(1)" @clear="reload(1)">
+          <el-option v-for="tag in tagLibraryList" :key="tag.id" :value="tag.name" :label="tag.name" />
+        </el-select>
+        <el-select v-model="filterType" placeholder="全部类型" clearable style="width: 130px" @change="reload(1)" @clear="reload(1)">
+          <el-option :value="1" label="场内 ETF" />
+          <el-option :value="2" label="场外指数基金" />
+        </el-select>
         <el-select v-model="filterStrategy" placeholder="全部策略" clearable style="width: 140px" @change="reload(1)">
           <el-option v-for="item in strategyOptions" :key="item.type" :value="item.type" :label="item.name" />
         </el-select>
@@ -106,6 +114,14 @@
               <el-option label="上穿" value="UP" />
               <el-option label="下穿" value="DOWN" />
             </el-select>
+            <!-- 标签/类型筛选（V6.52 用户要求，参照基金池列表） -->
+            <el-select v-model="maFilterTag" clearable placeholder="全部标签" style="width: 140px" @change="loadMaSignals(1)" @clear="loadMaSignals(1)">
+              <el-option v-for="tag in tagLibraryList" :key="tag.id" :value="tag.name" :label="tag.name" />
+            </el-select>
+            <el-select v-model="maFilterType" clearable placeholder="全部类型" style="width: 130px" @change="loadMaSignals(1)" @clear="loadMaSignals(1)">
+              <el-option :value="1" label="场内 ETF" />
+              <el-option :value="2" label="场外指数基金" />
+            </el-select>
             <el-button type="primary" @click="loadMaSignals(1)">查询</el-button>
             <span class="muted">共 {{ maTotal }} 条 · 短期均线上穿/下穿长期均线时触发（每交易日 10:00 判定）</span>
           </div>
@@ -179,6 +195,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { markSignalsRead, signalsPage, strategyTypes, type SignalItem, type StrategyTypeVO } from '@/api/strategy'
+import { tagLibrary, type FundTagVO } from '@/api/fund'
 import { maSignalsPage, type MaSignalItem } from '@/api/marketSignals'
 import QuoteTrendDialog from '@/components/fund/QuoteTrendDialog.vue'
 
@@ -220,6 +237,9 @@ const maTotal = ref(0)
 const maFilterFundKeyword = ref('')
 /** 方向筛选（V6.00）：UP=上穿 / DOWN=下穿，空 = 全部 */
 const maFilterDirection = ref<string | undefined>(undefined)
+/** 标签 / 类型筛选（V6.52，参照基金池列表）：空 = 全部 */
+const maFilterTag = ref<string>('')
+const maFilterType = ref<number | ''>('')
 const page = ref(1)
 const size = ref(10)
 const total = ref(0)
@@ -229,6 +249,11 @@ const filterFundKeyword = ref('')
 const filterDirection = ref<string | undefined>(undefined)
 const filterStrategy = ref<string | undefined>(undefined)
 const dateRange = ref<[string, string] | null>(null)
+/** 标签 / 类型筛选（V6.52，参照基金池列表）：空 = 全部 */
+const filterTag = ref<string>('')
+const filterType = ref<number | ''>('')
+/** 标签库（两个页签的下拉共用） */
+const tagLibraryList = ref<FundTagVO[]>([])
 
 /** 策略选项：从后端策略注册表拉取（不写死，未来加策略自动出现） */
 const strategyOptions = ref<StrategyTypeVO[]>([])
@@ -259,6 +284,8 @@ async function load() {
       strategyType: filterStrategy.value,
       startDate: dateRange.value?.[0],
       endDate: dateRange.value?.[1],
+      tag: filterTag.value || undefined,
+      fundType: filterType.value === '' ? undefined : filterType.value,
       page: page.value,
       size: size.value
     })
@@ -283,6 +310,8 @@ async function loadMaSignals(targetPage = 1) {
     const result = await maSignalsPage({
       keyword: maFilterFundKeyword.value.trim() || undefined,
       direction: maFilterDirection.value,
+      tag: maFilterTag.value || undefined,
+      fundType: maFilterType.value === '' ? undefined : maFilterType.value,
       page: targetPage,
       size: maSize.value
     })
@@ -305,6 +334,8 @@ function resetFilter() {
   filterFundKeyword.value = ''
   filterDirection.value = undefined
   filterStrategy.value = undefined
+  filterTag.value = ''
+  filterType.value = ''
   dateRange.value = null
   reload(1)
 }
@@ -320,6 +351,7 @@ async function openSignal(row: SignalItem) {
 
 onMounted(async () => {
   strategyOptions.value = await strategyTypes().catch(() => [])
+  tagLibraryList.value = await tagLibrary().catch(() => [])
   await load()
 })
 </script>

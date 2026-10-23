@@ -62,7 +62,8 @@ public class FundScaleHistoryServiceImpl implements FundScaleHistoryService {
     }
 
     @Override
-    public void recordEstimated(String fundCode, LocalDate statDate, BigDecimal scale) {
+    public void recordEstimated(String fundCode, LocalDate statDate, BigDecimal scale,
+                                BigDecimal totalShare, BigDecimal tradeShare, BigDecimal tradeAmount) {
         if (scale == null || statDate == null) {
             return;
         }
@@ -73,6 +74,16 @@ public class FundScaleHistoryServiceImpl implements FundScaleHistoryService {
             existing.setFundScale(scale);
             existing.setScaleDate(statDate);
             existing.setSource(SOURCE_ESTIMATED);
+            // V6.55：份额字段只在本次拿到值时覆盖——后续轮次若数据源暂缺（如 K 线未定稿），不能把已有值抹成空
+            if (totalShare != null) {
+                existing.setTotalShare(totalShare);
+            }
+            if (tradeShare != null) {
+                existing.setTradeShare(tradeShare);
+            }
+            if (tradeAmount != null) {
+                existing.setTradeAmount(tradeAmount);
+            }
             mapper.updateById(existing);
             return;
         }
@@ -82,6 +93,9 @@ public class FundScaleHistoryServiceImpl implements FundScaleHistoryService {
         row.setFundScale(scale);
         row.setScaleDate(statDate);
         row.setSource(SOURCE_ESTIMATED);
+        row.setTotalShare(totalShare);
+        row.setTradeShare(tradeShare);
+        row.setTradeAmount(tradeAmount);
         mapper.insert(row);
     }
 
@@ -116,7 +130,8 @@ public class FundScaleHistoryServiceImpl implements FundScaleHistoryService {
                 .eq(FundScaleHistory::getFundCode, fundCode)
                 .orderByAsc(FundScaleHistory::getStatDate)).stream()
                 .map(row -> new FundScaleHistoryVO(row.getStatDate(), row.getFundScale(),
-                        row.getSource() == null ? SOURCE_DISCLOSED : row.getSource()))
+                        row.getSource() == null ? SOURCE_DISCLOSED : row.getSource(),
+                        row.getTotalShare(), row.getTradeShare(), row.getTradeAmount()))
                 .toList();
     }
 }

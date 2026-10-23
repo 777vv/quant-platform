@@ -41,7 +41,8 @@ public class SignalController {
     }
 
     /**
-     * 信号分页查询（【信号查询】页用；筛选条件都可空 = 不限，新→旧）。
+     * 信号分页查询（【平台信号】页用；筛选条件都可空 = 不限，新→旧）。
+     * V6.52：新增 tag（标签名）与 fundType（1=场内 ETF / 2=场外指数基金）筛选，口径与基金池列表一致。
      */
     @GetMapping("/signals/page")
     public R<PageResult<SignalItemVO>> page(
@@ -51,9 +52,12 @@ public class SignalController {
             @RequestParam(required = false) String strategyType,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String tag,
+            @RequestParam(required = false) Integer fundType,
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "10") long size) {
-        return R.ok(signalService.page(fundCode, keyword, direction, strategyType, startDate, endDate, page, size));
+        return R.ok(signalService.page(fundCode, keyword, direction, strategyType, startDate, endDate,
+                tag, fundType, page, size));
     }
 
     /** 手动触发一轮信号计算（调试/补算用；与定时任务共用 Redisson 锁） */

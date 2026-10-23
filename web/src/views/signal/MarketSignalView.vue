@@ -15,6 +15,11 @@
           >
             <el-option v-for="t in tagOptions" :key="t" :value="t" :label="t" />
           </el-select>
+          <!-- 类型筛选（V6.52 用户要求，参照基金池列表）：对四个页签统一生效 -->
+          <el-select v-model="fundTypeFilter" clearable placeholder="全部类型" style="width: 130px">
+            <el-option :value="1" label="场内 ETF" />
+            <el-option :value="2" label="场外指数基金" />
+          </el-select>
           <el-input
             v-model="fundKeywordInput"
             placeholder="基金名称或代码，回车查询"
@@ -420,7 +425,19 @@ const tagOptions = computed(() => {
   return [...set].sort()
 })
 
-/** 全局筛选：基金关键词（模糊匹配代码或名称，回车生效）与标签筛选同时生效，均为空=不过滤 */
+/** 类型筛选（V6.52 用户要求，参照基金池列表）：''=不限、1=场内 ETF、2=场外指数基金 */
+const fundTypeFilter = ref<number | '' | undefined>('')
+/** 类型筛选是否生效（V6.54：EP 清空后值为 undefined，不能只判断 !== ''，否则清空会被当成"值=undefined"而滤空列表） */
+const typeFilterActive = computed(() => fundTypeFilter.value === 1 || fundTypeFilter.value === 2)
+
+/** 基金代码 → 类型（均价页签的数据不带类型，取概览那份补；与标签筛选同一做法） */
+const typeByCode = computed(() => {
+  const map = new Map<string, number>()
+  rows.value.forEach((row) => map.set(row.fundCode, row.fundType))
+  return map
+})
+
+/** 全局筛选：基金关键词（模糊匹配代码或名称，回车生效）、标签、类型同时生效，均为空=不过滤 */
 const filteredRows = computed(() => {
   const kw = appliedFundKeyword.value.trim().toLowerCase()
   return rows.value.filter((row) => {
@@ -428,6 +445,9 @@ const filteredRows = computed(() => {
       return false
     }
     if (selectedTags.value.length > 0 && !row.tags.some((t) => selectedTags.value.includes(t))) {
+      return false
+    }
+    if (typeFilterActive.value && row.fundType !== fundTypeFilter.value) {
       return false
     }
     return true
@@ -517,6 +537,10 @@ const maFilteredRows = computed(() => {
       return false
     }
     if (selectedTags.value.length > 0 && !(tagsByCode.value.get(row.fundCode) ?? []).some((t) => selectedTags.value.includes(t))) {
+      return false
+    }
+    // 类型筛选（V6.52）：概览里查不到类型的基金，在按类型筛选时视为不匹配（与标签筛选同口径）
+    if (typeFilterActive.value && typeByCode.value.get(row.fundCode) !== fundTypeFilter.value) {
       return false
     }
     return true
@@ -632,6 +656,7 @@ const premiumRows = computed(() => paged(sortByState(filteredRows.value, premium
 // 筛选/换基金/换数据后所有页签页码回位，防越界空页（V5.36 持仓列表同款处理）
 watch(appliedFundKeyword, resetPages)
 watch(selectedTags, resetPages)
+watch(fundTypeFilter, resetPages)
 
 /** 本次展示数据的取数时间（缓存命中时保持首次取数时间，便于判断新鲜度） */
 const loadedAt = ref('')

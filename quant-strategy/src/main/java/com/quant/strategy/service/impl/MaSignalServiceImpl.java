@@ -15,6 +15,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.quant.common.result.PageResult;
 import com.quant.fund.entity.FundBasic;
 import com.quant.fund.mapper.FundBasicMapper;
+import com.quant.fund.service.FundTagService;
 import com.quant.fund.mapper.FundMaDailyMapper;
 import com.quant.fund.entity.FundMaDaily;
 import com.quant.strategy.dto.MaSignalItemVO;
@@ -46,11 +47,15 @@ public class MaSignalServiceImpl implements MaSignalService {
 
     private final FundBasicMapper fundBasicMapper;
 
+    /** 标签服务（V6.52：均线信号列表的标签筛选，口径与基金池列表一致） */
+    private final FundTagService fundTagService;
+
     public MaSignalServiceImpl(MaSignalMapper maSignalMapper, FundMaDailyMapper maDailyMapper,
-                               FundBasicMapper fundBasicMapper) {
+                               FundBasicMapper fundBasicMapper, FundTagService fundTagService) {
         this.maSignalMapper = maSignalMapper;
         this.maDailyMapper = maDailyMapper;
         this.fundBasicMapper = fundBasicMapper;
+        this.fundTagService = fundTagService;
     }
 
     @Override
@@ -110,7 +115,8 @@ public class MaSignalServiceImpl implements MaSignalService {
     }
 
     @Override
-    public PageResult<MaSignalItemVO> page(String fundCode, String keyword, String direction, int page, int size) {
+    public PageResult<MaSignalItemVO> page(String fundCode, String keyword, String direction, String tag,
+            Integer fundType, int page, int size) {
         int pageNo = Math.max(page, 1);
         int pageSize = Math.max(size, 1);
         LambdaQueryWrapper<MaSignal> query = new LambdaQueryWrapper<>();
@@ -127,6 +133,14 @@ public class MaSignalServiceImpl implements MaSignalService {
                 return PageResult.of(0, List.of());
             }
             query.in(MaSignal::getFundCode, codes);
+        }
+        // 标签/类型筛选（V6.52 用户要求，口径与基金池列表一致）：解析为基金代码集合，两条件取交集
+        List<String> scopeCodes = FundScopeResolver.resolve(fundBasicMapper, fundTagService, tag, fundType);
+        if (scopeCodes != null && scopeCodes.isEmpty()) {
+            return PageResult.of(0, List.of());
+        }
+        if (scopeCodes != null) {
+            query.in(MaSignal::getFundCode, scopeCodes);
         }
         // 方向过滤（V6.00）：只认 UP/DOWN 两个值，其他输入一律当作"不过滤"
         if ("UP".equals(direction) || "DOWN".equals(direction)) {

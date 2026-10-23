@@ -397,6 +397,12 @@ export interface FundScalePoint {
   scale: number
   /** 口径：DISCLOSED=定期报告披露值 / ESTIMATED=每日估算（V6.15，场内 ETF 份额×净值）；副图优先画估算 */
   source: 'DISCLOSED' | 'ESTIMATED'
+  /** 总份额（份，V6.55；场外为估算值），无数据为 null */
+  totalShare?: number | null
+  /** 当日成交份额（份，V6.55；场外无数据为 null） */
+  tradeShare?: number | null
+  /** 当日成交额（元，V6.55；场外无数据为 null） */
+  tradeAmount?: number | null
 }
 
 /** 查询基金规模历史（按日期升序；行情图「规模副图」数据源） */

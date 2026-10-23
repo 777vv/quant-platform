@@ -168,6 +168,10 @@ export interface SignalPageQuery {
   direction?: string
   /** 策略类型（GRID/VAL_PERCENTILE） */
   strategyType?: string
+  /** 标签名（V6.52：口径与基金池列表一致；不传=不限） */
+  tag?: string
+  /** 基金类型（V6.52）：1=场内 ETF、2=场外指数基金；不传=不限 */
+  fundType?: number
   /** 信号日期下界（含，yyyy-MM-dd） */
   startDate?: string
   /** 信号日期上界（含，yyyy-MM-dd） */

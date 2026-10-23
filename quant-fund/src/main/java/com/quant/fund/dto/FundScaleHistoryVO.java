@@ -11,5 +11,11 @@ import java.time.LocalDate;
  * @param source 口径：DISCLOSED=定期报告披露值 / ESTIMATED=每日估算（份额 × 单位净值）；
  *               前端「规模副图」优先画 ESTIMATED（连续每日），没有时回退 DISCLOSED
  */
-public record FundScaleHistoryVO(LocalDate date, BigDecimal scale, String source) {
+public record FundScaleHistoryVO(LocalDate date, BigDecimal scale, String source,
+        /** 总份额（份，V6.55；场外为估算值），无数据为 null */
+        BigDecimal totalShare,
+        /** 当日成交份额（份，V6.55；场外无数据为 null） */
+        BigDecimal tradeShare,
+        /** 当日成交额（元，V6.55；场外无数据为 null） */
+        BigDecimal tradeAmount) {
 }

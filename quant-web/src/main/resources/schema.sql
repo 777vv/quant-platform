@@ -528,6 +528,9 @@ CREATE TABLE IF NOT EXISTS fund_scale_history (
   stat_date   DATE        NOT NULL COMMENT '统计日期（档案刷新成功那天）',
   fund_scale  DECIMAL(18,2) DEFAULT NULL COMMENT '净资产规模（亿元）',
   scale_date  DATE        DEFAULT NULL COMMENT '规模数据截止日（东财披露，通常为季末）',
+  total_share  DECIMAL(20,2) DEFAULT NULL COMMENT '总份额（份，V6.55）',
+  trade_share  DECIMAL(20,2) DEFAULT NULL COMMENT '当日成交份额（份，V6.55；场外无数据为 NULL）',
+  trade_amount DECIMAL(20,2) DEFAULT NULL COMMENT '当日成交额（元，V6.55；场外无数据为 NULL）',
   created_at  DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   UNIQUE KEY uk_fund_date (fund_code, stat_date)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '基金规模历史表';
@@ -536,6 +539,19 @@ CREATE TABLE IF NOT EXISTS fund_scale_history (
 -- ESTIMATED＝每日估算（场内 ETF：当日份额 × 当日单位净值，与披露同口径但每日可得）。
 SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_scale_history' AND COLUMN_NAME = 'source');
 SET @sql := IF(@c = 0, 'ALTER TABLE fund_scale_history ADD COLUMN source VARCHAR(12) NOT NULL DEFAULT ''DISCLOSED'' COMMENT ''口径：DISCLOSED=定期报告披露 / ESTIMATED=每日估算（份额×净值）''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- V6.55：规模历史增加「总份额 / 当日成交份额 / 当日成交额」（用户要求；随原有 15:05 规模快照与同步路径更新，
+-- 不新增定时任务）。场内：总份额=行情 f84、成交份额=当日 K 线成交量(手)×100、成交额=当日 K 线成交额(元)；
+-- 场外：总份额=披露净资产÷披露截止日单位净值（近似），无二级市场成交数据，成交份额/额为 NULL。
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_scale_history' AND COLUMN_NAME = 'total_share');
+SET @sql := IF(@c = 0, 'ALTER TABLE fund_scale_history ADD COLUMN total_share DECIMAL(20,2) DEFAULT NULL COMMENT ''总份额（份）''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_scale_history' AND COLUMN_NAME = 'trade_share');
+SET @sql := IF(@c = 0, 'ALTER TABLE fund_scale_history ADD COLUMN trade_share DECIMAL(20,2) DEFAULT NULL COMMENT ''当日成交份额（份）''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'fund_scale_history' AND COLUMN_NAME = 'trade_amount');
+SET @sql := IF(@c = 0, 'ALTER TABLE fund_scale_history ADD COLUMN trade_amount DECIMAL(20,2) DEFAULT NULL COMMENT ''当日成交额（元）''', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- V5.24 市场休市日名单（交易日判定）：把"今天是不是交易日"从"周一到周五"修正为

@@ -31,12 +31,17 @@ public interface FundScaleHistoryService {
     List<FundScaleHistoryVO> history(String fundCode);
 
     /**
-     * 落一行"每日估算"规模（V6.15，场内 ETF：份额 × 当日单位净值）。
-     * 幂等键与披露值一致（基金 + stat_date），同一交易日重复跑覆盖。
+     * 落一行"每日估算"规模与份额数据（V6.15；V6.55 加份额字段）。
+     * 幂等键与披露值一致（基金 + stat_date），同一交易日重复跑覆盖；新增字段传 null 时保留库内已有值。
      *
-     * @param statDate 统计日（交易日；净值日）
+     * @param statDate    统计日（交易日；净值日）
+     * @param scale       净资产规模（亿元）
+     * @param totalShare  总份额（份；场内 f84 / 场外披露净资产÷披露日净值估算），可空
+     * @param tradeShare  当日成交份额（份；场内成交量×100，场外无数据传 null）
+     * @param tradeAmount 当日成交额（元；场内 K 线成交额，场外无数据传 null）
      */
-    void recordEstimated(String fundCode, LocalDate statDate, BigDecimal scale);
+    void recordEstimated(String fundCode, LocalDate statDate, BigDecimal scale,
+                         BigDecimal totalShare, BigDecimal tradeShare, BigDecimal tradeAmount);
 
     /**
      * 多只基金的"最新每日估算"（供列表/详情展示，一次查询批量取）。

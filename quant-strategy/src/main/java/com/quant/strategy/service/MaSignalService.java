@@ -25,7 +25,7 @@ public interface MaSignalService {
      *
      * @param direction 方向过滤（UP=上穿 / DOWN=下穿；空 = 不过滤，其他值忽略）
      */
-    PageResult<MaSignalItemVO> page(String fundCode, String keyword, String direction, int page, int size);
+    PageResult<MaSignalItemVO> page(String fundCode, String keyword, String direction, String tag, Integer fundType, int page, int size);
 
     /** 某基金的全部均线信号（新→旧，基金详情信号页用） */
     List<MaSignalItemVO> listByFund(String fundCode);

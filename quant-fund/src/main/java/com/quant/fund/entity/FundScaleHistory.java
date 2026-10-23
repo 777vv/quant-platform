@@ -35,6 +35,15 @@ public class FundScaleHistory {
     /** 口径：DISCLOSED=定期报告披露值（值随季报变）；ESTIMATED=每日估算（场内 ETF：份额 × 当日单位净值） */
     private String source;
 
+    /** 总份额（份，V6.55）：场内=行情 f84；场外=披露净资产 ÷ 披露截止日单位净值（近似） */
+    private BigDecimal totalShare;
+
+    /** 当日成交份额（份，V6.55）：场内=当日 K 线成交量(手) × 100；场外无成交数据为 null */
+    private BigDecimal tradeShare;
+
+    /** 当日成交额（元，V6.55）：场内=当日 K 线成交额；场外无成交数据为 null */
+    private BigDecimal tradeAmount;
+
     /** 创建时间（库默认值） */
     private LocalDateTime createdAt;
 }

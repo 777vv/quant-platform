@@ -172,8 +172,18 @@ export interface MaSignalItem {
   maLongVal: number | null
 }
 
-/** 均线信号分页（新→旧），可按基金代码过滤 */
-export function maSignalsPage(params: { fundCode?: string; keyword?: string; direction?: string; page: number; size: number }) {
+/** 均线信号分页（新→旧），可按基金代码/关键词/方向/标签/类型过滤 */
+export function maSignalsPage(params: {
+  fundCode?: string
+  keyword?: string
+  direction?: string
+  /** 标签名（V6.52：口径与基金池列表一致） */
+  tag?: string
+  /** 基金类型（V6.52）：1=场内 ETF、2=场外指数基金 */
+  fundType?: number
+  page: number
+  size: number
+}) {
   return get<PageResult<MaSignalItem>>('/ma-signals/page', params)
 }
 

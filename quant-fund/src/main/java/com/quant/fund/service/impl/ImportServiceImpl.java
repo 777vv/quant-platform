@@ -431,11 +431,22 @@ public class ImportServiceImpl implements ImportService {
         OtcScaleSnapshot scale = scaleSnapshot();
         List<String> etfNew = new ArrayList<>();
         List<String> otcNew = new ArrayList<>();
+        // V6.53 用户口径：自动导入只收**系统里从未出现过**的基金——曾经导入过又被删除的（软删 status=0，
+        // 历史数据保留）不再被周三任务自动加回；手动导入不受影响（数据导入菜单仍可重新导入，check() 会提示
+        // "曾导入、已移出自选"，导入即恢复）。这里按"fund_basic 是否已有该行"判断（不看 status）。
+        Set<String> existed = existingCodes();
+        int etfRemoved = 0;
+        int otcRemoved = 0;
         try {
             for (EtfCandidateVO candidate : etfCandidates(minScaleYi, minYears)) {
-                if (!candidate.inPool()) {
-                    etfNew.add(candidate.fundCode());
+                if (candidate.inPool()) {
+                    continue;
                 }
+                if (existed.contains(candidate.fundCode())) {
+                    etfRemoved++;
+                    continue;
+                }
+                etfNew.add(candidate.fundCode());
             }
         } catch (RuntimeException e) {
             LOGGER.error("自动导入：场内候选获取失败（本轮跳过场内部分，下周再试）", e);
@@ -447,14 +458,24 @@ public class ImportServiceImpl implements ImportService {
         } else {
             try {
                 for (OtcCandidateVO candidate : otcCandidates(minScaleYi, minYears).items()) {
-                    if (!candidate.inPool()) {
-                        otcNew.add(candidate.fundCode());
+                    if (candidate.inPool()) {
+                        continue;
                     }
+                    if (existed.contains(candidate.fundCode())) {
+                        otcRemoved++;
+                        continue;
+                    }
+                    otcNew.add(candidate.fundCode());
                 }
             } catch (RuntimeException e) {
                 LOGGER.error("自动导入：场外候选获取失败（本轮跳过场外部分，下周再试）", e);
                 notes.add("场外候选获取失败：" + e.getMessage());
             }
+        }
+        if (etfRemoved + otcRemoved > 0) {
+            LOGGER.info("自动导入：跳过 {} 只曾导入过又被删除的基金（场内 {}、场外 {}），不自动加回",
+                    etfRemoved + otcRemoved, etfRemoved, otcRemoved);
+            notes.add("跳过 " + (etfRemoved + otcRemoved) + " 只曾被删除的基金");
         }
         LinkedHashSet<String> merged = new LinkedHashSet<>(etfNew);
         merged.addAll(otcNew);
@@ -637,6 +658,18 @@ public class ImportServiceImpl implements ImportService {
     private void saveBatch(BatchImportProgressVO progress) {
         redisTemplate.opsForValue().set(BATCH_PROGRESS_KEY + progress.taskId(), JsonUtils.toJson(progress),
                 Duration.ofHours(2));
+    }
+
+    /**
+     * 系统里"曾经出现过"的全部基金代码（V6.53）：含在池（status=1）与已删除（status=0，软删保留历史数据）。
+     * 自动导入用它排除"曾导入又被删除"的基金；手动导入不查这个集合（允许重新导入）。
+     */
+    private Set<String> existingCodes() {
+        Set<String> codes = new HashSet<>();
+        fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                        .select(FundBasic::getFundCode))
+                .forEach(fund -> codes.add(fund.getFundCode()));
+        return codes;
     }
 
     /** 当前自选池内全部基金代码（status=1） */

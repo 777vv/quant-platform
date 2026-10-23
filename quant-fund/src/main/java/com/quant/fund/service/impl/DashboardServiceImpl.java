@@ -98,12 +98,17 @@ public class DashboardServiceImpl implements DashboardService {
         BigDecimal cash = nvl(assets.cashBalance());
         List<DashboardOverviewVO.HoldingBrief> briefs = new ArrayList<>();
         List<DashboardOverviewVO.AllocationItem> allocation = new ArrayList<>();
-        for (int i = 0; i < holdings.size(); i++) {
-            HoldingVO holding = holdings.get(i);
+        for (HoldingVO holding : holdings) {
+            // 市值 0 或未知的持仓不进资产配置（V6.51 用户口径）：清仓后仍保留的持仓行
+            //（份额 0、只剩已实现收益，基金池持仓页签里作为历史记录展示）在饼图里没有份额意义；
+            // 持仓速览同样只取市值 > 0 的前 5 只（原来按倒序下标 i<5 取，零市值行也会占名额）
+            if (nvl(holding.marketValue()).compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
             BigDecimal weight = weightOf(holding.marketValue(), total);
             allocation.add(new DashboardOverviewVO.AllocationItem(holding.fundCode(), holding.fundName(),
                     holding.marketValue(), weight));
-            if (i < 5) {
+            if (briefs.size() < 5) {
                 briefs.add(new DashboardOverviewVO.HoldingBrief(holding.fundCode(), holding.fundName(),
                         holding.marketValue(), weight, holding.dayPnl(), holding.floatingPnl()));
             }

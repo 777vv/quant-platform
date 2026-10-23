@@ -37,7 +37,7 @@ public interface SignalService {
      * @return 分页结果（已带基金名称与策略展示名）
      */
     PageResult<SignalItemVO> page(String fundCode, String keyword, String direction, String strategyType,
-            LocalDate startDate, LocalDate endDate, long page, long size);
+            LocalDate startDate, LocalDate endDate, String tag, Integer fundType, long page, long size);
 
     /**
      * 标记信号为已读（仪表盘未读红点消除）。

@@ -28,15 +28,20 @@ public class MaSignalController {
         this.maSignalService = maSignalService;
     }
 
-    /** 均线信号分页（新→旧），可按基金代码过滤 */
+    /**
+     * 均线信号分页（新→旧），可按基金代码/关键词/方向过滤。
+     * V6.52：新增 tag（标签名）与 fundType（1=场内 ETF / 2=场外指数基金）筛选，口径与基金池列表一致。
+     */
     @GetMapping("/page")
     public R<PageResult<MaSignalItemVO>> page(
             @RequestParam(required = false) String fundCode,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String direction,
+            @RequestParam(required = false) String tag,
+            @RequestParam(required = false) Integer fundType,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
-        return R.ok(maSignalService.page(fundCode, keyword, direction, page, size));
+        return R.ok(maSignalService.page(fundCode, keyword, direction, tag, fundType, page, size));
     }
 
     /** 某基金的全部均线信号（基金详情【信号查询】页签用，不分页） */

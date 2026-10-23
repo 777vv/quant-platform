@@ -20,6 +20,7 @@ import com.quant.fund.entity.SyncLog;
 import com.quant.fund.enums.SyncTypeEnum;
 import com.quant.fund.entity.TradeFlow;
 import com.quant.fund.mapper.FundBasicMapper;
+import com.quant.fund.service.FundTagService;
 import com.quant.fund.mapper.FundPositionMapper;
 import com.quant.fund.mapper.TradeFlowMapper;
 import com.quant.fund.mapper.SyncLogMapper;
@@ -88,10 +89,14 @@ public class SignalServiceImpl implements SignalService {
     /** 交易流水（震荡向上以最近一次实际买卖为状态锚点） */
     private final TradeFlowMapper tradeFlowMapper;
 
+    /** 标签服务（V6.52：信号列表的标签筛选，口径与基金池列表一致） */
+    private final FundTagService fundTagService;
+
     public SignalServiceImpl(StrategyConfigMapper configMapper, SignalRecordMapper signalRecordMapper,
                              SyncLogMapper syncLogMapper, MarketDataLoader marketDataLoader,
                              StrategyRegistry registry, FundBasicMapper fundBasicMapper,
-                             FundPositionMapper positionMapper, TradeFlowMapper tradeFlowMapper) {
+                             FundPositionMapper positionMapper, TradeFlowMapper tradeFlowMapper,
+                             FundTagService fundTagService) {
         this.configMapper = configMapper;
         this.signalRecordMapper = signalRecordMapper;
         this.syncLogMapper = syncLogMapper;
@@ -100,6 +105,7 @@ public class SignalServiceImpl implements SignalService {
         this.fundBasicMapper = fundBasicMapper;
         this.positionMapper = positionMapper;
         this.tradeFlowMapper = tradeFlowMapper;
+        this.fundTagService = fundTagService;
     }
 
     @Override
@@ -137,7 +143,7 @@ public class SignalServiceImpl implements SignalService {
 
     @Override
     public PageResult<SignalItemVO> page(String fundCode, String keyword, String direction, String strategyType,
-            LocalDate startDate, LocalDate endDate, long page, long size) {
+            LocalDate startDate, LocalDate endDate, String tag, Integer fundType, long page, long size) {
         // 关键词模糊查询（V6.02 用户口径）：按基金代码或名称模糊匹配——先查出命中的基金代码，
         // 再按 fund_code IN 过滤信号（signal_record 只存代码）；精确 fundCode 参数保留给基金详情页。
         List<String> keywordCodes = null;
@@ -151,12 +157,19 @@ public class SignalServiceImpl implements SignalService {
             }
         }
 
+        // 标签/类型筛选（V6.52 用户要求，口径与基金池列表一致）：解析为基金代码集合，两条件取交集
+        List<String> scopeCodes = FundScopeResolver.resolve(fundBasicMapper, fundTagService, tag, fundType);
+        if (scopeCodes != null && scopeCodes.isEmpty()) {
+            return PageResult.of(0, List.of());
+        }
+
         // 每页条数上限收紧（防一次性拉全表），页码从 1 起
         Page<SignalRecord> result = signalRecordMapper.selectPage(
                 Page.of(Math.max(page, 1), Math.min(Math.max(size, 1), PAGE_SIZE_LIMIT)),
                 new LambdaQueryWrapper<SignalRecord>()
                         .eq(hasText(fundCode), SignalRecord::getFundCode, trimToNull(fundCode))
                         .in(keywordCodes != null, SignalRecord::getFundCode, keywordCodes)
+                        .in(scopeCodes != null, SignalRecord::getFundCode, scopeCodes)
                         .eq(hasText(direction), SignalRecord::getDirection, trimToNull(direction))
                         .eq(hasText(strategyType), SignalRecord::getStrategyType, trimToNull(strategyType))
                         .ge(startDate != null, SignalRecord::getSignalDate, startDate)

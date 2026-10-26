@@ -374,6 +374,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { changeColorClass, formatAmount, formatPercent } from '@/utils/format'
 import { marketSignalOverviewCached, type MarketSignalRow, type PeWindow } from '@/api/marketSignals'
+import { tagLibrary, type FundTagVO } from '@/api/fund'
 import { backfillMa, fundMaRows, refreshMa, type FundMaRow } from '@/api/marketSignals'
 import { useUserStore } from '@/stores/user'
 import { PERM } from '@/utils/permissions'
@@ -419,10 +420,21 @@ watch(premiumThreshold, (value) => {
   localStorage.setItem(THRESHOLD_KEY, String(value))
 })
 
+/** 标签库（V6.56：只用于给下拉选项定序，选项本身仍只列当前数据里实际出现的标签） */
+const tagLibraryList = ref<FundTagVO[]>([])
+
 const tagOptions = computed(() => {
   const set = new Set<string>()
   rows.value.forEach((row) => row.tags.forEach((t) => set.add(t)))
-  return [...set].sort()
+  // V6.56：按标签库的 sortNo 排序（与基金池下拉同口径；后端 listLibrary 已按 sortNo、id 升序返回）。
+  // 原先直接 [...set].sort() 是 JS 默认的 Unicode 码点排序，中文标签看起来是乱序。
+  // 库中不存在的标签（理论上不会有）排在最后，按中文拼音兜底。
+  const order = new Map(tagLibraryList.value.map((tag, index) => [tag.name, index]))
+  return [...set].sort((a, b) => {
+    const ia = order.has(a) ? order.get(a)! : Number.MAX_SAFE_INTEGER
+    const ib = order.has(b) ? order.get(b)! : Number.MAX_SAFE_INTEGER
+    return ia !== ib ? ia - ib : a.localeCompare(b, 'zh-CN')
+  })
 })
 
 /** 类型筛选（V6.52 用户要求，参照基金池列表）：''=不限、1=场内 ETF、2=场外指数基金 */
@@ -724,7 +736,11 @@ function isPremiumWarn(row: MarketSignalRow): boolean {
 }
 
 // 显式箭头调用：避免 Hook 回调参数被当成 force 传进 load（那会让缓存永远失效）
-onMounted(() => load())
+onMounted(() => {
+  load()
+  // 标签库只用于排序：失败时下拉仍可用（退化为中文拼音序）
+  tagLibrary().then((list) => (tagLibraryList.value = list)).catch(() => [])
+})
 </script>
 
 <style scoped>

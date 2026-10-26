@@ -16,6 +16,9 @@ public record ProfitCurveVO(
         List<String> dates,
         /** 每日累计收益（元）= 当日持仓市值 - 当日净投入 */
         List<BigDecimal> pnl,
+        /** 每日区间收益率（%，V6.57）：(累计收益 − 起点累计收益) ÷ 起点持仓市值 × 100，起点为 0；
+         *  与基准（沪深300 %）同口径，无基准市值时元素为 null */
+        List<BigDecimal> pnlPct,
         /** 沪深300 同区间涨跌幅（%，起点为 0；基准拉取失败时元素为 null） */
         List<BigDecimal> benchmarkPct,
         /** 月度收益汇总（区间内按自然月） */

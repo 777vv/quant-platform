@@ -51,7 +51,10 @@ export interface ProfitCurveVO {
   startDate: string
   endDate: string
   dates: string[]
+  /** 每日累计收益（元） */
   pnl: number[]
+  /** 每日区间收益率（%，V6.57：起点为 0，与基准同口径；无基准市值时为 null） */
+  pnlPct: (number | null)[]
   benchmarkPct: (number | null)[]
   monthly: MonthlyPnl[]
   hasData: boolean

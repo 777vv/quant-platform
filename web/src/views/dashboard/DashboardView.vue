@@ -412,7 +412,7 @@ import TradeEntryDialog from '@/components/trade/TradeEntryDialog.vue'
 import ProfitCalendarDialog from '@/components/dashboard/ProfitCalendarDialog.vue'
 import { fundOptions, pageTrades, type TradeFlow } from '@/api/fund'
 import { changeColorClass, formatAmount, formatPercent } from '@/utils/format'
-import { changeColor, UP, DOWN } from '@/utils/palette'
+import { changeColor, UP, DOWN, TEXT_SECONDARY } from '@/utils/palette'
 
 const userStore = useUserStore()
 
@@ -697,32 +697,77 @@ const indexTime = computed(() => {
   return time ? time.replace('T', ' ').substring(0, 16) : ''
 })
 
-/** 收益曲线：左轴累计收益（元），右轴沪深300（%） */
+/**
+ * 收益曲线（V6.57 用户口径）：**只对比涨跌百分比**——组合区间收益率 vs 沪深300 涨跌幅，单轴、同口径。
+ * 原先左轴是金额（元）、右轴是百分比，两套刻度各算各的：基准线（-10% 上下）会被压到金额轴 0 线以下，
+ * 看起来像"曲线掉到横轴下方"。现在两条线共用一条百分比轴，横轴固定在网格底部（onZero=false），
+ * 负收益在网格内正常绘制、不会跑到横轴之外。
+ */
+/**
+ * 图例末值（V6.58 用户要求）：取序列**最新一个有效值**，图例括号里标注具体百分数。
+ */
+function lastValue(list: (number | null)[] | undefined | null): number | null {
+  if (!list || list.length === 0) {
+    return null
+  }
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const value = list[i]
+    if (value !== null && value !== undefined) {
+      return value
+    }
+  }
+  return null
+}
+
+/** 百分数文本：正数带 +、两位小数；无数据为 -- */
+function pctText(value: number | null): string {
+  return value === null ? '--' : `${value > 0 ? '+' : ''}${Number(value).toFixed(2)}%`
+}
+
 const curveOption = computed<EChartsOption>(() => ({
-  tooltip: { trigger: 'axis' },
-  legend: { data: ['累计收益(元)', '沪深300(%)'] },
-  grid: { left: 70, right: 60, top: 40, bottom: 40 },
-  xAxis: { type: 'category', data: curve.value?.dates ?? [] },
-  yAxis: [
-    { type: 'value', name: '元' },
-    { type: 'value', name: '%', axisLabel: { formatter: '{value}%' } }
-  ],
+  tooltip: {
+    trigger: 'axis',
+    valueFormatter: (value) => (value === null || value === undefined ? '--' : `${Number(value).toFixed(2)}%`)
+  },
+  legend: {
+    // 图例文本带最新百分数（formatter 只改显示文案，点击图例的显隐仍按序列名生效）；
+    // V6.59：括号里的数值按红涨绿跌着色（UP/DOWN 取自 palette），0 与无数据用次要文字色
+    formatter: (name: string) => {
+      const value = lastValue(name === '持仓收益' ? curve.value?.pnlPct : curve.value?.benchmarkPct)
+      const style = value === null || value === 0 ? 'flat' : value > 0 ? 'up' : 'down'
+      return `${name}({${style}|${pctText(value)}})`
+    },
+    textStyle: {
+      rich: {
+        up: { color: UP, fontWeight: 'bold' },
+        down: { color: DOWN, fontWeight: 'bold' },
+        flat: { color: TEXT_SECONDARY }
+      }
+    }
+  },
+  grid: { left: 56, right: 24, top: 40, bottom: 40 },
+  xAxis: {
+    type: 'category',
+    data: curve.value?.dates ?? [],
+    // 横轴固定在网格底部，不随 0 值上下移动
+    axisLine: { onZero: false }
+  },
+  yAxis: [{ type: 'value', name: '%', axisLabel: { formatter: '{value}%' } }],
   dataZoom: [{ type: 'inside' }, { type: 'slider', height: 14, bottom: 8 }],
   series: [
     {
-      name: '累计收益(元)',
+      name: '持仓收益',
       type: 'line',
       smooth: true,
       symbol: 'none',
       areaStyle: { opacity: 0.12 },
-      data: curve.value?.pnl ?? []
+      data: curve.value?.pnlPct ?? []
     },
     {
-      name: '沪深300(%)',
+      name: '沪深300',
       type: 'line',
       smooth: true,
       symbol: 'none',
-      yAxisIndex: 1,
       data: curve.value?.benchmarkPct ?? []
     }
   ]

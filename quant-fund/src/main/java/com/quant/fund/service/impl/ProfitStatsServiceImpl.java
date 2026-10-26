@@ -338,7 +338,7 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         LocalDate rangeStart = rangeStart(range);
         List<FundBasic> tradedFunds = tradedFunds();
         if (tradedFunds.isEmpty()) {
-            return new ProfitCurveVO(rangeStart, LocalDate.now(), List.of(), List.of(), List.of(), List.of(), false);
+            return new ProfitCurveVO(rangeStart, LocalDate.now(), List.of(), List.of(), List.of(), List.of(), List.of(), false);
         }
         LocalDate minTradeDate = tradeFlowMapper.selectList(new LambdaQueryWrapper<TradeFlow>()
                         .in(TradeFlow::getFundCode, tradedFunds.stream().map(FundBasic::getFundCode).toList()))
@@ -347,10 +347,18 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
         LocalDate start = rangeStart.isAfter(minTradeDate) ? rangeStart : minTradeDate;
         SeriesData series = computeSeries(start, tradedFunds);
         if (series.dates().isEmpty()) {
-            return new ProfitCurveVO(start, LocalDate.now(), List.of(), List.of(), List.of(), List.of(), false);
+            return new ProfitCurveVO(start, LocalDate.now(), List.of(), List.of(), List.of(), List.of(), List.of(), false);
+        }
+        // 区间收益率（V6.57，用户口径）：(累计收益 − 起点累计收益) ÷ 起点持仓市值 × 100——与基准同口径、
+        // 起点为 0；分母口径与"月/年收益率、收益日历"一致（收益额 ÷ 基准持仓市值）
+        List<BigDecimal> pnlPct = new ArrayList<>(series.pnl().size());
+        BigDecimal basePnl = series.pnl().get(0);
+        BigDecimal baseMarketValue = series.marketValues().get(0);
+        for (BigDecimal pnl : series.pnl()) {
+            pnlPct.add(pctOf(pnl.subtract(basePnl), baseMarketValue));
         }
         return new ProfitCurveVO(start, LocalDate.parse(series.dates().get(series.dates().size() - 1)),
-                series.dates(), series.pnl(), benchmarkPct(series.dates(), start),
+                series.dates(), series.pnl(), pnlPct, benchmarkPct(series.dates(), start),
                 monthlyOf(series.dates(), series.pnl()), true);
     }
 

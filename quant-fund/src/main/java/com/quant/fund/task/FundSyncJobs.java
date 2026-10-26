@@ -144,7 +144,7 @@ public class FundSyncJobs {
      * 周末跳过（V5.33）：全球休市，刷新只拿陈旧缓存；境内法定节假日**不跳**——美股等海外市场照常交易，
      * 本任务的时间跨度（到 23:59）就是为覆盖海外时段而设。
      */
-    @Scheduled(cron = "0 */5 9-23 * * *", zone = "Asia/Shanghai")
+    @Scheduled(cron = "0 */5 9-15 * * *", zone = "Asia/Shanghai")
     public void refreshIndexQuotes() {
         JobLogs.run("index:quotes", () -> {
             DayOfWeek week = LocalDate.now().getDayOfWeek();

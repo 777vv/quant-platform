@@ -32,6 +32,8 @@ public record WatchItemVO(
         LocalDateTime lastSyncAt,
         /** 成立日期（V6.13：列表"最后同步"右侧展示；f10 未解析到时为 null） */
         LocalDate inceptionDate,
+        /** 数据导入日期（V6.62：fund_basic.created_at 的日期部分，首次入库日；列表"成立日期"右侧展示） */
+        LocalDate importedDate,
         /** 每日估算规模（亿元，V6.15）：场内 ETF = 当日份额 × 当日单位净值（每日可得）；
          *  场外基金无每日数据源，恒为 null（页面回退展示季报的 fundScale） */
         BigDecimal dailyScale,

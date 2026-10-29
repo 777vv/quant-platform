@@ -152,6 +152,10 @@ public class FundSyncJobs {
                 LOGGER.info("周末全球休市，任务[index:quotes]跳过：不刷新缓存");
                 return;
             }
+            if (!inTradingSession()) {
+                LOGGER.info("非交易时段，任务[index:quotes]跳过");
+                return;
+            }
             syncService.refreshIndexQuotes();
         });
     }

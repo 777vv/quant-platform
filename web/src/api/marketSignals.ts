@@ -76,6 +76,33 @@ export interface MarketSignalOverview {
   rows: MarketSignalRow[]
 }
 
+/** 区间涨跌行（V6.63，市场信号「区间涨跌」页签） */
+export interface RangePerformanceRow {
+  /** 基金代码 */
+  fundCode: string
+  /** 基金简称 */
+  fundName: string
+  /** 1=场内ETF 2=场外指数基金（行情弹框的 K线/净值口径） */
+  fundType: number
+  /** 区间涨跌幅（%：末日价 ÷ 首日价 − 1） */
+  changePct: number
+  /** 实际统计起始日（区间内首个有数据的交易日；数据晚于区间起点时即基金最早数据日） */
+  startDate: string
+  /** 实际统计截止日（区间内最后一个有数据的交易日） */
+  endDate: string
+  /** 交易日数（实际使用的数据点个数） */
+  tradeDays: number
+  /** 年化收益率（%）；跨度不足 1 天时为 null */
+  annualizedPct: number | null
+  /** 最大回撤（%，负数） */
+  maxDrawdownPct: number
+}
+
+/** 区间涨跌（V6.63）：区间内无数据的基金不返回；日期为空时后端返回空列表 */
+export function marketSignalRange(startDate: string, endDate: string) {
+  return get<RangePerformanceRow[]>('/market-signals/range', { startDate, endDate })
+}
+
 /** 市场信号总览（纯只读、库内计算） */
 export function marketSignalOverview(peWindow: PeWindow) {
   return get<MarketSignalOverview>('/market-signals/overview', { peWindow })

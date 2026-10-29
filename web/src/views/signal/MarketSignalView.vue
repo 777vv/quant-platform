@@ -130,7 +130,78 @@
           </div>
         </el-tab-pane>
 
-        <!-- 页签二：估值红绿灯（分位窗口可切换，选择记在浏览器本地） -->
+        <!-- 页签二（V6.63 用户要求）：区间涨跌——按所选日期区间统计涨跌/年化/最大回撤；
+             默认最近一年；清空日期后列表为空（不按全历史兜底）；区间内无 K 线数据的基金不展示 -->
+        <el-tab-pane label="区间涨跌" name="range">
+          <div class="filter-bar range-bar">
+            <span class="muted">统计区间</span>
+            <el-date-picker
+              v-model="rangeDates"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              start-placeholder="起始日期"
+              end-placeholder="截止日期"
+              clearable
+              style="width: 260px"
+              @change="onRangeDatesChange"
+            />
+          </div>
+          <el-table
+            v-loading="rangeLoading"
+            :data="rangeRows"
+            size="small"
+            :empty-text="rangeEmptyText"
+            :default-sort="{ prop: 'changePct', order: 'descending' }"
+            @sort-change="onRangeSort"
+          >
+            <el-table-column label="基金" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="fund-link" :title="`查看 ${row.fundName} 详情`" @click="$router.push(`/funds/${row.fundCode}`)">
+                  {{ row.fundName }}
+                </span>
+                <span class="fund-code">{{ row.fundCode }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="统计区间" align="center" min-width="190">
+              <template #default="{ row }">{{ row.startDate }} ~ {{ row.endDate }}</template>
+            </el-table-column>
+            <el-table-column label="交易日" align="right" min-width="80" prop="tradeDays">
+              <template #default="{ row }">{{ row.tradeDays }}</template>
+            </el-table-column>
+            <el-table-column label="区间涨跌" align="right" min-width="96" prop="changePct" sortable="custom">
+              <template #default="{ row }">
+                <span class="num" :class="changeColorClass(row.changePct)">{{ formatPercent(row.changePct) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="年化收益" align="right" min-width="96" prop="annualizedPct" sortable="custom">
+              <template #default="{ row }">
+                <span class="num" :class="changeColorClass(row.annualizedPct)">{{ formatPercent(row.annualizedPct) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="最大回撤" align="right" min-width="96" prop="maxDrawdownPct" sortable="custom">
+              <template #default="{ row }">
+                <span class="num" :class="changeColorClass(row.maxDrawdownPct)">{{ formatPercent(row.maxDrawdownPct) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" min-width="80" align="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openQuote(row)">行情</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="pager-row">
+            <el-pagination
+              v-model:current-page="rangePage"
+              v-model:page-size="rangeSize"
+              :page-sizes="PAGE_SIZES"
+              :total="rangeFilteredRows.length"
+              layout="total, sizes, prev, pager, next"
+              background
+            />
+          </div>
+        </el-tab-pane>
+
+        <!-- 页签三：估值红绿灯（分位窗口可切换，选择记在浏览器本地） -->
         <el-tab-pane label="估值红绿灯" name="valuation">
           <div class="window-row">
             <span class="window-label">分位窗口</span>
@@ -200,7 +271,7 @@
           </div>
         </el-tab-pane>
 
-        <!-- 页签三：技术面与溢价（阈值本地生效，默认 3%，记在浏览器本地） -->
+        <!-- 页签四：技术面与溢价（阈值本地生效，默认 3%，记在浏览器本地） -->
         <el-tab-pane label="技术面与溢价" name="tech">
           <div class="window-row">
             <span class="window-label">溢价告警阈值</span>
@@ -280,7 +351,7 @@
             <el-pagination v-model:current-page="premiumPage" v-model:page-size="premiumSize" :page-sizes="PAGE_SIZES" :total="filteredRows.length" layout="total, sizes, prev, pager, next" background />
           </div>
         </el-tab-pane>
-        <!-- 页签四：均价（V5.68）。数据来自每日 23:00 定时任务落表的 fund_ma_daily；
+        <!-- 页签五：均价（V5.68）。数据来自每日 23:00 定时任务落表的 fund_ma_daily；
              比值 = 现价 ÷ 对应周期均价（3 位小数，>1 红色=均线上方，<1 绿色=下方）；
              刷新=手动触发计算落表（仅交易日）；回跑=补算过去 N 个交易日 -->
         <el-tab-pane label="均价" name="ma">
@@ -373,7 +444,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { changeColorClass, formatAmount, formatPercent } from '@/utils/format'
-import { marketSignalOverviewCached, type MarketSignalRow, type PeWindow } from '@/api/marketSignals'
+import { marketSignalOverviewCached, marketSignalRange, type MarketSignalRow, type PeWindow, type RangePerformanceRow } from '@/api/marketSignals'
 import { tagLibrary, type FundTagVO } from '@/api/fund'
 import { backfillMa, fundMaRows, refreshMa, type FundMaRow } from '@/api/marketSignals'
 import { useUserStore } from '@/stores/user'
@@ -622,6 +693,9 @@ watch(activeTab, (tab) => {
   if (tab === 'ma' && !maLoaded.value && !maLoading.value) {
     loadMa()
   }
+  if (tab === 'range' && !rangeLoaded.value && !rangeLoading.value) {
+    loadRange()
+  }
 })
 
 // 各页签的排序状态：必须对**全量**排序后再切页，否则点列头只排当前页、跨页排序会错
@@ -665,6 +739,105 @@ const valRows = computed(() => paged(filteredRows.value, valPage.value, valSize.
 /** 技术面与溢价：全量排序 → 切当前页 */
 const premiumRows = computed(() => paged(sortByState(filteredRows.value, premiumSortState.value), premiumPage.value, premiumSize.value))
 
+// ===== 【区间涨跌】页签（V6.63 用户要求）：按日期区间统计，独立取数 =====
+/** 日期 → yyyy-MM-dd（本地时区） */
+function isoDateOf(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+/** 默认统计区间：最近一年（今天往前一年 ~ 今天） */
+function defaultRangeDates(): [string, string] {
+  const end = new Date()
+  const start = new Date(end)
+  start.setFullYear(end.getFullYear() - 1)
+  return [isoDateOf(start), isoDateOf(end)]
+}
+
+const rangeDates = ref<[string, string] | null>(defaultRangeDates())
+const rangeRowsRaw = ref<RangePerformanceRow[]>([])
+const rangeLoading = ref(false)
+const rangeLoaded = ref(false)
+const rangePage = ref(1)
+const rangeSize = ref(10)
+/** 默认按区间涨跌降序（用户口径） */
+const rangeSort = ref<{ prop: string; order: string | null }>({ prop: 'changePct', order: 'descending' })
+
+/** 区间涨跌也吃顶部的全局筛选（关键词 / 标签 / 类型）：标签与类型映射都取自概览那份数据 */
+const rangeFilteredRows = computed(() => {
+  const kw = appliedFundKeyword.value.trim().toLowerCase()
+  return rangeRowsRaw.value.filter((row) => {
+    if (kw && !row.fundCode.toLowerCase().includes(kw) && !row.fundName.toLowerCase().includes(kw)) {
+      return false
+    }
+    if (selectedTags.value.length > 0 && !(tagsByCode.value.get(row.fundCode) ?? []).some((tag) => selectedTags.value.includes(tag))) {
+      return false
+    }
+    if (typeFilterActive.value && row.fundType !== fundTypeFilter.value) {
+      return false
+    }
+    return true
+  })
+})
+
+/** 数值列排序（与涨跌榜同一规则：空值恒排最后），再切当前页 */
+function sortRangeRows(list: RangePerformanceRow[], state: { prop: string; order: string | null }): RangePerformanceRow[] {
+  const sorted = [...list]
+  if (!state.prop || !state.order) {
+    return sorted
+  }
+  const dir = state.order === 'descending' ? -1 : 1
+  sorted.sort((a, b) => {
+    const av = a[state.prop as keyof RangePerformanceRow] as number | null
+    const bv = b[state.prop as keyof RangePerformanceRow] as number | null
+    if (av == null && bv == null) return 0
+    if (av == null) return 1
+    if (bv == null) return -1
+    return (av - bv) * dir
+  })
+  return sorted
+}
+
+const rangeRows = computed(() => {
+  const sorted = sortRangeRows(rangeFilteredRows.value, rangeSort.value)
+  return sorted.slice((rangePage.value - 1) * rangeSize.value, rangePage.value * rangeSize.value)
+})
+
+/** 空态：未选区间 vs 区间内无数据，分别提示 */
+const rangeEmptyText = computed(() =>
+  rangeDates.value && rangeDates.value[0] && rangeDates.value[1] ? '该区间内没有基金数据' : '请选择统计区间'
+)
+
+function onRangeSort({ prop, order }: { prop: string; order: string | null }) {
+  rangeSort.value = { prop, order }
+}
+
+/** 区间变化：回第 1 页并重新取数；清空时直接置空、不请求 */
+function onRangeDatesChange() {
+  rangePage.value = 1
+  loadRange()
+}
+
+/** 取区间涨跌数据：日期不完整 → 空列表（不按全历史兜底） */
+async function loadRange() {
+  const dates = rangeDates.value
+  if (!dates || dates.length !== 2 || !dates[0] || !dates[1]) {
+    rangeRowsRaw.value = []
+    rangeLoading.value = false
+    return
+  }
+  rangeLoading.value = true
+  try {
+    rangeRowsRaw.value = await marketSignalRange(dates[0], dates[1])
+    rangeLoaded.value = true
+  } catch {
+    rangeRowsRaw.value = []
+  } finally {
+    rangeLoading.value = false
+  }
+}
+
+
+
 // 筛选/换基金/换数据后所有页签页码回位，防越界空页（V5.36 持仓列表同款处理）
 watch(appliedFundKeyword, resetPages)
 watch(selectedTags, resetPages)
@@ -679,6 +852,7 @@ function resetPages() {
   valPage.value = 1
   premiumPage.value = 1
   maPage.value = 1
+  rangePage.value = 1
 }
 
 /**
@@ -780,6 +954,16 @@ onMounted(() => {
 .muted {
   font-size: var(--q-font-xs);
   color: var(--q-text-muted);
+}
+
+/* 区间涨跌页签的工具栏（V6.64 用户反馈）：与其它页签的 window-row 同一套间距——
+   「统计区间」标签与日期框之间留 gap，避免文字贴住控件 */
+.range-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--q-space-2);
+  margin-bottom: var(--q-space-2);
 }
 
 .window-row {

@@ -34,12 +34,14 @@ public interface FundQueryService {
      * @param fundType     基金类型（1=场内 ETF / 2=场外指数基金，V6.31），null 表示不限
      * @param strategyType 策略类型码（V6.35 用户要求，如 MA_BREAK）：只保留配置了该策略的基金
      *                     （启用/停用都算"配置了"），null/空白表示不限
+     * @param importedFrom 数据导入日期起（V6.62，含当天，按 fund_basic.created_at 的自然日），null 表示不限
+     * @param importedTo   数据导入日期止（含当天），null 表示不限；起止都传时必须 from ≤ to
      * @param page         页码（从 1 开始）
      * @param size         每页条数
      * @return 分页结果（按基金代码升序，顺序稳定以保证翻页不重复/不遗漏）
      */
     PageResult<WatchItemVO> pageWatchlist(String keyword, String tag, Integer fundType, String strategyType,
-            long page, long size);
+            java.time.LocalDate importedFrom, java.time.LocalDate importedTo, long page, long size);
 
     FundDetailVO detail(String fundCode);
 

@@ -152,6 +152,8 @@ export interface WatchItemVO {
   lastSyncAt: string | null
   /** 成立日期（V6.13：列表"最后同步"右侧展示；未解析到时为 null） */
   inceptionDate: string | null
+  /** 数据导入日期（yyyy-MM-dd，V6.62：fund_basic.created_at 的日期部分，首次入库日） */
+  importedDate: string | null
   /** 净资产规模（亿元）：定期报告披露值（值随季报变） */
   fundScale: number | null
   /** 规模数据截止日 */
@@ -477,6 +479,10 @@ export interface WatchQuery {
   fundType?: number
   /** 策略类型码（V6.35，如 MA_BREAK）：只保留配置了该策略的基金；不传=不限 */
   strategyType?: string
+  /** 数据导入日期起（V6.62，yyyy-MM-dd，含当天，按 fund_basic.created_at 自然日） */
+  importedFrom?: string
+  /** 数据导入日期止（yyyy-MM-dd，含当天） */
+  importedTo?: string
   /** 页码（从 1 开始） */
   page?: number
   /** 每页条数 */

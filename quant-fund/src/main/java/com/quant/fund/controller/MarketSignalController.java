@@ -43,6 +43,24 @@ public class MarketSignalController {
     }
 
     /**
+     * 区间涨跌（V6.63 用户要求）：所选日期区间内各基金的实际涨跌幅 / 年化收益 / 最大回撤。
+     * 未传日期（前端清空区间）返回空列表；区间内无数据的基金不返回；数据起始晚于区间起点时按基金最早数据日起算。
+     *
+     * @param startDate 起始日（含，yyyy-MM-dd）
+     * @param endDate   截止日（含，yyyy-MM-dd）
+     */
+    @GetMapping("/range")
+    public R<java.util.List<com.quant.fund.dto.RangePerformanceVO>> range(
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+            java.time.LocalDate startDate,
+            @RequestParam(required = false)
+            @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+            java.time.LocalDate endDate) {
+        return R.ok(marketSignalService.rangePerformance(startDate, endDate));
+    }
+
+    /**
      * 【均价】页签数据（V5.68）：每只自选基金最新一条均线快照（现价 + 5~250 日均价 + 现价/均线比值）。
      * 数据读 fund_ma_daily 表（每日 23:00 定时任务 / 手动刷新 / 回跑写入），打开页签零计算成本。
      */

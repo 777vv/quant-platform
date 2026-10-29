@@ -47,6 +47,17 @@
         >
           <el-option v-for="opt in strategyOptions" :key="opt.type" :value="opt.type" :label="opt.name" />
         </el-select>
+        <!-- 数据导入日期（V6.62 用户要求）：只到年月日，按 fund_basic.created_at 的自然日筛（方案 A） -->
+        <el-date-picker
+          v-model="importedRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          start-placeholder="导入起始"
+          end-placeholder="导入截止"
+          clearable
+          style="width: 240px"
+          @change="reloadWatch(1)"
+        />
         <el-button @click="reloadWatch(1)">查询</el-button>
         <el-button v-if="userStore.can(PERM.ACTION_TAG)" @click="tagManageVisible = true">标签管理</el-button>
       </div>
@@ -106,6 +117,12 @@
               <span class="num">{{ row.inceptionDate || '--' }}</span>
             </template>
           </el-table-column>
+          <!-- 数据导入日期（V6.62 用户要求）：紧随成立日期；首次入库日（created_at 的日期部分） -->
+          <el-table-column label="导入日期" min-width="104">
+            <template #default="{ row }">
+              <span class="num">{{ row.importedDate || '--' }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="标签" min-width="100">
             <template #default="{ row }">
               <template v-if="fundTagMap[row.fundCode]?.length">
@@ -154,9 +171,6 @@
               </el-tooltip>
               <span v-else class="num muted">--</span>
             </template>
-          </el-table-column>
-          <el-table-column label="估值百分位%" min-width="104" align="right">
-            <template #default="{ row }">{{ row.valuationPercentile == null ? '--' : row.valuationPercentile }}</template>
           </el-table-column>
           <!-- 操作列 fixed：必须用确定宽度（min-width 与固定列定位不兼容），故这里保留 width。
                三按钮收进「更多」下拉（V5.3）：整列 168→80px，按钮不再换行，省出的宽度让给数据列 -->
@@ -380,6 +394,8 @@ const tagFilter = ref('')
 const typeFilter = ref<number | ''>('')
 /** 策略筛选（V6.35 用户要求）：''=不限，否则为策略类型码（如 MA_BREAK） */
 const strategyFilter = ref('')
+/** 数据导入日期区间（V6.62 用户要求）：[起始, 截止]，只到年月日；null=不限 */
+const importedRange = ref<[string, string] | null>(null)
 /** 全部策略配置（/strategies/configs 一次拉全量）：下拉选项与持仓页签的本地过滤共用 */
 const strategyConfigs = ref<StrategyConfig[]>([])
 
@@ -475,6 +491,8 @@ async function loadWatch() {
       tag: tagFilter.value || undefined,
       fundType: typeFilter.value === '' ? undefined : typeFilter.value,
       strategyType: strategyFilter.value || undefined,
+      importedFrom: importedRange.value?.[0],
+      importedTo: importedRange.value?.[1],
       page: watchPageNo.value,
       size: watchPageSize.value
     })

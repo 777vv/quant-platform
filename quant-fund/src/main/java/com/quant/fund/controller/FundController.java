@@ -72,6 +72,8 @@ public class FundController {
      * @param tag          标签名，为空表示不限
      * @param fundType     基金类型（1=场内 ETF / 2=场外指数基金，V6.31），为空表示不限
      * @param strategyType 策略类型码（V6.35，如 MA_BREAK）：只保留配置了该策略的基金，为空表示不限
+     * @param importedFrom 数据导入日期起（V6.62，含当天，按 created_at 自然日），为空表示不限
+     * @param importedTo   数据导入日期止（含当天），为空表示不限
      * @param page         页码（从 1 开始）
      * @param size         每页条数
      */
@@ -80,8 +82,11 @@ public class FundController {
             @RequestParam(required = false) String tag,
             @RequestParam(required = false) Integer fundType,
             @RequestParam(required = false) String strategyType,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate importedFrom,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate importedTo,
             @RequestParam(defaultValue = "1") long page, @RequestParam(defaultValue = "10") long size) {
-        return R.ok(fundQueryService.pageWatchlist(keyword, tag, fundType, strategyType, page, size));
+        return R.ok(fundQueryService.pageWatchlist(keyword, tag, fundType, strategyType,
+                importedFrom, importedTo, page, size));
     }
 
     /**

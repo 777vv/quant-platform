@@ -31,6 +31,25 @@ public interface TradingCalendarService {
     }
 
     /**
+     * 上一个交易日（不含传入日期当天，V6.60）：
+     * 从 date-1 起向前找，最多回看 30 天；周末与休市名单都跳过。
+     * 用于"昨日收盘价是否已定稿"这类日内判断（周一应回看到上周五，而不是自然日周日）。
+     *
+     * @param date 基准日期
+     * @return 严格早于 date 的最近一个交易日；30 天内找不到时返回 date-1（配置异常兜底）
+     */
+    default LocalDate previousTradingDay(LocalDate date) {
+        LocalDate cursor = date.minusDays(1);
+        for (int i = 0; i < 30; i++) {
+            if (isTradingDay(cursor)) {
+                return cursor;
+            }
+            cursor = cursor.minusDays(1);
+        }
+        return date.minusDays(1);
+    }
+
+    /**
      * 数据日期是否属于当前交易日（V6.47）：今天必须是交易日，且数据日期=今天。
      * 当日盈亏/当日涨跌幅类字段的展示闸门——非交易日、或某基金今天的数据尚未同步过来时，
      * 用前一个交易日的数据算"当日"盈亏是把旧涨跌冒充今天的，应视为"未知"（前端显示横杠）。

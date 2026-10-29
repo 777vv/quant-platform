@@ -127,9 +127,13 @@ public class FundQueryServiceImpl implements FundQueryService {
 
     @Override
     public PageResult<WatchItemVO> pageWatchlist(String keyword, String tag, Integer fundType, String strategyType,
-            long page, long size) {
+            java.time.LocalDate importedFrom, java.time.LocalDate importedTo, long page, long size) {
         if (fundType != null && fundType != 1 && fundType != 2) {
             throw new BizException("基金类型只支持 1（场内 ETF）或 2（场外指数基金）");
+        }
+        // 数据导入日期（V6.62）：按 created_at 的自然日筛；起止都传时须 from ≤ to，否则明确报错
+        if (importedFrom != null && importedTo != null && importedFrom.isAfter(importedTo)) {
+            throw new BizException("数据导入日期的起始日不能晚于截止日");
         }
         // 策略筛选（V6.35 用户要求）：空白归一为 null（不限）
         String strategy = strategyType == null || strategyType.isBlank() ? null : strategyType.trim();
@@ -144,14 +148,15 @@ public class FundQueryServiceImpl implements FundQueryService {
         long safePage = Math.max(page, 1);
         long safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         Set<String> holdings = holdingCodes();
-        long total = fundBasicMapper.selectCount(baseWrapper(keyword, tagCodes, fundType, strategy));
+        long total = fundBasicMapper.selectCount(
+                baseWrapper(keyword, tagCodes, fundType, strategy, importedFrom, importedTo));
         // 持仓段：持仓基金数量很少，直接一次取出（同样受关键词/标签/类型/策略条件约束），
         // 这样"持仓优先"不依赖数据库方言的布尔排序，翻页也只需拼接两段
         List<FundBasic> held = holdings.isEmpty() ? List.of() : sortHeldByMarketValueDesc(
-                fundBasicMapper.selectList(baseWrapper(keyword, tagCodes, fundType, strategy)
+                fundBasicMapper.selectList(baseWrapper(keyword, tagCodes, fundType, strategy, importedFrom, importedTo)
                         .in(FundBasic::getFundCode, holdings)));
-        List<FundBasic> records = slicePage(keyword, tagCodes, fundType, strategy, holdings, held,
-                (safePage - 1) * safeSize, safeSize);
+        List<FundBasic> records = slicePage(keyword, tagCodes, fundType, strategy, importedFrom, importedTo,
+                holdings, held, (safePage - 1) * safeSize, safeSize);
         Map<String, BigDecimal> ttmYields = dividendYieldService.currentTtmYields(records);
         // 每日估算规模（V6.15）：本页基金一次批量查（场外基金本来就没有估算行，自然为空）
         Map<String, FundScaleHistoryService.EstimatedScale> estimated = scaleHistoryService.latestEstimated(
@@ -191,7 +196,7 @@ public class FundQueryServiceImpl implements FundQueryService {
 
     /** 自选筛选条件（状态正常 + 关键词 + 标签 + 类型 + 策略），每次调用返回新实例（MP 的 wrapper 会被就地修改） */
     private LambdaQueryWrapper<FundBasic> baseWrapper(String keyword, List<String> tagCodes, Integer fundType,
-            String strategyType) {
+            String strategyType, java.time.LocalDate importedFrom, java.time.LocalDate importedTo) {
         LambdaQueryWrapper<FundBasic> wrapper = new LambdaQueryWrapper<FundBasic>().eq(FundBasic::getStatus, 1);
         if (fundType != null) {
             // 场内/场外查询条件（V6.31，用户要求）：1=场内 ETF、2=场外指数基金
@@ -202,6 +207,15 @@ public class FundQueryServiceImpl implements FundQueryService {
             // strategy_config 是 quant-strategy 模块的表，而模块依赖方向是 quant-strategy → quant-fund，
             // quant-fund 不能反向引它的 Mapper/实体，故此处做同库只读子查询（{0} 为预编译参数，无注入面）。
             wrapper.apply("fund_code IN (SELECT fund_code FROM strategy_config WHERE strategy_type = {0})", strategyType);
+        }
+        // 数据导入日期（V6.62 用户口径，方案 A）：直接按 fund_basic.created_at 的自然日筛
+        //（created_at = 首次入库时间；移除后重新导入不会更新它，属已知语义）。
+        // 边界用 [起日 00:00, 止日次日 00:00)，避免 DATETIME 的时分秒漏数。
+        if (importedFrom != null) {
+            wrapper.ge(FundBasic::getCreatedAt, importedFrom.atStartOfDay());
+        }
+        if (importedTo != null) {
+            wrapper.lt(FundBasic::getCreatedAt, importedTo.plusDays(1).atStartOfDay());
         }
         if (keyword != null && !keyword.isBlank()) {
             String kw = keyword.trim();
@@ -223,6 +237,7 @@ public class FundQueryServiceImpl implements FundQueryService {
      * @param size   每页条数（已钳制）
      */
     private List<FundBasic> slicePage(String keyword, List<String> tagCodes, Integer fundType, String strategyType,
+            java.time.LocalDate importedFrom, java.time.LocalDate importedTo,
             Set<String> holdings, List<FundBasic> held, long offset, long size) {
         List<FundBasic> rows = new ArrayList<>();
         int fromHeld = (int) Math.max(0, Math.min(size, held.size() - offset));
@@ -234,7 +249,8 @@ public class FundQueryServiceImpl implements FundQueryService {
             long othersOffset = Math.max(0, offset - held.size());
             // 其余段按偏移量直接取：MP 的分页参数按"整页对齐"计，无法表达任意偏移，故用 LIMIT o, n
             // （offsets 均为已钳制的 long，不存在拼接注入问题；本项目数据库固定为 MySQL）
-            rows.addAll(fundBasicMapper.selectList(baseWrapper(keyword, tagCodes, fundType, strategyType)
+            rows.addAll(fundBasicMapper.selectList(
+                    baseWrapper(keyword, tagCodes, fundType, strategyType, importedFrom, importedTo)
                     .notIn(!holdings.isEmpty(), FundBasic::getFundCode, holdings)
                     // 规模降序（V6.14 用户口径）：MySQL 的 DESC 会把 NULL 排在最后 ✓；
                     // 同规模（含都为 NULL）再按代码升序，保证分页顺序稳定
@@ -270,6 +286,7 @@ public class FundQueryServiceImpl implements FundQueryService {
                 quote == null ? null : quote.price(),
                 quote == null ? null : quote.changePct(),
                 percentile, fund.getLastSyncDate(), fund.getLastSyncAt(), fund.getInceptionDate(),
+                fund.getCreatedAt() == null ? null : fund.getCreatedAt().toLocalDate(),
                 estimated == null ? null : estimated.scale(), estimated == null ? null : estimated.date(),
                 fund.getFundScale(), fund.getFundScaleDate(),
                 opFeeRateOf(fund), fund.getMgmtFeeRate(), fund.getCustFeeRate(), fund.getSalesFeeRate(),

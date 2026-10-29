@@ -1,20 +1,9 @@
 package com.quant.fund.service.impl;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.time.Duration;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
-
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.quant.common.exception.BizException;
 import com.quant.fund.dto.MarketSignalVO;
+import com.quant.fund.dto.RangePerformanceVO;
 import com.quant.fund.entity.FundBasic;
 import com.quant.fund.entity.FundEtfKline;
 import com.quant.fund.entity.FundNav;
@@ -28,6 +17,14 @@ import com.quant.fund.service.FundQueryService;
 import com.quant.fund.service.FundTagService;
 import com.quant.fund.service.MarketSignalService;
 import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
 
 /**
  * 市场信号实现（V5.39）。
@@ -44,16 +41,24 @@ import org.springframework.stereotype.Service;
 @Service
 public class MarketSignalServiceImpl implements MarketSignalService {
 
-    /** 涨跌幅窗口（交易日数）——与前端列一一对应 */
+    /**
+     * 涨跌幅窗口（交易日数）——与前端列一一对应
+     */
     private static final int[] CHG_WINDOWS = {5, 10, 20, 30, 60, 90, 120, 250};
 
-    /** 均线窗口（交易日数） */
+    /**
+     * 均线窗口（交易日数）
+     */
     private static final int[] MA_WINDOWS = {20, 60, 200};
 
-    /** "全历史" PE 分位用的窗口年数（覆盖任何基金的历史长度） */
+    /**
+     * "全历史" PE 分位用的窗口年数（覆盖任何基金的历史长度）
+     */
     private static final int PE_WINDOW_ALL_YEARS = 100;
 
-    /** 分位计算的最小样本数：低于此值分位不稳定，返回 null 让前端显示「—」 */
+    /**
+     * 分位计算的最小样本数：低于此值分位不稳定，返回 null 让前端显示「—」
+     */
     private static final int MIN_PE_SAMPLES = 30;
 
     private final FundBasicMapper fundBasicMapper;
@@ -64,15 +69,19 @@ public class MarketSignalServiceImpl implements MarketSignalService {
 
     private final IndexValuationMapper valuationMapper;
 
-    /** PE 分位复用既有实现（口径与基金池列/估值页签一致） */
+    /**
+     * PE 分位复用既有实现（口径与基金池列/估值页签一致）
+     */
     private final FundQueryService fundQueryService;
 
     private final DividendYieldService dividendYieldService;
 
     private final FundTagService fundTagService;
 
-    /** overview 备忘缓存（V6.48 P1）：key=peWindow，60 秒内重复打开直接回缓存 */
-    private static final Duration OVERVIEW_CACHE_TTL = Duration.ofSeconds(60);
+    /**
+     * overview 备忘缓存（V6.48 P1）：key=peWindow，60 秒内重复打开直接回缓存
+     */
+    private static final Duration OVERVIEW_CACHE_TTL = Duration.ofSeconds(60 * 60 * 6);
     private volatile MarketSignalVO overviewCached;
     private volatile String overviewCachedKey;
     private volatile java.time.LocalDateTime overviewCachedAt;
@@ -106,7 +115,9 @@ public class MarketSignalServiceImpl implements MarketSignalService {
         return result;
     }
 
-    /** overview 实际计算（被 60 秒备忘缓存包裹，V6.48 P1） */
+    /**
+     * overview 实际计算（被 60 秒备忘缓存包裹，V6.48 P1）
+     */
     private MarketSignalVO overviewCompute(String peWindow) {
         int windowYears = windowYearsOf(peWindow);
         List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
@@ -184,7 +195,106 @@ public class MarketSignalServiceImpl implements MarketSignalService {
         return new MarketSignalVO(peWindow, rows);
     }
 
-    /** peWindow 参数 → 年数；非法值直接中文报错（不静默回退，避免"看起来对其实错窗口"） */
+    @Override
+    public List<RangePerformanceVO> rangePerformance(LocalDate startDate, LocalDate endDate) {
+        if (startDate == null || endDate == null) {
+            // 未选区间（前端清空日期）→ 空列表，不按"全部历史"兜底
+            return List.of();
+        }
+        if (startDate.isAfter(endDate)) {
+            throw new BizException("起始日期不能晚于截止日期");
+        }
+        List<FundBasic> funds = fundBasicMapper.selectList(new LambdaQueryWrapper<FundBasic>()
+                .eq(FundBasic::getStatus, 1).orderByAsc(FundBasic::getFundCode));
+        if (funds.isEmpty()) {
+            return List.of();
+        }
+        // 与总览同一价格口径：ETF=前复权收盘、场外=复权净值（缺失回退单位净值）；各一条批量 SQL，限定日期区间
+        Map<String, List<LocalDate>> datesByCode = new HashMap<>();
+        Map<String, List<BigDecimal>> pricesByCode = new HashMap<>();
+        List<String> etfCodes = codesOfType(funds, 1);
+        List<String> otcCodes = codesOfType(funds, 2);
+        if (!etfCodes.isEmpty()) {
+            List<FundEtfKline> rows = klineMapper.selectList(new LambdaQueryWrapper<FundEtfKline>()
+                    .in(FundEtfKline::getFundCode, etfCodes)
+                    .isNotNull(FundEtfKline::getClose)
+                    .ge(FundEtfKline::getTradeDate, startDate)
+                    .le(FundEtfKline::getTradeDate, endDate)
+                    .select(FundEtfKline::getFundCode, FundEtfKline::getTradeDate, FundEtfKline::getClose)
+                    .orderByAsc(FundEtfKline::getFundCode).orderByAsc(FundEtfKline::getTradeDate));
+            for (FundEtfKline row : rows) {
+                datesByCode.computeIfAbsent(row.getFundCode(), k -> new ArrayList<>()).add(row.getTradeDate());
+                pricesByCode.computeIfAbsent(row.getFundCode(), k -> new ArrayList<>()).add(row.getClose());
+            }
+        }
+        if (!otcCodes.isEmpty()) {
+            List<FundNav> rows = navMapper.selectList(new LambdaQueryWrapper<FundNav>()
+                    .in(FundNav::getFundCode, otcCodes)
+                    .ge(FundNav::getNavDate, startDate)
+                    .le(FundNav::getNavDate, endDate)
+                    .select(FundNav::getFundCode, FundNav::getNavDate, FundNav::getUnitNav, FundNav::getAdjNav)
+                    .orderByAsc(FundNav::getFundCode).orderByAsc(FundNav::getNavDate));
+            for (FundNav row : rows) {
+                BigDecimal value = row.getAdjNav() != null ? row.getAdjNav() : row.getUnitNav();
+                if (value == null) {
+                    continue;
+                }
+                datesByCode.computeIfAbsent(row.getFundCode(), k -> new ArrayList<>()).add(row.getNavDate());
+                pricesByCode.computeIfAbsent(row.getFundCode(), k -> new ArrayList<>()).add(value);
+            }
+        }
+        List<RangePerformanceVO> result = new ArrayList<>();
+        for (FundBasic fund : funds) {
+            List<LocalDate> dates = datesByCode.getOrDefault(fund.getFundCode(), List.of());
+            List<BigDecimal> prices = pricesByCode.getOrDefault(fund.getFundCode(), List.of());
+            // 区间内无数据 → 不展示；不足 2 个点无法计算涨跌 → 也不展示（用户口径：没有 K 线就不展示）
+            if (dates.size() < 2 || dates.size() != prices.size()) {
+                continue;
+            }
+            BigDecimal first = prices.get(0);
+            BigDecimal last = prices.get(prices.size() - 1);
+            if (first == null || last == null || first.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            LocalDate actualStart = dates.get(0);
+            LocalDate actualEnd = dates.get(dates.size() - 1);
+            BigDecimal changePct = last.divide(first, 8, RoundingMode.HALF_UP)
+                    .subtract(BigDecimal.ONE).multiply(BigDecimal.valueOf(100))
+                    .setScale(2, RoundingMode.HALF_UP);
+            // 年化：按实际自然日跨度换算（部分数据时从基金最早有数据那天起算）；跨度不足 1 天不给年化
+            long days = ChronoUnit.DAYS.between(actualStart, actualEnd);
+            BigDecimal annualizedPct = null;
+            if (days > 0) {
+                double annualized = (Math.pow(last.doubleValue() / first.doubleValue(), 365.0 / days) - 1) * 100;
+                if (!Double.isNaN(annualized) && !Double.isInfinite(annualized)) {
+                    annualizedPct = BigDecimal.valueOf(annualized).setScale(2, RoundingMode.HALF_UP);
+                }
+            }
+            // 最大回撤：区间内峰值到谷值的最大跌幅（负数）
+            BigDecimal peak = first;
+            BigDecimal maxDrawdown = BigDecimal.ZERO;
+            for (BigDecimal price : prices) {
+                if (price.compareTo(peak) > 0) {
+                    peak = price;
+                }
+                if (peak.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal drawdown = price.divide(peak, 8, RoundingMode.HALF_UP)
+                            .subtract(BigDecimal.ONE).multiply(BigDecimal.valueOf(100));
+                    if (drawdown.compareTo(maxDrawdown) < 0) {
+                        maxDrawdown = drawdown;
+                    }
+                }
+            }
+            result.add(new RangePerformanceVO(fund.getFundCode(), fund.getFundName(), fund.getFundType(),
+                    changePct, actualStart, actualEnd, dates.size(), annualizedPct,
+                    maxDrawdown.setScale(2, RoundingMode.HALF_UP)));
+        }
+        return result;
+    }
+
+    /**
+     * peWindow 参数 → 年数；非法值直接中文报错（不静默回退，避免"看起来对其实错窗口"）
+     */
     private int windowYearsOf(String peWindow) {
         return switch (peWindow == null ? "" : peWindow) {
             case "3y" -> 3;
@@ -205,7 +315,9 @@ public class MarketSignalServiceImpl implements MarketSignalService {
         return codes;
     }
 
-    /** ETF 前复权收盘：一条 SQL 取全部基金（只取三列，控制传输量） */
+    /**
+     * ETF 前复权收盘：一条 SQL 取全部基金（只取三列，控制传输量）
+     */
     private void loadEtfCloses(List<String> codes, Map<String, List<BigDecimal>> closes, Map<String, LocalDate> dates) {
         if (codes.isEmpty()) {
             return;
@@ -221,7 +333,9 @@ public class MarketSignalServiceImpl implements MarketSignalService {
         }
     }
 
-    /** 场外复权净值（缺失回退单位净值）：一条 SQL 取全部基金 */
+    /**
+     * 场外复权净值（缺失回退单位净值）：一条 SQL 取全部基金
+     */
     private void loadOtcCloses(List<String> codes, Map<String, List<BigDecimal>> closes, Map<String, LocalDate> dates) {
         if (codes.isEmpty()) {
             return;
@@ -240,7 +354,9 @@ public class MarketSignalServiceImpl implements MarketSignalService {
         }
     }
 
-    /** 近 n 个交易日涨跌幅%（序列不足返回 null；基数为 0 防除零） */
+    /**
+     * 近 n 个交易日涨跌幅%（序列不足返回 null；基数为 0 防除零）
+     */
     private BigDecimal chgPct(List<BigDecimal> series, int n) {
         int i = series.size() - 1;
         int j = i - n;
@@ -255,7 +371,9 @@ public class MarketSignalServiceImpl implements MarketSignalService {
                 .divide(base, 2, RoundingMode.HALF_UP);
     }
 
-    /** n 日均线（含当日；样本不足返回 null） */
+    /**
+     * n 日均线（含当日；样本不足返回 null）
+     */
     private BigDecimal maOf(List<BigDecimal> series, int n) {
         int size = series.size();
         if (size < n) {
@@ -268,7 +386,9 @@ public class MarketSignalServiceImpl implements MarketSignalService {
         return sum.divide(BigDecimal.valueOf(n), 6, RoundingMode.HALF_UP);
     }
 
-    /** 现价相对均线位置（1=上 0=下；均线缺失为 null） */
+    /**
+     * 现价相对均线位置（1=上 0=下；均线缺失为 null）
+     */
     private Integer aboveMa(List<BigDecimal> series, BigDecimal ma) {
         if (ma == null || series.isEmpty()) {
             return null;
@@ -276,7 +396,9 @@ public class MarketSignalServiceImpl implements MarketSignalService {
         return series.get(series.size() - 1).compareTo(ma) > 0 ? 1 : 0;
     }
 
-    /** 趋势汇总：三线全上=多头排列、全下=空头排列、其余=震荡；任一均线缺失为 null */
+    /**
+     * 趋势汇总：三线全上=多头排列、全下=空头排列、其余=震荡；任一均线缺失为 null
+     */
     private String maSummary(List<BigDecimal> series, BigDecimal[] mas) {
         Integer a = aboveMa(series, mas[0]);
         Integer b = aboveMa(series, mas[1]);
@@ -324,11 +446,15 @@ public class MarketSignalServiceImpl implements MarketSignalService {
                 BigDecimal.valueOf(below * 100.0 / n).setScale(1, RoundingMode.HALF_UP));
     }
 
-    /** 回撤统计载体（当前深度 + 历史分位） */
+    /**
+     * 回撤统计载体（当前深度 + 历史分位）
+     */
     private record DrawdownStat(BigDecimal drawdownPct, BigDecimal drawdownPctile) {
     }
 
-    /** 某指数最新一条 PE（取值与日期一起展示） */
+    /**
+     * 某指数最新一条 PE（取值与日期一起展示）
+     */
     private IndexValuation latestPeOf(String indexCode) {
         List<IndexValuation> rows = valuationMapper.selectList(new LambdaQueryWrapper<IndexValuation>()
                 .eq(IndexValuation::getIndexCode, indexCode)
@@ -338,7 +464,9 @@ public class MarketSignalServiceImpl implements MarketSignalService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** 分位窗口内的 PE 样本天数（判断分位可信度；不足 MIN_PE_SAMPLES 时分位本就为 null） */
+    /**
+     * 分位窗口内的 PE 样本天数（判断分位可信度；不足 MIN_PE_SAMPLES 时分位本就为 null）
+     */
     private Integer peSampleCount(String indexCode, int windowYears) {
         long count = valuationMapper.selectCount(new LambdaQueryWrapper<IndexValuation>()
                 .eq(IndexValuation::getIndexCode, indexCode)

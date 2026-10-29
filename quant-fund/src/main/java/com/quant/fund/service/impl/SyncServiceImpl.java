@@ -232,6 +232,7 @@ public class SyncServiceImpl implements SyncService {
             for (FundBasic fund : funds) {
                 try {
                     syncFundFullCover(fund);
+                    LOGGER.info("ETF[{}]日K覆盖同步成功", fund.getFundCode());
                     ok++;
                 } catch (Exception e) {
                     LOGGER.error("ETF[{}]日K覆盖同步失败", fund.getFundCode(), e);
@@ -619,13 +620,11 @@ public class SyncServiceImpl implements SyncService {
             if (shares.isEmpty()) {
                 return;
             }
-            List<EastmoneyClient.NavItem> navs =
-                    client.fetchOtcNavPage(fund.getFundCode(), 1, 1, null, null).items();
-            if (navs.isEmpty() || navs.get(0).unitNav() == null
-                    || navs.get(0).unitNav().compareTo(BigDecimal.ZERO) <= 0) {
+            // 最新净值走当日缓存（V6.61）：单位净值一天只发布一次，盘中各轮不再重复拉 lsjz
+            EastmoneyClient.NavItem latest = latestNav(fund);
+            if (latest == null) {
                 return;
             }
-            EastmoneyClient.NavItem latest = navs.get(0);
             // 规模（亿元）= 份额（份） × 单位净值（元） ÷ 1e8
             BigDecimal scaleYi = shares.get().multiply(latest.unitNav())
                     .divide(BigDecimal.valueOf(100000000L), 2, RoundingMode.HALF_UP);
@@ -656,14 +655,16 @@ public class SyncServiceImpl implements SyncService {
      * 该净值日在本地无 K 线（节假日等）时跳过，保留上一次的值。
      */
     private void refreshPremiumRate(FundBasic fund) {
+        // 溢价率只对场内 ETF 有意义（场外没有二级市场成交价，原实现每次都白拉一次净值再因无 K 线返回）
+        if (fund.getFundType() == null || fund.getFundType() != FundTypeEnum.ETF.getCode()) {
+            return;
+        }
         try {
-            List<EastmoneyClient.NavItem> navs =
-                    client.fetchOtcNavPage(fund.getFundCode(), 1, 1, null, null).items();
-            if (navs.isEmpty() || navs.get(0).unitNav() == null
-                    || navs.get(0).unitNav().compareTo(BigDecimal.ZERO) <= 0) {
+            // 最新净值走当日缓存（V6.61）：盘中各轮不再重复拉 lsjz
+            EastmoneyClient.NavItem latest = latestNav(fund);
+            if (latest == null) {
                 return;
             }
-            EastmoneyClient.NavItem latest = navs.get(0);
             FundEtfKline kline = klineMapper.selectOne(new LambdaQueryWrapper<FundEtfKline>()
                     .eq(FundEtfKline::getFundCode, fund.getFundCode())
                     .eq(FundEtfKline::getTradeDate, latest.date()));
@@ -884,6 +885,48 @@ public class SyncServiceImpl implements SyncService {
     private final Map<String, String> shareOfDayCache = new ConcurrentHashMap<>();
 
     /**
+     * 当日最新净值缓存（V6.61）：单位净值一天只发布一次，但溢价率与规模估算原实现**每轮各拉一次 lsjz**——
+     * 持仓轮每 4 分钟一轮时，同一只基金一天要白拉上百次。缓存按「同一自然日 + 同一发布分界（20:00 前/后）」
+     * 复用：盘中各轮零重复请求，同时保证晚间净值发布后（20:00 的场外同步）能取到新值。
+     */
+    private static final LocalTime NAV_PUBLISH_TIME = LocalTime.of(20, 0);
+
+    private final Map<String, CachedNav> latestNavCache = new ConcurrentHashMap<>();
+
+    /** 最新净值缓存条目：单位净值 + 净值日 + 抓取时刻（用于判断"同日同侧"） */
+    private record CachedNav(BigDecimal nav, LocalDate navDate, LocalDateTime fetchedAt) {
+    }
+
+    /**
+     * 取最新单位净值（带当日缓存，V6.61）：命中条件 = 同一自然日且抓取时刻与当前时刻同处 20:00 分界的同一侧。
+     * 抓取失败/无净值返回 null（调用方按"本轮跳过"处理，下一轮自动重试）。
+     */
+    private EastmoneyClient.NavItem latestNav(FundBasic fund) {
+        LocalDateTime now = LocalDateTime.now();
+        CachedNav cached = latestNavCache.get(fund.getFundCode());
+        if (cached != null && cached.fetchedAt().toLocalDate().equals(now.toLocalDate())
+                && cached.fetchedAt().toLocalTime().isBefore(NAV_PUBLISH_TIME)
+                == now.toLocalTime().isBefore(NAV_PUBLISH_TIME)) {
+            return new EastmoneyClient.NavItem(cached.navDate(), cached.nav(), null, null);
+        }
+        try {
+            List<EastmoneyClient.NavItem> navs =
+                    client.fetchOtcNavPage(fund.getFundCode(), 1, 1, null, null).items();
+            if (navs.isEmpty() || navs.get(0).unitNav() == null
+                    || navs.get(0).unitNav().compareTo(BigDecimal.ZERO) <= 0) {
+                return null;
+            }
+            EastmoneyClient.NavItem latest = navs.get(0);
+            latestNavCache.put(fund.getFundCode(),
+                    new CachedNav(latest.unitNav(), latest.date(), now));
+            return latest;
+        } catch (Exception e) {
+            LOGGER.error("基金[{}]最新净值获取失败（本轮跳过，下一轮重试）", fund.getFundCode(), e);
+            return null;
+        }
+    }
+
+    /**
      * 盘中同步·持仓基金（V5.42，用户口径：池子扩到几百只后，5 分钟全量一轮跑不完，拆两档）：
      * 持仓基金每 4 分钟一轮（调度在 FundSyncJobs，交易时段闸门在任务层）。
      * 服务层只管"跑哪个范围"：交易日/节假日自判 + 互斥锁 + 范围过滤 + 逐只增量同步。
@@ -944,8 +987,20 @@ public class SyncServiceImpl implements SyncService {
             }
             for (FundBasic fund : funds) {
                 try {
+                    // V6.60（用户口径，仅非持仓轮）：最后同步时间早于"上一交易日 15:00"→ 上次可能只落了
+                    // 盘中未定稿 bar 或中间缺交易日，本轮把"上次同步日（含）→ 今天"整段重拉；
+                    // 已在上一个交易日 15:00 之后同步过（含今天）→ 只刷新当日。
+                    boolean rangeCatchUp = !heldOnly && needsRangeCatchUp(fund);
                     EastmoneyClient.EtfQuoteBatchItem quote = quotes.get(fund.getFundCode());
-                    if (quote != null && isBarUpdatable(fund)) {
+                    if (rangeCatchUp) {
+                        try {
+                            syncEtfRangeSinceLastSync(fund);
+                        } finally {
+                            refreshBasicData(fund, false);
+                        }
+                        ok++;
+                        consecutiveFailures = 0;
+                    } else if (quote != null && isBarUpdatable(fund)) {
                         if (upsertIntradayBar(fund, quote)) {
                             refreshBasicData(fund, false);
                             ok++;
@@ -1006,6 +1061,51 @@ public class SyncServiceImpl implements SyncService {
     private boolean isBarUpdatable(FundBasic fund) {
         LocalDate last = fund.getLastSyncDate();
         return last != null && !last.isBefore(LocalDate.now().minusDays(1));
+    }
+
+    /**
+     * 是否需要区间补拉（V6.60 用户口径，仅非持仓轮）：最后同步时间**早于"上一交易日 15:00"**（或从未同步）时，
+     * 上次同步可能只写入了盘中未定稿 bar、或中间缺了交易日 → 需要把上次同步日到今天整段重拉；
+     * 已在上一个交易日 15:00 之后同步过（含今天 9:30 之后）→ 只刷新当日即可。
+     */
+    private boolean needsRangeCatchUp(FundBasic fund) {
+        LocalDateTime lastAt = fund.getLastSyncAt();
+        if (lastAt == null) {
+            return true;
+        }
+        LocalDate prevTradingDay = tradingCalendarService.previousTradingDay(LocalDate.now());
+        return lastAt.isBefore(prevTradingDay.atTime(15, 0));
+    }
+
+    /**
+     * 区间补拉（V6.60）：从**上次同步日（含）**到今天整段重拉 ETF 日 K 并覆盖——包含上次同步日本身，
+     * 用来修正"当日只落了盘中价、15:30 定稿失败"留下的残留 bar；跨周末/节假日由数据源按日期区间返回。
+     * 成功即刷新 last_sync（之后本轮的后续基金与后续轮次只刷当日）。
+     */
+    private int syncEtfRangeSinceLastSync(FundBasic fund) {
+        LocalDate today = LocalDate.now();
+        LocalDate beg = fund.getLastSyncDate() == null
+                ? ImportServiceImpl.historyBegin(fund.getInceptionDate())
+                : fund.getLastSyncDate();
+        int market = "SH".equals(fund.getMarket()) ? 1 : 0;
+        List<EastmoneyClient.KlineItem> klines = client.fetchEtfKline(market, fund.getFundCode(), beg, today);
+        if (klines.isEmpty()) {
+            LOGGER.info("盘中同步[非持仓][{}]区间补拉无数据：{} ~ {}", fund.getFundCode(), beg, today);
+            return 0;
+        }
+        List<FundEtfKline> entities = klines.stream()
+                .map(item -> toKlineEntity(fund.getFundCode(), item)).toList();
+        transactionTemplate.executeWithoutResult(status -> {
+            klineMapper.delete(new LambdaQueryWrapper<FundEtfKline>()
+                    .eq(FundEtfKline::getFundCode, fund.getFundCode())
+                    .ge(FundEtfKline::getTradeDate, beg));
+            Db.saveBatch(entities, 500);
+        });
+        LocalDate maxDate = entities.get(entities.size() - 1).getTradeDate();
+        updateLastSync(fund, maxDate);
+        LOGGER.info("盘中同步[非持仓][{}]区间补拉完成：{} ~ {}（{} 根）",
+                fund.getFundCode(), beg, maxDate, entities.size());
+        return entities.size();
     }
 
     /**

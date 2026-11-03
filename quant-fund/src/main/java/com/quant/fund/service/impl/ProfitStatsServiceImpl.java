@@ -115,6 +115,16 @@ public class ProfitStatsServiceImpl implements ProfitStatsService {
     private final Map<Integer, ProfitCalendarVO> calendarCache = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<Integer, LocalDateTime> calendarCachedAt = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * 清空资产总览的 30 秒缓存（V6.68）：交易流水变更后由控制器调用。
+     * 只清汇总缓存；收益曲线/日历各自有独立缓存，不受影响。
+     */
+    @Override
+    public void evictSummaryCache() {
+        summaryCache = null;
+        summaryCachedAt = null;
+    }
+
     @Override
     public AssetSummaryVO summary() {
         AssetSummaryVO cached = summaryCache;

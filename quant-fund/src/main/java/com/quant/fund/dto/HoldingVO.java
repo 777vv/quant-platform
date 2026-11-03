@@ -22,7 +22,7 @@ public record HoldingVO(
         BigDecimal lastPrice,
         /** 持仓市值 = 最新价 × 份额 */
         BigDecimal marketValue,
-        /** 当日盈亏 = (现价-昨价) × 份额 */
+        /** 当日盈亏（现金流口径）= 今日市值 − 昨收市值 − 今日买入(金额+费) + 今日卖出/分红(金额−费)；今日买入从成交价起算 */
         BigDecimal dayPnl,
         /** 浮动盈亏 = 市值 - 摊薄成本 */
         BigDecimal floatingPnl,

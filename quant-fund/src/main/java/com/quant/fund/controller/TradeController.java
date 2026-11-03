@@ -14,6 +14,7 @@ import com.quant.fund.dto.TaskProgressVO;
 import com.quant.fund.dto.TradeFlowRequest;
 import com.quant.fund.entity.TradeFlow;
 import com.quant.fund.service.CashAccountingService;
+import com.quant.fund.service.ProfitStatsService;
 import com.quant.fund.service.SyncService;
 import com.quant.fund.service.TradeService;
 import jakarta.validation.Valid;
@@ -39,14 +40,18 @@ public class TradeController {
 
     private final TradeService tradeService;
 
+    /** 资产总览缓存（V6.68：交易变更后清空，保证仪表盘当日盈亏立即刷新） */
+    private final ProfitStatsService profitStatsService;
+
     /** 现金口径（转出额度校验与提示） */
     private final CashAccountingService cashAccountingService;
 
     private final SyncService syncService;
 
-    public TradeController(TradeService tradeService, SyncService syncService,
-                           CashAccountingService cashAccountingService) {
+    public TradeController(TradeService tradeService, ProfitStatsService profitStatsService,
+                           SyncService syncService, CashAccountingService cashAccountingService) {
         this.tradeService = tradeService;
+        this.profitStatsService = profitStatsService;
         this.syncService = syncService;
         this.cashAccountingService = cashAccountingService;
     }
@@ -95,6 +100,7 @@ public class TradeController {
     @PostMapping("/trades")
     public R<Void> add(@Valid @RequestBody TradeFlowRequest request) {
         tradeService.add(request);
+        profitStatsService.evictSummaryCache();
         return R.ok();
     }
 
@@ -103,6 +109,7 @@ public class TradeController {
     @PutMapping("/trades/{id}")
     public R<Void> update(@PathVariable Long id, @Valid @RequestBody TradeFlowRequest request) {
         tradeService.update(id, request);
+        profitStatsService.evictSummaryCache();
         return R.ok();
     }
 
@@ -111,6 +118,7 @@ public class TradeController {
     @DeleteMapping("/trades/{id}")
     public R<Void> delete(@PathVariable Long id) {
         tradeService.delete(id);
+        profitStatsService.evictSummaryCache();
         return R.ok();
     }
 

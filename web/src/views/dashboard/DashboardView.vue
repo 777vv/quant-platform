@@ -27,7 +27,7 @@
           <div class="stat-value num" :class="[changeColorClass(assets?.dayPnl), chipClass(assets?.dayPnl)]">
             {{ signed(assets?.dayPnl) }}
           </div>
-          <div class="stat-sub">按最近两日价差估算</div>
+          <div class="stat-sub">今日买入按成交价起算</div>
           <div v-if="showSparkRow" class="stat-spark" />
         </el-card>
       </el-col>

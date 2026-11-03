@@ -16,7 +16,7 @@ public record AssetSummaryVO(
         BigDecimal marketValue,
         /** 持仓摊薄总成本（元） */
         BigDecimal totalCost,
-        /** 当日盈亏（元）= Σ (现价 - 昨价) × 份额 */
+        /** 当日盈亏（元）= Σ [今日市值 − 昨收市值 − 今日买入(金额+费) + 今日卖出/分红(金额−费)]，今日买入从成交价起算 */
         BigDecimal dayPnl,
         /** 浮动盈亏（元）= 总市值 - 摊薄总成本 */
         BigDecimal floatingPnl,

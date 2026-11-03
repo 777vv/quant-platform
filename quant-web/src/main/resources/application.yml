@@ -61,8 +61,8 @@ mybatis-plus:
 sa-token:
   # token 请求头/cookie 名（前端 axios 以此名携带）
   token-name: satoken
-  # 会话有效期：7 天（FR4 业务规则 3）
-  timeout: 604800
+  # 会话有效期：48 小时（FR4 业务规则 3；V6.67 由 7 天调整为 48 小时）
+  timeout: 172800
   # 不启用"无操作冻结"（active-timeout 关闭）
   active-timeout: -1
   # token 风格：UUID

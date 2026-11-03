@@ -3,7 +3,9 @@ package com.quant.fund.service.impl;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
@@ -272,6 +274,19 @@ public class TradeServiceImpl implements TradeService {
     public List<HoldingVO> holdings() {
         List<FundPosition> positions = positionMapper.selectList(
                 new LambdaQueryWrapper<FundPosition>().orderByAsc(FundPosition::getFundCode));
+        // 今日基金交易（V6.68）：当日盈亏要按现金流折算——今天买入的份额从成交价起算，
+        // 不能拿"昨收→现价"整段算成亏损。一次批量取回，避免持仓循环里逐只查流水。
+        LocalDate today = LocalDate.now();
+        Map<String, List<TradeFlow>> todayFlows = new HashMap<>();
+        if (tradingCalendarService.isTradingDay(today)) {
+            List<TradeFlow> rows = tradeFlowMapper.selectList(new LambdaQueryWrapper<TradeFlow>()
+                    .eq(TradeFlow::getTradeDate, today)
+                    .in(TradeFlow::getTradeType, TradeTypeEnum.BUY.getCode(), TradeTypeEnum.SELL.getCode(),
+                            TradeTypeEnum.DIVIDEND.getCode()));
+            for (TradeFlow flow : rows) {
+                todayFlows.computeIfAbsent(flow.getFundCode(), key -> new ArrayList<>()).add(flow);
+            }
+        }
         List<HoldingVO> items = new ArrayList<>();
         for (FundPosition position : positions) {
             FundBasic fund = fundBasicMapper.selectOne(new LambdaQueryWrapper<FundBasic>()
@@ -298,8 +313,8 @@ public class TradeServiceImpl implements TradeService {
                     : marketValue.subtract(position.getTotalCost()).setScale(2, java.math.RoundingMode.HALF_UP);
             BigDecimal floatingPct = floating == null || position.getTotalCost().compareTo(BigDecimal.ZERO) == 0 ? null
                     : floating.multiply(BigDecimal.valueOf(100)).divide(position.getTotalCost(), 2, java.math.RoundingMode.HALF_UP);
-            BigDecimal dayPnl = !quoteCurrent || quote == null || quote.prevPrice() == null || price == null ? null
-                    : price.subtract(quote.prevPrice()).multiply(share).setScale(2, java.math.RoundingMode.HALF_UP);
+            BigDecimal dayPnl = !quoteCurrent || quote == null || price == null ? null
+                    : dayPnlOf(position, quote, price, todayFlows.getOrDefault(position.getFundCode(), List.of()));
             String typeDesc = FundTypeEnum.ETF.getCode() == fund.getFundType()
                     ? FundTypeEnum.ETF.getDesc() : FundTypeEnum.OTC.getDesc();
             items.add(new HoldingVO(position.getFundCode(), fund.getFundName(), fund.getFundType(), typeDesc,
@@ -307,6 +322,50 @@ public class TradeServiceImpl implements TradeService {
                     floating, floatingPct, position.getRealizedPnl()));
         }
         return items;
+    }
+
+    /**
+     * 当日盈亏（V6.68 现金流口径）：
+     * 今日市值 − 昨收市值 − 今日买入（金额+费用） + 今日卖出（金额−费用） + 今日分红（金额−费用）。
+     *
+     * <p>今日买入的份额从**实际成交价**起算，不会把"昨收→买入价"这段下跌算成亏损；
+     * 今日卖出的份额仍计入"昨收→卖出价"的真实变动；分红作为当日现金流入。
+     * 没有今日流水时退化为原来的 (现价−昨收)×份额。
+     *
+     * @param position 当前持仓（totalShare 已含今日成交）
+     * @param quote    最新行情（price=现价，prevPrice=昨收）
+     * @param price    最新价（显式传入，避免重复判空）
+     * @param flows    该基金今日买入/卖出/分红流水（无流水时为空列表）
+     * @return 当日盈亏（元，2 位小数）；昨收缺失且今日开盘前已有持仓时返回 null（无法折算）
+     */
+    private BigDecimal dayPnlOf(FundPosition position, LastQuote quote, BigDecimal price, List<TradeFlow> flows) {
+        BigDecimal endShare = nvl(position.getTotalShare());
+        BigDecimal startShare = endShare;
+        BigDecimal cashOut = BigDecimal.ZERO;
+        BigDecimal cashIn = BigDecimal.ZERO;
+        for (TradeFlow flow : flows) {
+            BigDecimal flowShare = nvl(flow.getShare());
+            BigDecimal amount = nvl(flow.getAmount());
+            BigDecimal fee = nvl(flow.getFee());
+            TradeTypeEnum type = TradeTypeEnum.of(flow.getTradeType());
+            if (type == TradeTypeEnum.BUY) {
+                startShare = startShare.subtract(flowShare);
+                cashOut = cashOut.add(amount).add(fee);
+            } else if (type == TradeTypeEnum.SELL) {
+                startShare = startShare.add(flowShare);
+                cashIn = cashIn.add(amount).subtract(fee);
+            } else if (type == TradeTypeEnum.DIVIDEND) {
+                cashIn = cashIn.add(amount).subtract(fee);
+            }
+        }
+        BigDecimal prevPrice = quote.prevPrice();
+        if (prevPrice == null && startShare.compareTo(BigDecimal.ZERO) != 0) {
+            // 今日开盘前已有持仓却取不到昨收：无法折算，按未知处理
+            return null;
+        }
+        BigDecimal prevValue = prevPrice == null ? BigDecimal.ZERO : prevPrice.multiply(startShare);
+        return price.multiply(endShare).subtract(prevValue).subtract(cashOut).add(cashIn)
+                .setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     private void validateFund(String fundCode) {

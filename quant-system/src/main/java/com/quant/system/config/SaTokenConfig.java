@@ -35,7 +35,9 @@ public class SaTokenConfig implements WebMvcConfigurer {
                     checkAccountActive();
                 }))
                 .addPathPatterns("/api/**")
-                .excludePathPatterns("/api/auth/login");
+                // V6.66：/api/ops/gc 是用户要求的**免鉴权**运维接口（手动 GC），
+                // 接口内部有限流（30 秒一次）与来源 IP 日志；生产建议在反代层限制为内网
+                .excludePathPatterns("/api/auth/login", "/api/ops/gc");
     }
 
     /** 复核当前登录账号的启用状态与有效期：停用/过期/被删即销毁会话并按未登录处理 */

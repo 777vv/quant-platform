@@ -19,6 +19,12 @@ public interface ProfitStatsService {
     AssetSummaryVO summary();
 
     /**
+     * 清空资产总览的 30 秒缓存（V6.68）：交易流水新增/修改/删除后调用，
+     * 让仪表盘「当日盈亏」等汇总立即反映最新成交，而不是等缓存自然过期。
+     */
+    void evictSummaryCache();
+
+    /**
      * 收益曲线：区间内每日累计收益（元）+ 沪深300 同区间涨跌幅（%）+ 月度汇总。
      *
      * @param range 区间代码：1M/3M/6M/YTD/1Y/3Y/ALL
